@@ -106,6 +106,7 @@ enum operation_type {
 struct trace_dumper_configuration_s {
     const char *logs_base;
     const char *attach_to_pid;
+    int should_quit;
     struct trace_record_matcher_spec_s severity_filter[SEVERITY_FILTER_LEN];
     unsigned int header_written;
     unsigned int write_to_file;
@@ -123,7 +124,7 @@ struct trace_dumper_configuration_s {
     const char *quota_specification;
     long long max_records_per_logdir;
     unsigned long long max_records_per_file;
-
+    int stopping;
 	struct trace_record_file record_file;
 	unsigned int last_flush_offset;
     enum operation_type op_type;
@@ -406,7 +407,6 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
     char full_dynamic_trace_filename[0x100];
     char full_static_log_data_filename[0x100];
     int rc;
-    unsigned int dead = 0;
     snprintf(dynamic_trace_filename, sizeof(dynamic_trace_filename), "_trace_shm_%d_dynamic_trace_data", pid);
     snprintf(static_log_data_filename, sizeof(static_log_data_filename), "_trace_shm_%d_static_trace_metadata", pid);
     snprintf(full_dynamic_trace_filename, sizeof(full_dynamic_trace_filename), "%s/%s", SHM_DIR, dynamic_trace_filename);
@@ -496,7 +496,6 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
     if (0 != rc) {
         rc = 0;
         WARN("Process", pid, "no longer exists");
-        dead = 1;
         process_time = 0;
     }
 
@@ -515,11 +514,7 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
         mapped_records->mutab = &unmapped_trace_buffer->u._all_records[i].mutab;
         mapped_records->imutab = &unmapped_trace_buffer->u._all_records[i].imutab;
         mapped_records->last_flush_offset = 0;
-        if (dead) {
-            mapped_records->current_read_record = 0;
-        } else {
-            mapped_records->current_read_record = mapped_records->mutab->current_record & mapped_records->imutab->max_records_mask;
-        }
+        mapped_records->current_read_record = 0;
     }
 
     INFO("new process joined" ,"pid =", new_mapped_buffer->pid, "name =", new_mapped_buffer->name);
@@ -557,7 +552,7 @@ static bool_t buffer_mapped(struct trace_dumper_configuration_s * conf, unsigned
 static int process_potential_trace_buffer(struct trace_dumper_configuration_s *conf, const char *shm_name)
 {
     int rc = 0;
-    if (!is_trace_shm_region(shm_name)) {
+    if (!is_trace_shm_region(shm_name) && !is_static_log_data_shm_region(shm_name)) {
         return 0;
     }
 
@@ -963,6 +958,10 @@ static int handle_full_filesystem(struct trace_dumper_configuration_s *conf, uns
 {
     long long total_iov_length = total_iovec_len(conf->flush_iovec, num_iovecs);
     long long free_bytes_remaining = free_bytes_in_fs(conf->logs_base);
+    
+    if (conf->attach_to_pid) {
+        return 0;
+    }
     if (free_bytes_remaining < 0) {
         return -1;
     }
@@ -1026,6 +1025,39 @@ static enum trace_severity get_minimal_severity(int severity_type)
     return count;
 }
 
+static int reap_empty_dead_buffers(struct trace_dumper_configuration_s *conf)
+{
+    struct trace_mapped_buffer *mapped_buffer;
+    struct trace_mapped_records *mapped_records;
+    int i, rid;
+    unsigned long long total_deltas[0x100];
+    unsigned int delta, delta_a, delta_b;
+    memset(total_deltas, 0, sizeof(total_deltas));
+
+    for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
+        if (i > (int) ARRAY_LENGTH(total_deltas)) {
+            continue;
+        }
+
+        if (!mapped_buffer->dead) {
+            continue;
+        }
+
+        calculate_delta(mapped_records, &delta, &delta_a, &delta_b);
+        total_deltas[i] += delta;
+        INFO("total deltas", total_deltas[i], rid + 1, i, TRACE_BUFFER_NUM_RECORDS);
+        if ((rid + 1 == TRACE_BUFFER_NUM_RECORDS) && (total_deltas[i] == 0)) {
+            discard_buffer(conf, mapped_buffer);
+            if (conf->attach_to_pid) {
+                return -1;
+            }
+        }
+    }
+
+
+    return 0;
+}
+
 static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 {
     struct trace_mapped_buffer *mapped_buffer;
@@ -1056,16 +1088,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
         
         calculate_delta(mapped_records, &delta, &delta_a, &delta_b);
 		if (delta == 0) {
-            if (mapped_buffer->dead) {
-                discard_buffer(conf, mapped_buffer);
-                return 0;
-                break;
-                if (conf->attach_to_pid) {
-                    return -1;
-                }
-            } else {
-                continue;
-            }
+            continue;
         }
 
         init_buffer_chunk_record(conf, mapped_buffer, mapped_records, &bd, &iovec, &num_iovecs, delta, delta_a, cur_ts, total_written_records);
@@ -1171,7 +1194,7 @@ static void handle_overwrite(struct trace_dumper_configuration_s *conf)
 {
     unsigned long long current_time = trace_get_nsec();
     DEBUG("Checking overrwrite. Wrote", conf->record_file.records_written - conf->last_overwrite_test_record_count,
-                 "records in a second. Minimal severity is now", conf->minimal_allowed_severity);
+          "records in a second. Minimal severity is now", conf->minimal_allowed_severity);
     if (current_time - conf->last_overwrite_test_time < TRACE_SECOND) {
         return;
     }
@@ -1192,7 +1215,12 @@ static void handle_overwrite(struct trace_dumper_configuration_s *conf)
     conf->last_overwrite_test_time = current_time;
     conf->last_overwrite_test_record_count = conf->record_file.records_written;
 }
-    
+
+static bool_t has_mapped_buffers(struct trace_dumper_configuration_s *conf)
+{
+    return MappedBuffers__element_count(&conf->mapped_buffers);
+}
+
 static int dump_records(struct trace_dumper_configuration_s *conf)
 {
     int rc;
@@ -1202,6 +1230,10 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
             return -1;
         }
 
+        if (conf->stopping && !has_mapped_buffers(conf)) {
+            return 0;
+        }
+        
         rc = open_trace_file_if_necessary(conf);
         if (rc != 0) {
             return -1;
@@ -1211,11 +1243,16 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
         if (0 != rc) {
             return -1;
         }
+
+        rc = reap_empty_dead_buffers(conf);
+        if (0 != rc) {
+            return -1;
+        }
         
         usleep(20000);
         handle_overwrite(conf);
         
-        if (!conf->attach_to_pid) {
+        if (!conf->attach_to_pid && !conf->stopping) {
             map_new_buffers(conf);
         }
         
@@ -1490,10 +1527,23 @@ void usr2_handler()
     }
 }
 
+static void term_handler()
+{
+    struct trace_dumper_configuration_s *conf = &trace_dumper_configuration;
+    map_new_buffers(conf);
+    struct trace_mapped_buffer *mapped_buffer;
+    int i;
+    for_each_mapped_buffer(i, mapped_buffer) {
+        mapped_buffer->dead = 1;
+    }
+
+    conf->stopping = 1;
+}
 static void set_signal_handling(void)
 {
     signal(SIGUSR1, usr1_handler);
     signal(SIGUSR2, usr2_handler);
+    signal(SIGTERM, term_handler);
 }
 
 

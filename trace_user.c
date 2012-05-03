@@ -15,6 +15,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
    limitations under the License.
 ***/
 
+#include <errno.h>
 #include <sys/types.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -243,20 +244,51 @@ static void static_log_alloc_size(unsigned int log_descriptor_count, unsigned in
     type_alloc_size(__type_information_start, type_definition_count, enum_value_count, alloc_size);
 }
 
+#define SHM_DIR "/dev/shm"
+
+static int delete_shm_files(unsigned short pid)
+{
+    char dynamic_trace_filename[0x100];
+    char static_log_data_filename[0x100];
+    char full_dynamic_trace_filename[0x100];
+    char full_static_log_data_filename[0x100];
+    int rc;
+    snprintf(dynamic_trace_filename, sizeof(dynamic_trace_filename), "_trace_shm_%d_dynamic_trace_data", pid);
+    snprintf(static_log_data_filename, sizeof(static_log_data_filename), "_trace_shm_%d_static_trace_metadata", pid);
+    snprintf(full_dynamic_trace_filename, sizeof(full_dynamic_trace_filename), "%s/%s", SHM_DIR, dynamic_trace_filename);
+    snprintf(full_static_log_data_filename, sizeof(full_static_log_data_filename), "%s/%s", SHM_DIR, static_log_data_filename);
+
+    rc = unlink(full_dynamic_trace_filename);
+    rc |= unlink(full_static_log_data_filename);
+
+    return rc;
+}
+
+static int rename_shm_files(const char *source_shm, const char *dest_shm)
+{
+    char source_shm_path[0x100], dest_shm_path[0x100];
+    snprintf(source_shm_path, sizeof(source_shm_path), "%s/%s", SHM_DIR, source_shm);
+    snprintf(dest_shm_path, sizeof(dest_shm_path), "%s/%s", SHM_DIR, dest_shm);
+    return rename(source_shm_path, dest_shm_path);
+}
+
 static void map_static_log_data(const char *buffer_name)
 {
-    char shm_name[0x100];
+    char tmp_shm_name[0x100], shm_name[0x100];
     unsigned long log_descriptor_count = &__static_log_information_end - &__static_log_information_start;
     unsigned int alloc_size;
     unsigned int total_log_descriptor_params;
     unsigned int type_definition_count;
     unsigned int enum_value_count;
     static_log_alloc_size(log_descriptor_count, &total_log_descriptor_params, &type_definition_count, &enum_value_count, &alloc_size);
+    snprintf(tmp_shm_name, sizeof(shm_name), "tmp%s%d_static_trace_metadata", TRACE_SHM_ID, getpid());
     snprintf(shm_name, sizeof(shm_name), "%s%d_static_trace_metadata", TRACE_SHM_ID, getpid());
-    int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0660);
+
+    int shm_fd = shm_open(tmp_shm_name, O_CREAT | O_RDWR, 0660);
     if (shm_fd < 0) {
         return;
     }
+    
     ASSERT(shm_fd >= 0);
     alloc_size = (alloc_size + 63) & ~63;
     int rc = ftruncate(shm_fd, sizeof(struct trace_metadata_region) + alloc_size);
@@ -265,7 +297,12 @@ static void map_static_log_data(const char *buffer_name)
                                  type_definition_count, enum_value_count,
                                  sizeof(struct trace_metadata_region) + alloc_size);
 
+    rc = rename_shm_files(tmp_shm_name, shm_name);
+    if (0 != rc) {
+        delete_shm_files(getpid());
+    }
 }
+
 
 static void init_records_immutable_data(struct trace_records *records, unsigned long num_records, int severity_type)
 {
@@ -312,8 +349,9 @@ int TRACE__register_buffer(const char *buffer_name)
         return -1;
     }
 
-    map_static_log_data(buffer_name);
     map_dynamic_log_buffers();
+    map_static_log_data(buffer_name);
+
     return 0;
 }
 
@@ -337,28 +375,6 @@ static void TRACE__init(void)
     get_exec_name(buffer_name, sizeof(buffer_name));
     TRACE__register_buffer(buffer_name);
 }
-
-
-#define SHM_DIR "/dev/shm"
-
-static int delete_shm_files(unsigned short pid)
-{
-    char dynamic_trace_filename[0x100];
-    char static_log_data_filename[0x100];
-    char full_dynamic_trace_filename[0x100];
-    char full_static_log_data_filename[0x100];
-    int rc;
-    snprintf(dynamic_trace_filename, sizeof(dynamic_trace_filename), "_trace_shm_%d_dynamic_trace_data", pid);
-    snprintf(static_log_data_filename, sizeof(static_log_data_filename), "_trace_shm_%d_static_trace_metadata", pid);
-    snprintf(full_dynamic_trace_filename, sizeof(full_dynamic_trace_filename), "%s/%s", SHM_DIR, dynamic_trace_filename);
-    snprintf(full_static_log_data_filename, sizeof(full_static_log_data_filename), "%s/%s", SHM_DIR, static_log_data_filename);
-
-    rc = unlink(full_dynamic_trace_filename);
-    rc |= unlink(full_static_log_data_filename);
-
-    return rc;
-}
-
 
 void TRACE__fini(void)
 {
