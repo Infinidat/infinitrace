@@ -516,7 +516,6 @@ public:
 
 bool TraceParam::parseClassTypeParam(const Expr *expr)
 {
-    printf("Shit\n");
     const Type *type = expr->getType().getTypePtr();
 
 
@@ -532,11 +531,9 @@ bool TraceParam::parseClassTypeParam(const Expr *expr)
 
     CXXRecordDecl *RD = cast<CXXRecordDecl>(pointeeType->getAs<RecordType>()->getDecl());
     CXXMethodDecl *MD = NULL;
-    printf("NICE\n");
     for (CXXRecordDecl::method_iterator method = RD->method_begin();
          method != RD->method_end();
          ++method) {
-        printf("SHIT\n");
         if (method->getNameAsString().compare("_trace_represent") == 0 && method->hasBody()) {
             if (method->hasInlineBody()) {
                 Diags.Report(ast.getFullLoc(method->getLocStart()), InlineTraceRepresentDiag) << method->getSourceRange();
@@ -547,7 +544,6 @@ bool TraceParam::parseClassTypeParam(const Expr *expr)
         }
     }
 
-    printf("DONE\n");
     if (NULL == MD) {
         return false;
     }
@@ -627,15 +623,14 @@ bool TraceParam::parseHexBufParam(const Expr *expr)
     return true;
 }
         
-std::string TraceParam::getLiteralString(const CastExpr *expr)
+std::string TraceParam::getLiteralString(const Expr *expr)
 {
-    const Expr *sub_expr = expr->getSubExpr();
     std::string empty_string;
-    if (!isa<StringLiteral>(sub_expr)) {
+    if (!isa<StringLiteral>(expr)) {
         return empty_string;
     }
 
-    const StringLiteral *string_literal = dyn_cast<StringLiteral>(sub_expr);
+    const StringLiteral *string_literal = dyn_cast<StringLiteral>(expr);
     return string_literal->getString();
 }
 
@@ -670,13 +665,16 @@ bool TraceParam::parseStringParam(const Expr *expr)
         return false;
     }
 
-    if (isa<CastExpr>(expr)) {
-        const CastExpr *cast_expr = dyn_cast<CastExpr>(expr);
-        std::string literalString = getLiteralString(cast_expr);
+    const Expr *stripped_expr = expr->IgnoreImpCasts();
+    if (isa<StringLiteral>(stripped_expr)) {
+        std::string literalString = getLiteralString(stripped_expr);
         if (literalString.length() != 0) {
             type_name = expr->getType().getCanonicalType().getAsString();
             const_str = literalString;
             return true;
+        } else {
+            Diags.Report(ast.getFullLoc(stripped_expr->getLocStart()), EmptyLiteralStringDiag) << stripped_expr->getSourceRange();
+            return false;
         }
     }
 
