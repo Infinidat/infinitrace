@@ -18,6 +18,7 @@ import sys
 import os
 import re
 import subprocess
+import tempfile
 
 from ldwrap import main as ldmodwrap_main
 plugin_path = os.path.join(os.getcwd(), "build/common/traces/trace_instrumentor/libtrace_instrumentor_untraced.so")
@@ -75,7 +76,6 @@ def get_cflags(args):
 
     return cflags
 
-
 class UnknownCCWrapArg(Exception):
     pass
 
@@ -96,6 +96,11 @@ def get_plugin_args(ccwrap_args):
             raise UnknownCCWrapArg(arg)
             
     return new_args, ccwrap_args[index:]
+
+def _create_va_arg_pack_def_file():
+    filename = tempfile.mktemp()
+    file(filename, "wb").write("extern int __builtin_va_arg_pack();")
+    return filename
 
 def main():
     args = sys.argv[1:]
@@ -137,8 +142,11 @@ def main():
     # Hack for dealing with sources that use _GNU_SOURCE
     if '#define _GNU_SOURCE' in file(c_file).read():
         cpp_args.extend(["-w", "-D", "_GNU_SOURCE"])
-        
+
     cpp_args.extend(["-D", "__TRACE_INSTRUMENTATION"])
+    va_arg_pack_def_file = _create_va_arg_pack_def_file()
+
+    cpp_args.extend(["-include", va_arg_pack_def_file])
     cpp_args.extend(["-include", os.path.join(os.path.dirname(sys.argv[0]),  "trace_lib.h")])
     cpp_args.extend(["-include", os.path.join(os.path.dirname(sys.argv[0]),  "trace_user.h")])
 
@@ -163,6 +171,7 @@ def main():
         ret = spawn(comp_args)
         return ret;
     finally:
+        os.unlink(va_arg_pack_def_file)
         os.unlink(pp_file)
         if os.getenv("TRACE_NO_UNLINK_PPFILE", "") == "":
             # Delete the pp.i file only if the clang invocation was successful
