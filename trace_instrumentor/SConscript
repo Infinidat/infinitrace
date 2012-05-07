@@ -40,3 +40,4 @@ with TracesDisabled(xn_env) as untraced_env:
 	-fno-rtti''')
 
     untraced_env.Alias('xn', lib)
+    untraced_env.Alias('trace_instrumentor', lib)
