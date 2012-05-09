@@ -264,27 +264,18 @@ static int delete_shm_files(unsigned short pid)
     return rc;
 }
 
-static int rename_shm_files(const char *source_shm, const char *dest_shm)
-{
-    char source_shm_path[0x100], dest_shm_path[0x100];
-    snprintf(source_shm_path, sizeof(source_shm_path), "%s/%s", SHM_DIR, source_shm);
-    snprintf(dest_shm_path, sizeof(dest_shm_path), "%s/%s", SHM_DIR, dest_shm);
-    return rename(source_shm_path, dest_shm_path);
-}
-
 static void map_static_log_data(const char *buffer_name)
 {
-    char tmp_shm_name[0x100], shm_name[0x100];
+    char shm_name[0x100];
     unsigned long log_descriptor_count = &__static_log_information_end - &__static_log_information_start;
     unsigned int alloc_size;
     unsigned int total_log_descriptor_params;
     unsigned int type_definition_count;
     unsigned int enum_value_count;
     static_log_alloc_size(log_descriptor_count, &total_log_descriptor_params, &type_definition_count, &enum_value_count, &alloc_size);
-    snprintf(tmp_shm_name, sizeof(shm_name), "tmp%s%d_static_trace_metadata", TRACE_SHM_ID, getpid());
     snprintf(shm_name, sizeof(shm_name), "%s%d_static_trace_metadata", TRACE_SHM_ID, getpid());
 
-    int shm_fd = shm_open(tmp_shm_name, O_CREAT | O_RDWR, 0660);
+    int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0660);
     if (shm_fd < 0) {
         return;
     }
@@ -297,7 +288,6 @@ static void map_static_log_data(const char *buffer_name)
                                  type_definition_count, enum_value_count,
                                  sizeof(struct trace_metadata_region) + alloc_size);
 
-    rc = rename_shm_files(tmp_shm_name, shm_name);
     if (0 != rc) {
         delete_shm_files(getpid());
     }
@@ -349,8 +339,8 @@ int TRACE__register_buffer(const char *buffer_name)
         return -1;
     }
 
-    map_dynamic_log_buffers();
     map_static_log_data(buffer_name);
+    map_dynamic_log_buffers();
 
     return 0;
 }
