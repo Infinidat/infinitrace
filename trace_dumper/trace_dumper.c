@@ -684,6 +684,7 @@ static long long total_records_in_logdir(const char *logdir)
     dir = opendir(logdir);
 
     if (dir == NULL) {
+        ERR("Error opening dir %s", strerror(errno));
         return -1;
     }
 
@@ -700,7 +701,8 @@ static long long total_records_in_logdir(const char *logdir)
         char full_filename[0x100];
         snprintf(full_filename, sizeof(full_filename), "%s/%s", logdir, ent->d_name);
         long long file_size = get_file_size(full_filename);
-        if (file_size < 0) {
+        if (file_size < 0LL) {
+            ERR("The file size of", full_filename, "is smaller than 0 (", file_size, ")");
             closedir(dir);
             return -1;
         }
