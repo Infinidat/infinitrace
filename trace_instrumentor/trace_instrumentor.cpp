@@ -870,6 +870,29 @@ bool TraceCall::fromCallExpr(CallExpr *expr) {
     return true;
 }
 
+static bool shouldInstrumentFunctionDecl(const FunctionDecl *D, bool whitelistExceptions)
+{
+    if (D->isInlined()) {
+        return false;
+    }
+    
+    if (whitelistExceptions) {
+        if (D->hasAttr<NoInstrumentFunctionAttr>()) {
+            return true;
+        } else {
+            return false;
+        }
+    } else {
+        if (D->hasAttr<NoInstrumentFunctionAttr>()) {
+            return false;
+        } else {
+            return true;
+        }
+    }
+}
+
+
+
 class DeclIterator : public DeclVisitor<DeclIterator> {
 public:
     llvm::raw_ostream &Out;
@@ -878,8 +901,9 @@ public:
     Rewriter *Rewrite;
     SourceManager *SM;
     LangOptions langOpts;
+    bool whitelistExceptions;
 
-    DeclIterator(llvm::raw_ostream& xOut, DiagnosticsEngine &_Diags, ASTContext &xAst, Rewriter *rewriter, SourceManager *sm, const LangOptions &_langOpts, std::set<const Type *> &referenced_types, std::set<TraceCall *> &global_traces) : Out(xOut), Diags(_Diags), ast(xAst), Rewrite(rewriter), SM(sm), langOpts(_langOpts), referencedTypes(referenced_types), globalTraces(global_traces)  {};
+    DeclIterator(llvm::raw_ostream& xOut, DiagnosticsEngine &_Diags, ASTContext &xAst, Rewriter *rewriter, SourceManager *sm, const LangOptions &_langOpts, std::set<const Type *> &referenced_types, std::set<TraceCall *> &global_traces) : Out(xOut), Diags(_Diags), ast(xAst), Rewrite(rewriter), SM(sm), langOpts(_langOpts), whitelistExceptions(false), referencedTypes(referenced_types), globalTraces(global_traces)  {};
     void VisitDeclContext(DeclContext *DC, bool Indent = true);
     void VisitTranslationUnitDecl(TranslationUnitDecl *D);
     void VisitTypedefDecl(TypedefDecl *D);
@@ -918,8 +942,9 @@ public:
     SourceManager *SM;
     LangOptions langOpts;
     Decl *D;
+    bool whitelistExceptions;
 
-    StmtIterator(llvm::raw_ostream& xOut, DiagnosticsEngine &_Diags, ASTContext &xAst, Rewriter *rewriter, SourceManager *sm, const LangOptions &_langOpts, Decl *_D, std::set<const Type *>&referenced_types, std::set<TraceCall *> &global_traces) : Out(xOut), Diags(_Diags), ast(xAst), Rewrite(rewriter), SM(sm), langOpts(_langOpts), D(_D), referencedTypes(referenced_types), globalTraces(global_traces)  {};
+    StmtIterator(llvm::raw_ostream& xOut, DiagnosticsEngine &_Diags, ASTContext &xAst, Rewriter *rewriter, SourceManager *sm, const LangOptions &_langOpts, Decl *_D, bool _whitelistExceptions, std::set<const Type *>&referenced_types, std::set<TraceCall *> &global_traces) : Out(xOut), Diags(_Diags), ast(xAst), Rewrite(rewriter), SM(sm), langOpts(_langOpts), D(_D), whitelistExceptions(_whitelistExceptions), referencedTypes(referenced_types), globalTraces(global_traces)  {};
 
 #define STMT(Node, Base) void Visit##Node(Node *S);
 #include <clang/AST/StmtNodes.inc>
@@ -980,7 +1005,7 @@ SourceLocation DeclIterator::getFunctionBodyStart(Stmt *FB)
     
     return startLoc.getLocWithOffset(1);
 }
-    
+
 void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
 
     if (NULL != strstr(D->getQualifiedNameAsString().c_str(), "std::")) {
@@ -998,7 +1023,7 @@ void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
     if (!(D->hasBody()  &&  D->isThisDeclarationADefinition())) {
         return;
     }
-    StmtIterator stmtiterator(Out, Diags, ast, Rewrite, SM, langOpts, D, referencedTypes, globalTraces);
+    StmtIterator stmtiterator(Out, Diags, ast, Rewrite, SM, langOpts, D, whitelistExceptions, referencedTypes, globalTraces);
 
     bool has_returns = false;
     Stmt *stmt = D->getBody();
@@ -1017,10 +1042,10 @@ void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
     
     trace_call.setSeverity(severity);
     trace_call.setKind("TRACE_LOG_DESCRIPTOR_KIND_FUNC_ENTRY");
-    if (D->hasAttr<NoInstrumentFunctionAttr>() || D->isInlined() || D->isInlineSpecified()) {
+    if (!shouldInstrumentFunctionDecl(D, whitelistExceptions)) {
         goto exit;
     }
-
+    
     hasReturnStmts(stmt, has_returns);
     if (!has_returns || D->getResultType()->isVoidType()) {
         SourceLocation endLocation = stmt->getLocEnd();
@@ -1068,6 +1093,10 @@ void DeclIterator::VisitLabelDecl(LabelDecl *D) {
 
 
 void DeclIterator::VisitVarDecl(VarDecl *D) {
+    std::string varName = D->getNameAsString();
+    if (varName.compare("__traces_file_no_instrument") == 0) {
+        whitelistExceptions = true;
+    }
 }
 
 void DeclIterator::VisitParmVarDecl(ParmVarDecl *D) {
@@ -1378,7 +1407,7 @@ void StmtIterator::VisitReturnStmt(ReturnStmt *S)
         }
     }
 
-    if (FD->hasAttr<NoInstrumentFunctionAttr>() || FD->isInlined()) {
+    if (!shouldInstrumentFunctionDecl(FD, whitelistExceptions)) {
         return;
     }
 
