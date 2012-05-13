@@ -253,7 +253,7 @@ bool TraceParam::parseEnumTypeParam(const Expr *expr) {
         return false;
     }
 
-    if (!parseEnumTypeParam(stripped_expr->getType().getCanonicalType())) {
+    if (!parseEnumTypeParam(stripped_expr->getType().getCanonicalType().getUnqualifiedType())) {
         return false;
     }
     
