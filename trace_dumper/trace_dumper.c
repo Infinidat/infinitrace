@@ -269,21 +269,142 @@ static int trace_dumper_writev(int fd, const struct iovec *iov, int iovcnt)
     return bytes_written;
 }
 
+bool_t is_trace_file(const char *filename)
+{
+    if (strncmp(filename, TRACE_FILE_PREFIX, strlen(TRACE_FILE_PREFIX)) != 0) {
+          return FALSE;
+    } else {
+        return TRUE;
+    }
+}
+
+int get_trace_file_timestamp(const char *filename)
+{
+    if (!is_trace_file(filename)) {
+        return -1;
+    }
+    
+    char timestamp[50];
+    strncpy(timestamp, filename + strlen(TRACE_FILE_PREFIX), sizeof(timestamp));
+    char *tmp_ptr = index(timestamp, '.');
+    if (NULL == tmp_ptr) {
+        return -1;
+    }
+
+    *tmp_ptr = '\0';
+    long int result = strtol(timestamp, (char **) NULL, 10);
+    if (result == LONG_MAX || result == LONG_MIN) {
+        return -1;
+    }
+
+    return result;
+}
+
+static int find_oldest_trace_file(struct trace_dumper_configuration_s *conf, char *filename, unsigned int filename_size)
+{
+    DIR *dir;
+    struct dirent *ent;
+    int min_timestamp = INT_MAX;
+    int tmp_timestamp = 0;
+    char tmp_filename[0x100];
+    dir = opendir(conf->logs_base);
+
+    if (dir == NULL) {
+        return -1;
+    }
+    
+    while (TRUE) {
+        ent = readdir(dir);
+        if (NULL == ent) {
+            goto Exit;
+        }
+
+        tmp_timestamp = get_trace_file_timestamp(ent->d_name);
+        if (tmp_timestamp < 0) {
+            continue;
+        }
+        if (min_timestamp > tmp_timestamp) {
+            min_timestamp = tmp_timestamp;
+            snprintf(tmp_filename, sizeof(tmp_filename), "%s/%s", conf->logs_base, ent->d_name);
+        }
+    }
+
+Exit:
+    strncpy(filename, tmp_filename, filename_size);
+    closedir(dir);
+    return 0;
+}
+
+static int delete_oldest_trace_file(struct trace_dumper_configuration_s *conf)
+{
+    char filename[0x100];
+    int rc = find_oldest_trace_file(conf, filename, sizeof(filename));
+    if (0 != rc) {
+        return -1;
+    }
+
+    INFO("Deleting oldest trace file", filename);
+    return unlink(filename);
+}
+
+static int handle_full_filesystem(struct trace_dumper_configuration_s *conf, const struct iovec *iov, unsigned int num_iovecs)
+{
+    long long total_iov_length = total_iovec_len(iov, num_iovecs);
+    long long free_bytes_remaining = free_bytes_in_fs(conf->logs_base);
+    
+    if (conf->attach_to_pid) {
+        return 0;
+    }
+    if (free_bytes_remaining < 0) {
+        return -1;
+    }
+
+    if (total_iov_length > free_bytes_remaining) {
+        if (!conf->fixed_output_filename) {
+            delete_oldest_trace_file(conf);
+        } else {
+            ERR("Request to write", total_iov_length, "while there are", free_bytes_remaining, "on the filesystem. Aborting");
+            return -1;
+        }
+    }
+
+    free_bytes_remaining = free_bytes_in_fs(conf->logs_base);
+    if (free_bytes_remaining < 0) {
+        return -1;
+    }
+
+    if (total_iov_length > free_bytes_remaining) {
+        return -1;
+    }
+
+    return 0;
+}
+
 static int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, const struct iovec *iov, int iovcnt)
 {
     int expected_bytes = total_iovec_len(iov, iovcnt);
     int rc = 0;
-    if (conf->record_file.fd >= 0) {
-        if (iovcnt >= sysconf(_SC_IOV_MAX)) {
-            rc = trace_dumper_writev(record_file->fd, iov, iovcnt);
-        } else {
-            rc = writev(record_file->fd, iov, iovcnt);
-        }
+    while (TRUE) {
+        if (conf->record_file.fd >= 0) {
+            if (iovcnt >= sysconf(_SC_IOV_MAX)) {
+                rc = trace_dumper_writev(record_file->fd, iov, iovcnt);
+            } else {
+                rc = writev(record_file->fd, iov, iovcnt);
+            }
         
-        if (rc != expected_bytes) {
-            return -1;
+            if (rc == -1 && errno == ENOSPC) {
+                handle_full_filesystem(conf, iov, iovcnt);
+                usleep(TRACE_SECOND / 3);
+                continue;
+            }
+
+            if (rc != expected_bytes) {
+                return -1;
+            }
+
+            record_file->records_written += expected_bytes / sizeof(struct trace_record);
+            break;
         }
-        record_file->records_written += expected_bytes / sizeof(struct trace_record);
     }
 
     if (conf->online) {
@@ -643,73 +764,6 @@ static bool_t process_exists(unsigned short pid) {
     }
 }
 
-bool_t is_trace_file(const char *filename)
-{
-    if (strncmp(filename, TRACE_FILE_PREFIX, strlen(TRACE_FILE_PREFIX)) != 0) {
-          return FALSE;
-    } else {
-        return TRUE;
-    }
-}
-
-int get_trace_file_timestamp(const char *filename)
-{
-    if (!is_trace_file(filename)) {
-        return -1;
-    }
-    
-    char timestamp[50];
-    strncpy(timestamp, filename + strlen(TRACE_FILE_PREFIX), sizeof(timestamp));
-    char *tmp_ptr = index(timestamp, '.');
-    if (NULL == tmp_ptr) {
-        return -1;
-    }
-
-    *tmp_ptr = '\0';
-    long int result = strtol(timestamp, (char **) NULL, 10);
-    if (result == LONG_MAX || result == LONG_MIN) {
-        return -1;
-    }
-
-    return result;
-}
-
-
-static int find_oldest_trace_file(struct trace_dumper_configuration_s *conf, char *filename, unsigned int filename_size)
-{
-    DIR *dir;
-    struct dirent *ent;
-    int min_timestamp = INT_MAX;
-    int tmp_timestamp = 0;
-    char tmp_filename[0x100];
-    dir = opendir(conf->logs_base);
-
-    if (dir == NULL) {
-        return -1;
-    }
-    
-    while (TRUE) {
-        ent = readdir(dir);
-        if (NULL == ent) {
-            goto Exit;
-        }
-
-        tmp_timestamp = get_trace_file_timestamp(ent->d_name);
-        if (tmp_timestamp < 0) {
-            continue;
-        }
-        if (min_timestamp > tmp_timestamp) {
-            min_timestamp = tmp_timestamp;
-            snprintf(tmp_filename, sizeof(tmp_filename), "%s/%s", conf->logs_base, ent->d_name);
-        }
-    }
-
-Exit:
-    strncpy(filename, tmp_filename, filename_size);
-    closedir(dir);
-    return 0;
-}
-
 static long long total_records_in_logdir(const char *logdir)
 {
     DIR *dir;
@@ -755,17 +809,6 @@ Exit:
     return total_bytes / sizeof(struct trace_record);    
 }
 
-static int delete_oldest_trace_file(struct trace_dumper_configuration_s *conf)
-{
-    char filename[0x100];
-    int rc = find_oldest_trace_file(conf, filename, sizeof(filename));
-    if (0 != rc) {
-        return -1;
-    }
-
-    INFO("Deleting oldest trace file", filename);
-    return unlink(filename);
-}
 
 #define for_each_mapped_records(_i_, _rid_, _mapped_buffer_, _mr_)      \
     for (({_i_ = 0; MappedBuffers__get_element_ptr(&conf->mapped_buffers, i, &_mapped_buffer_);}); _i_ < MappedBuffers__element_count(&conf->mapped_buffers); ({_i_++; MappedBuffers__get_element_ptr(&conf->mapped_buffers, i, &_mapped_buffer_);})) \
@@ -974,38 +1017,6 @@ static void init_buffer_chunk_record(struct trace_dumper_configuration_s *conf, 
     (*iovec)->iov_len = TRACE_RECORD_SIZE * delta_a;
 }
 
-static int handle_full_filesystem(struct trace_dumper_configuration_s *conf, unsigned int num_iovecs)
-{
-    long long total_iov_length = total_iovec_len(conf->flush_iovec, num_iovecs);
-    long long free_bytes_remaining = free_bytes_in_fs(conf->logs_base);
-    
-    if (conf->attach_to_pid) {
-        return 0;
-    }
-    if (free_bytes_remaining < 0) {
-        return -1;
-    }
-
-    if (total_iov_length > free_bytes_remaining) {
-        if (!conf->fixed_output_filename) {
-            delete_oldest_trace_file(conf);
-        } else {
-            ERR("Request to write", total_iov_length, "while there are", free_bytes_remaining, "on the filesystem. Aborting");
-            return -1;
-        }
-    }
-
-    free_bytes_remaining = free_bytes_in_fs(conf->logs_base);
-    if (free_bytes_remaining < 0) {
-        return -1;
-    }
-
-    if (total_iov_length > free_bytes_remaining) {
-        return -1;
-    }
-
-    return 0;
-}
 
 static int possibly_write_iovecs(struct trace_dumper_configuration_s *conf, unsigned int num_iovecs, unsigned int total_written_records, unsigned long long cur_ts)
 {
@@ -1135,11 +1146,6 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 		return 0;
 	}
 
-    int rc = handle_full_filesystem(conf, num_iovecs);
-    if (0 != rc) {
-        return -1;
-    }
-    
     return possibly_write_iovecs(conf, num_iovecs, total_written_records, cur_ts);
 }
 
@@ -1179,7 +1185,6 @@ static int rotate_trace_file_if_necessary(struct trace_dumper_configuration_s *c
             break;
         }
     }
-    
 
     if (conf->record_file.records_written < conf->max_records_per_file) {
         return 0;
@@ -1188,7 +1193,7 @@ static int rotate_trace_file_if_necessary(struct trace_dumper_configuration_s *c
     close_record_file(conf);
     
     /* Reopen journal file */
-    trace_open_file(conf, &conf->record_file, conf->logs_base);
+    rc = trace_open_file(conf, &conf->record_file, conf->logs_base);
     if (0 != rc) {
         ERR("Unable to open trace file:", strerror(errno));
         return -1;
@@ -1556,23 +1561,10 @@ void usr2_handler()
     }
 }
 
-static void term_handler()
-{
-    struct trace_dumper_configuration_s *conf = &trace_dumper_configuration;
-    map_new_buffers(conf);
-    struct trace_mapped_buffer *mapped_buffer;
-    int i;
-    for_each_mapped_buffer(i, mapped_buffer) {
-        mapped_buffer->dead = 1;
-    }
-
-    conf->stopping = 1;
-}
 static void set_signal_handling(void)
 {
     signal(SIGUSR1, usr1_handler);
     signal(SIGUSR2, usr2_handler);
-    signal(SIGTERM, term_handler);
 }
 
 
