@@ -142,6 +142,7 @@ trace_record_accumulator._fields_ = [
     ('accumulated_data', c_char * 40960),
     ('data_offset', c_uint),
     ('tid', c_ushort),
+    ('ts', c_ulonglong),
 ]
 class BufferParseContextList_s(Structure):
     pass
