@@ -1026,7 +1026,7 @@ public:
     LangOptions langOpts;
     bool whitelistExceptions;
 
-    DeclIterator(llvm::raw_ostream& xOut, DiagnosticsEngine &_Diags, ASTContext &xAst, Rewriter *rewriter, SourceManager *sm, const LangOptions &_langOpts, std::set<const Type *> &referenced_types, std::set<TraceCall *> &global_traces) : Out(xOut), Diags(_Diags), ast(xAst), Rewrite(rewriter), SM(sm), langOpts(_langOpts), whitelistExceptions(false), referencedTypes(referenced_types), globalTraces(global_traces)  {};
+    DeclIterator(llvm::raw_ostream& xOut, DiagnosticsEngine &_Diags, ASTContext &xAst, Rewriter *rewriter, SourceManager *sm, const LangOptions &_langOpts, std::set<const Type *> &referenced_types, std::set<TraceCall *> &global_traces, bool _whitelistExceptions) : Out(xOut), Diags(_Diags), ast(xAst), Rewrite(rewriter), SM(sm), langOpts(_langOpts), whitelistExceptions(_whitelistExceptions), referencedTypes(referenced_types), globalTraces(global_traces)  {};
     void VisitDeclContext(DeclContext *DC, bool Indent = true);
     void VisitTranslationUnitDecl(TranslationUnitDecl *D);
     void VisitTypedefDecl(TypedefDecl *D);
@@ -2335,8 +2335,8 @@ public:
     std::stringstream type_definition;
     std::stringstream global_traces;
     CompilerInstance *compilerInstance;
-    
-    PreCompilationLogsConsumer(StringRef inFile, raw_ostream *out, CompilerInstance &CI);
+    bool whitelistExceptions;
+    PreCompilationLogsConsumer(StringRef inFile, raw_ostream *out, CompilerInstance &CI, bool _whitelistExceptions);
 
     
     std::string replaceOnce(
@@ -2448,7 +2448,7 @@ public:
         Rewrite.setSourceMgr(C.getSourceManager(), C.getLangOptions());
         SM = &C.getSourceManager();
         MainFileID = SM->getMainFileID();
-        DeclIterator decliterator(Out, Diags, C, &Rewrite, SM, C.getLangOptions(), referencedTypes, globalTraces);
+        DeclIterator decliterator(Out, Diags, C, &Rewrite, SM, C.getLangOptions(), referencedTypes, globalTraces, whitelistExceptions);
         decliterator.Visit(C.getTranslationUnitDecl());
         buildReferencedTypes();
         buildGlobalTraces();
@@ -2469,8 +2469,8 @@ private:
     Rewriter Rewrite;
 };
 
-PreCompilationLogsConsumer::PreCompilationLogsConsumer(StringRef inFile, raw_ostream *out, CompilerInstance &CI)
-    : Out(llvm::errs()), Diags(CI.getDiagnostics()), OutFile(out), InFileName(inFile), compilerInstance(&CI)
+PreCompilationLogsConsumer::PreCompilationLogsConsumer(StringRef inFile, raw_ostream *out, CompilerInstance &CI, bool _whitelistExceptions)
+    : Out(llvm::errs()), Diags(CI.getDiagnostics()), OutFile(out), InFileName(inFile), compilerInstance(&CI), whitelistExceptions(_whitelistExceptions)
 {
 }
 
@@ -2479,10 +2479,11 @@ private:
     raw_ostream *OS;
     StringRef InFile;
     CompilerInstance *CI;
+    bool whitelistExceptions;
 protected:
     ASTConsumer *CreateASTConsumer(CompilerInstance &CI, llvm::StringRef InFile) {
         if (raw_ostream *OS = CI.createDefaultOutputFile(false, InFile, "cpp"))
-            return new PreCompilationLogsConsumer(InFile, OS, CI);
+            return new PreCompilationLogsConsumer(InFile, OS, CI, whitelistExceptions);
         else {
             return NULL;
         }
@@ -2490,6 +2491,14 @@ protected:
 
     bool ParseArgs(const CompilerInstance &CI,
                    const std::vector<std::string>& args) {
+        whitelistExceptions = false;
+        for (unsigned i = 0, e = args.size(); i != e; ++i) {
+            if (args[i].compare("disable-function-tracing") == 0) {
+                printf("GREAT\n");
+                whitelistExceptions = true;
+            }
+        }
+
         return true;
     }
     

@@ -67,8 +67,7 @@ def get_type_information_section_script(args, linked_objects):
 
     return linker_script_addition
                      
-def main():
-    args = sys.argv[1:]
+def main(args):
 
     linker_direct = True
     if 'gcc' in args[0] or 'g++' in args[0]:
@@ -154,5 +153,5 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))
 

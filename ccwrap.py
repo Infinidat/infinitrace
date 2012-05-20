@@ -22,6 +22,7 @@ import subprocess
 from ldwrap import main as ldmodwrap_main
 plugin_path = os.path.join(os.getcwd(), "build/common/traces/trace_instrumentor/libtrace_instrumentor_untraced.so")
 clang_path = '/usr/local/bin/clang'
+disable_function_traces = True
 
 def spawn(args):
     return os.spawnvp(os.P_WAIT, args[0], args)
@@ -29,7 +30,7 @@ def spawn(args):
 class Error(Exception):
     pass
 
-def translate(pp_file, out_pp_file, language, cflags):
+def translate(pp_file, out_pp_file, language, cflags, plugin_args):
     if sys.stdout.isatty():
         color_or_not =  "-fcolor-diagnostics"
     else:
@@ -42,6 +43,7 @@ def translate(pp_file, out_pp_file, language, cflags):
 
     args.extend(cflags)
     args.extend(["-load", plugin_path, "-plugin", "trace-instrument"])
+    args.extend(plugin_args)
 
     try:
         output = subprocess.check_output(args, stderr = subprocess.STDOUT)
@@ -53,9 +55,9 @@ def translate(pp_file, out_pp_file, language, cflags):
     
     return 0
 
-def maybe_translate(pp_file, out_pp_file, language, cflags):
+def maybe_translate(pp_file, out_pp_file, language, cflags, plugin_args):
     try:
-        return translate(pp_file, out_pp_file, language, cflags)
+        return translate(pp_file, out_pp_file, language, cflags, plugin_args)
     except Error, e:
         print e.args[0]
         return -1
@@ -72,11 +74,35 @@ def get_cflags(args):
                 cflags.append(arg)
 
     return cflags
+
+
+class UnknownCCWrapArg(Exception):
+    pass
+
+def get_plugin_args(ccwrap_args):
+    new_args = []
+    plugin_args = ['-plugin-arg-trace-instrument', 'disable-function-tracing']
+
+    if disable_function_traces:
+        return plugin_args, ccwrap_args
     
+    for index, arg in enumerate(ccwrap_args):
+        if 'gcc' in arg or 'g++' in arg:
+            return new_args, ccwrap_args[index:]
+
+        if arg == '--disable-function-traces':
+            new_args.extend(plugin_args)
+        else:
+            raise UnknownCCWrapArg(arg)
+            
+    return new_args, ccwrap_args[index:]
+
 def main():
     args = sys.argv[1:]
+    plugin_args, args = get_plugin_args(args)
+    
     if '-c' not in args:
-        return ldmodwrap_main()
+        return ldmodwrap_main(args)
 
     c_index = -1
     for i, p in enumerate(args):
@@ -123,13 +149,12 @@ def main():
     clang_ret = 0;
 
     try:
-        clang_ret = maybe_translate(pp_file, out_pp_file, language, cflags)
+        clang_ret = maybe_translate(pp_file, out_pp_file, language, cflags, plugin_args)
         if clang_ret != 0:
             return -1
 
         comp_args = []
         comp_args.extend(list(args))
-
         if '-o' not in comp_args:
             o_file = os.path.splitext(c_file)[0] + '.o'
             comp_args.extend(['-o', o_file])
