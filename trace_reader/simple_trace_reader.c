@@ -44,7 +44,7 @@ static const char *usage =
     " -d  --dump                 Dump contents of trace file                                    \n"
     " -n  --no-color             Disable colored output                                         \n"
     " -e  --dump-debug           Dump all debug entries                                         \n"
-    " -f  --dump-functions       Dump all debug entries and fucntion calls                      \n"
+    " -f  --dump-functions       Dump all debug entries and function calls                      \n"
     " -t  --time                 Dump all records beginning at timestamp, formatted according to trace output timestamps      \n"
     " -o  --show-field-names     Show field names for all trace records                         \n"
     " -r  --relative-timestamp   Print timestamps relative to boot time                         \n"
@@ -377,6 +377,7 @@ int main(int argc, char **argv)
     case OP_TYPE_INVALID:
         fprintf(stderr, "simple_trace_reader: Must specify operation type (-s or -d)\n");
         print_usage();
+        return 1;
     default:
         break;
     }
