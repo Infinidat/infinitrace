@@ -8,6 +8,14 @@ from completers import StringlistCompleter, MultipleSelectionCompleter
 from _CTraceParser import TraceParser, TraceFilter, FilterParseError
 from datetime import datetime
 
+from optparse import OptionParser
+
+parser = OptionParser("Usage: ui.py [filename] -n -f [default_filter]")
+parser.add_option("-n", "--non-interactive", action = "store_true", dest = "non_interactive", default = False,
+                  help="Dump traces non-interactively")
+parser.add_option("-f", "--filter", dest='initial_filter', default = None,
+                  help="Start with specified filter set")
+
 SECOND = 1000000000
 MINUTE = SECOND * 60
 HOUR = MINUTE * 60
@@ -138,7 +146,6 @@ class TraceWalker(urwid.ListWalker):
         else:
             parsed_filter = TraceFilter.true()
                 
-
         self._filter = parsed_filter.filter
         self._parser.set_filter(self._filter)
         self.reread()
@@ -170,6 +177,9 @@ palette = [
         ('key','light cyan', 'black', 'underline'),
         ('title', 'white', 'black',),
     ]
+
+class InvalidFilter(Exception):
+    pass
 
 class TraceReaderUI(object):
     _footer_text = [
@@ -317,6 +327,11 @@ class TraceReaderUI(object):
         else:
             return self._dumb_search(command_str)
 
+    def set_filter(self, filter):
+        result = self._trace_walker.set_filter(filter)
+        if not result:
+            raise InvalidFilter(filter)
+        
     def _handle_filter_command_string(self, command_str):
         if self._last_filter == command_str:
             return 'filter unchanged '
@@ -501,16 +516,39 @@ class TraceReaderUI(object):
     def _handle_sigint(self, signal, frame):
         self._handle_keyboard_interrupt()
         
-    def run(self, filename):
+    def run(self, filename, initial_filter = None):
         signal.signal(signal.SIGINT, self._handle_sigint)
         self.loop = urwid.MainLoop(self._main_frame, AnsiText.get_palette() + palette, handle_mouse = False, unhandled_input=self._handle_input)
         self.open_file(filename)
+        if initial_filter:
+            self.set_filter(initial_filter)
         self.loop.run()
 
+    def _exit_on_signal(self, signal):
+        sys.exit(1)
+        
+    def dump(self, filename, initial_filter = None):
+        self.open_file(filename)
+        if initial_filter:
+            print 'kaka'
+            self.set_filter(initial_filter)
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        self._trace_parser.dump_file()
 
 def main():
+    if len(sys.argv) < 2:
+        parser.print_help()
+        return 1
+    
+    filename = sys.argv[1]
+    args = sys.argv[2:]
+    (options, new_args) = parser.parse_args(args = sys.argv[2:])
     reader_ui = TraceReaderUI()
-    reader_ui.run(sys.argv[1])
+    
+    if options.non_interactive:
+        reader_ui.dump(filename, options.initial_filter)
+    else:
+        reader_ui.run(filename, options.initial_filter)
 
 if __name__=="__main__":
     main()

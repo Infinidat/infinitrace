@@ -425,8 +425,8 @@ class TraceParser(object):
             
         _traces_so.TRACE_PARSER__set_severity_mask(byref(self._parser_handle), int(mask))
 
-    def dump_file(self, filename, verbose = False, tail = False):
-        return _traces_so.TRACE_PARSER__dump(byref(self._parser_handle), int(verbose), int(tail))
+    def dump_file(self):
+        return _traces_so.TRACE_PARSER__dump(byref(self._parser_handle))
 
     def _bunchify_raw_record(self, raw_record_buffer):
         base_bunch = RawTraceRecord(ts = raw_record_buffer.ts,
