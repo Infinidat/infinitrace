@@ -117,7 +117,11 @@ struct trace_dumper_configuration_s {
     unsigned int write_to_file;
     const char *fixed_output_filename;
     unsigned int online;
+    unsigned int trace_online;
     unsigned int debug_online;
+    unsigned int info_online;
+    unsigned int warn_online;
+    unsigned int error_online;
     unsigned int syslog;
     unsigned long long start_time;
     int no_color;
@@ -1342,7 +1346,11 @@ static const struct option longopts[] = {
     { "help", 0, 0, 'h'},
 	{ "filter", required_argument, 0, 'f'},
 	{ "online", 0, 0, 'o'},
+    { "trace-online", 0, 0, 't'},
     { "debug-online", 0, 0, 'd'},
+    { "info-online", 0, 0, 'i'},
+    { "warn-online", 0, 0, 'a'},
+    { "error-online", 0, 0, 'e'},
     { "logdir", required_argument, 0, 'b'},
 	{ "no-color", 0, 0, 'n'},
     { "syslog", 0, 0, 's'},
@@ -1359,7 +1367,7 @@ static void print_usage(void)
     printf(usage, "trace_dumper");
 }
 
-static const char shortopts[] = "r:q:sw::p:hf:odb:n";
+static const char shortopts[] = "tdiaer:q:sw::p:hf:ob:n";
 
 #define DEFAULT_LOG_DIRECTORY "/mnt/logs"
 static void clear_mapped_records(struct trace_dumper_configuration_s *conf)
@@ -1397,9 +1405,6 @@ static int parse_commandline(struct trace_dumper_configuration_s *conf, int argc
         case 'n':
             conf->no_color = 1;
             break;
-        case 'd':
-            conf->debug_online = 1;
-            break;
         case 'p':
             conf->attach_to_pid = optarg;
             break;
@@ -1415,6 +1420,21 @@ static int parse_commandline(struct trace_dumper_configuration_s *conf, int argc
             break;
         case 'r':
             conf->max_records_per_second = atoi(optarg);
+            break;
+        case 't':
+            conf->trace_online = 1;
+            break;
+        case 'd':
+            conf->debug_online = 1;
+            break;
+        case 'i':
+            conf->info_online = 1;
+            break;
+        case 'a':
+            conf->warn_online = 1;
+            break;
+        case 'e':
+            conf->error_online = 1;
             break;
         case '?':
             print_usage();
@@ -1508,12 +1528,14 @@ static int init_dumper(struct trace_dumper_configuration_s *conf)
         openlog("traces", 0, 0);
         TRACE_PARSER__set_indent(&conf->parser, 0);
         TRACE_PARSER__set_color(&conf->parser, 0);
+        TRACE_PARSER__set_show_timestamp(&conf->parser, 0);
+        TRACE_PARSER__set_show_field_names(&conf->parser, 0);
     }
 
     // TODO: Take care of severity
-    unsigned int severity_mask = ((1 << TRACE_SEV_INFO) | (1 << TRACE_SEV_WARN) | (1 << TRACE_SEV_ERR) | (1 << TRACE_SEV_FATAL));
-    if (conf->debug_online) {
-        severity_mask |= ((1 << TRACE_SEV_FUNC_TRACE) | (1 << TRACE_SEV_DEBUG));
+    unsigned int severity_mask = ((conf->trace_online << TRACE_SEV_FUNC_TRACE) | (conf->debug_online << TRACE_SEV_DEBUG) | (conf->info_online << TRACE_SEV_INFO) |
+                                  (conf->warn_online << TRACE_SEV_WARN) | (conf->error_online << TRACE_SEV_ERR) | (conf->error_online << TRACE_SEV_FATAL));
+    if (conf->trace_online) {
         TRACE_PARSER__set_indent(&conf->parser, TRUE);
     } else {
         TRACE_PARSER__set_indent(&conf->parser, FALSE);

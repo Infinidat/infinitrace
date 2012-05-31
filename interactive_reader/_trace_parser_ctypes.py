@@ -296,6 +296,7 @@ trace_parser._fields_ = [
     ('out_file', POINTER(FILE)),
     ('color', c_int),
     ('compact_traces', c_int),
+    ('show_timestamp', c_int),
     ('always_hex', c_int),
     ('indent', c_int),
     ('relative_ts', c_int),
