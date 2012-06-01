@@ -384,12 +384,13 @@ static int handle_full_filesystem(struct trace_dumper_configuration_s *conf, con
     return 0;
 }
 
-static int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, const struct iovec *iov, int iovcnt)
+static int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, const struct iovec *iov, int iovcnt, bool_t dump_to_parser)
 {
     int expected_bytes = total_iovec_len(iov, iovcnt);
     int rc = 0;
-    while (TRUE) {
-        if (conf->record_file.fd >= 0) {
+    
+    if (conf->record_file.fd >= 0) {
+        while (TRUE) {
             if (iovcnt >= sysconf(_SC_IOV_MAX)) {
                 rc = trace_dumper_writev(record_file->fd, iov, iovcnt);
             } else {
@@ -411,7 +412,7 @@ static int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct 
         }
     }
 
-    if (conf->online) {
+    if (dump_to_parser && conf->online) {
         int parser_rc = dump_iovector_to_parser(conf, &conf->parser, iov, iovcnt);
         if (parser_rc != 0) {
             return -1;
@@ -444,7 +445,7 @@ static void init_metadata_iovector(struct trace_mapped_metadata *metadata, unsig
 
 #define SIMPLE_WRITE(__conf__, __data__, __size__) do {                   \
                                                                         \
-        struct iovec __iov__ = {__data__, __size__}; rc = trace_dumper_write(conf, &conf->record_file, &__iov__, 1); } while (0);
+        struct iovec __iov__ = {__data__, __size__}; rc = trace_dumper_write(conf, &conf->record_file, &__iov__, 1, TRUE); } while (0);
 
 static int write_metadata_header_start(struct trace_dumper_configuration_s *conf, struct trace_mapped_buffer *mapped_buffer)
 {
@@ -493,10 +494,11 @@ static int trace_dump_metadata(struct trace_dumper_configuration_s *conf, struct
     rc = write_metadata_header_start(conf, mapped_buffer);
     if (0 != rc) {
         return -1;
+    } else {
     }
     
     num_records = mapped_buffer->metadata.size / (TRACE_RECORD_PAYLOAD_SIZE) + ((mapped_buffer->metadata.size % (TRACE_RECORD_PAYLOAD_SIZE)) ? 1 : 0);
-    rc = trace_dumper_write(conf, &conf->record_file, mapped_buffer->metadata.metadata_iovec, 2 * num_records);
+    rc = trace_dumper_write(conf, &conf->record_file, mapped_buffer->metadata.metadata_iovec, 2 * num_records, TRUE);
     if ((unsigned int) rc != num_records * sizeof(struct trace_record)) {
         return -1;
     }
@@ -1022,7 +1024,7 @@ static void init_buffer_chunk_record(struct trace_dumper_configuration_s *conf, 
 }
 
 
-static int possibly_write_iovecs(struct trace_dumper_configuration_s *conf, unsigned int num_iovecs, unsigned int total_written_records, unsigned long long cur_ts)
+static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *conf, unsigned int num_iovecs, unsigned int total_written_records, unsigned long long cur_ts)
 {
     int i;
     int rid;
@@ -1033,12 +1035,11 @@ static int possibly_write_iovecs(struct trace_dumper_configuration_s *conf, unsi
 		conf->prev_flush_ts = cur_ts;
 		conf->next_flush_ts = cur_ts + conf->ts_flush_delta;
 
-        int ret = trace_dumper_write(conf, &conf->record_file, conf->flush_iovec, num_iovecs);
+        int ret = trace_dumper_write(conf, &conf->record_file, conf->flush_iovec, num_iovecs, FALSE);
 		if ((unsigned int)ret != (total_written_records * sizeof(struct trace_record))) {
             return -1;
 		}
-
-
+        
 		for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
 			mapped_records->mutab->latest_flushed_ts = mapped_records->next_flush_ts;
 			mapped_records->current_read_record =  mapped_records->next_flush_record;
@@ -1093,6 +1094,17 @@ static int reap_empty_dead_buffers(struct trace_dumper_configuration_s *conf)
     return 0;
 }
 
+unsigned int get_allowed_online_severity_mask(struct trace_dumper_configuration_s *conf)
+{
+    return ((conf->trace_online << TRACE_SEV_FUNC_TRACE) | (conf->debug_online << TRACE_SEV_DEBUG) | (conf->info_online << TRACE_SEV_INFO) |
+                                  (conf->warn_online << TRACE_SEV_WARN) | (conf->error_online << TRACE_SEV_ERR) | (conf->error_online << TRACE_SEV_FATAL));
+}
+
+static bool_t record_buffer_matches_online_severity(struct trace_dumper_configuration_s *conf, unsigned int severity_type)
+{
+    return get_allowed_online_severity_mask(conf) & severity_type;
+}
+
 static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 {
     struct trace_mapped_buffer *mapped_buffer;
@@ -1115,7 +1127,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
         if (0 != rc) {
             return rc;
         }
-
+        
         if (get_minimal_severity(mapped_records->imutab->severity_type) <= conf->minimal_allowed_severity) {
             WARN("Not dumping pid", mapped_buffer->pid, "with severity type", mapped_records->imutab->severity_type, "due to overwrite");
             continue;
@@ -1125,7 +1137,8 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 		if (delta == 0) {
             continue;
         }
-
+        
+        unsigned int iovec_base_index = num_iovecs;
         init_buffer_chunk_record(conf, mapped_buffer, mapped_records, &bd, &iovec, &num_iovecs, delta, delta_a, cur_ts, total_written_records);
 		last_rec = (struct trace_record *) (&mapped_records->records[mapped_records->current_read_record + delta_a - 1]);
 		if (delta_b) {
@@ -1134,6 +1147,14 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 			iovec->iov_len = TRACE_RECORD_SIZE * delta_b;
 			last_rec = (struct trace_record *) &mapped_records->records[delta_b - 1];
 		}
+
+        if (conf->online && record_buffer_matches_online_severity(conf, mapped_records->imutab->severity_type)) {
+            rc = dump_iovector_to_parser(conf, &conf->parser, &conf->flush_iovec[iovec_base_index], num_iovecs - iovec_base_index);
+            if (0 != rc) {
+                return -1;
+            }
+        }
+            
 
         
 		mapped_records->next_flush_ts = last_rec->ts;
@@ -1150,7 +1171,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 		return 0;
 	}
 
-    return possibly_write_iovecs(conf, num_iovecs, total_written_records, cur_ts);
+    return possibly_write_iovecs_to_disk(conf, num_iovecs, total_written_records, cur_ts);
 }
 
 static void close_record_file(struct trace_dumper_configuration_s *conf)
@@ -1449,7 +1470,7 @@ static int parse_commandline(struct trace_dumper_configuration_s *conf, int argc
 }
 
 #define ROTATION_COUNT 10
-#define FLUSH_DELTA 5000;
+#define FLUSH_DELTA 5000
 
 static void parser_event_handler(trace_parser_t __attribute__((unused)) *parser, enum trace_parser_event_e __attribute__((unused))event, void __attribute__((unused))*event_data, void __attribute__((unused)) *arg)
 {
@@ -1506,6 +1527,13 @@ static int set_quota(struct trace_dumper_configuration_s *conf)
     return 0;
 }
 
+static void set_default_online_severities(struct trace_dumper_configuration_s *conf)
+{
+    conf->info_online = 1;
+    conf->warn_online = 1;
+    conf->error_online = 1;
+}
+
 static int init_dumper(struct trace_dumper_configuration_s *conf)
 {
     clear_mapped_records(conf);
@@ -1532,9 +1560,12 @@ static int init_dumper(struct trace_dumper_configuration_s *conf)
         TRACE_PARSER__set_show_field_names(&conf->parser, 0);
     }
 
-    // TODO: Take care of severity
-    unsigned int severity_mask = ((conf->trace_online << TRACE_SEV_FUNC_TRACE) | (conf->debug_online << TRACE_SEV_DEBUG) | (conf->info_online << TRACE_SEV_INFO) |
-                                  (conf->warn_online << TRACE_SEV_WARN) | (conf->error_online << TRACE_SEV_ERR) | (conf->error_online << TRACE_SEV_FATAL));
+    unsigned int severity_mask = get_allowed_online_severity_mask(conf);
+    if (0 == severity_mask) {
+        set_default_online_severities(conf);
+        severity_mask = get_allowed_online_severity_mask(conf);
+    }
+    
     if (conf->trace_online) {
         TRACE_PARSER__set_indent(&conf->parser, TRUE);
     } else {
