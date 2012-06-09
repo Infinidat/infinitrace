@@ -413,6 +413,8 @@ struct log_stats {
     struct log_occurrences logs[0x10000];
     unsigned int unique_count;
     unsigned int record_count;
+    unsigned long long lost_records;
+    unsigned int record_count_by_severity[TRACE_SEV__MAX];
 };
 
 int compare_log_occurrence_entries(const void *a, const void *b)
@@ -437,7 +439,12 @@ static void dump_stats(struct log_stats *stats)
     qsort(stats->logs, stats->unique_count, sizeof(stats->logs[0]), compare_log_occurrence_entries);
     printf("Unique log records count: %d\n", stats->unique_count);
     printf("Record count: %d\n", stats->record_count);
-
+    printf("Lost records: %llu\n", stats->lost_records);
+    printf("Records by severity:\n");
+    for (i = 0; i < TRACE_SEV__MAX; i++) {
+        printf("    %s: %d\n", sev_to_str[i], stats->record_count_by_severity[i]);
+    }
+        
     for (i = 0; i < stats->unique_count; i++) {
         printf("%-10d : %-100s\n", stats->logs[i].occurrences, stats->logs[i].template);
     }
@@ -1357,6 +1364,7 @@ static int process_single_record(trace_parser_t *parser, struct trace_record_mat
         break;
     case TRACE_REC_TYPE_DUMP_HEADER:
         process_dump_header_record(parser, filter, record);
+        handler(parser, TRACE_PARSER_BUFFER_CHUNK_HEADER_PROCESSED, record, arg);
         break;
     case TRACE_REC_TYPE_BUFFER_CHUNK:
         process_buffer_chunk_record(parser, record);
@@ -1746,12 +1754,18 @@ int TRACE_PARSER__process_previous_record_from_file(trace_parser_t *parser)
 
 static void count_entries(trace_parser_t *parser, enum trace_parser_event_e event, void __attribute__((unused)) *event_data, void __attribute__((unused)) *arg)
 {
+    struct log_stats *stats = (struct log_stats *) arg;
+    if (event == TRACE_PARSER_BUFFER_CHUNK_HEADER_PROCESSED) {
+        struct trace_record_buffer_dump *bd = &((struct trace_record *) event_data)->u.buffer_chunk;
+        stats->lost_records += bd->lost_records;
+        return;
+    }
+    
     if (event != TRACE_PARSER_COMPLETE_TYPED_RECORD_PROCESSED) {
         return;
     }
 
     struct parser_complete_typed_record *complete_typed_record = (struct parser_complete_typed_record *) event_data;
-    struct log_stats *stats = (struct log_stats *) arg;
     struct log_occurrences *s = NULL;
     char template[512];
 
@@ -1772,6 +1786,8 @@ static void count_entries(trace_parser_t *parser, enum trace_parser_event_e even
     } else {
         s->occurrences++;
     }
+
+    stats->record_count_by_severity[complete_typed_record->record->severity]++;
     
     return;
 }

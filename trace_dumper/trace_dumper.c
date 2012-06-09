@@ -494,7 +494,6 @@ static int trace_dump_metadata(struct trace_dumper_configuration_s *conf, struct
     rc = write_metadata_header_start(conf, mapped_buffer);
     if (0 != rc) {
         return -1;
-    } else {
     }
     
     num_records = mapped_buffer->metadata.size / (TRACE_RECORD_PAYLOAD_SIZE) + ((mapped_buffer->metadata.size % (TRACE_RECORD_PAYLOAD_SIZE)) ? 1 : 0);
@@ -513,7 +512,6 @@ static int stat_pid(unsigned short pid, struct stat *stat_buf)
     snprintf(filename, sizeof(filename), "/proc/%d", pid);
     return stat(filename, stat_buf);
 }
-
 
 static int get_process_time(unsigned short pid, unsigned long long *curtime)
 {
@@ -823,8 +821,6 @@ Exit:
 #define for_each_mapped_buffer(_i_, _mapped_buffer_)      \
     for (({_i_ = 0; MappedBuffers__get_element_ptr(&conf->mapped_buffers, i, &_mapped_buffer_);}); _i_ < MappedBuffers__element_count(&conf->mapped_buffers); ({_i_++; MappedBuffers__get_element_ptr(&conf->mapped_buffers, i, &_mapped_buffer_);})) 
 
-
-
 static void discard_buffer(struct trace_dumper_configuration_s *conf, struct trace_mapped_buffer *mapped_buffer)
 {
     INFO("Discarding pid", mapped_buffer->pid, mapped_buffer->name);
@@ -931,12 +927,15 @@ static int trace_open_file(struct trace_dumper_configuration_s *conf, struct tra
     return rc;
 }
 
-void calculate_delta(struct trace_mapped_records *mapped_records, unsigned int *delta, unsigned int *delta_a, unsigned int *delta_b)
+void calculate_delta(struct trace_mapped_records *mapped_records, unsigned int *delta, unsigned int *delta_a, unsigned int *delta_b, unsigned int *lost_records)
 {
     unsigned int last_written_record;
-
+    
     last_written_record = mapped_records->mutab->current_record & mapped_records->imutab->max_records_mask;
+    struct trace_record *last_record = &mapped_records->records[last_written_record];
+
     if (last_written_record == mapped_records->current_read_record) {
+        *lost_records = 0;
         *delta = 0;
         return;
     }    
@@ -950,6 +949,7 @@ void calculate_delta(struct trace_mapped_records *mapped_records, unsigned int *
         *delta_b = last_written_record;
     }
 
+    
     /* Cap on TRACE_FILE_MAX_RECORDS_PER_CHUNK */
     if (*delta_a + *delta_b > TRACE_FILE_MAX_RECORDS_PER_CHUNK) {
         if (*delta_a > TRACE_FILE_MAX_RECORDS_PER_CHUNK) {
@@ -961,6 +961,15 @@ void calculate_delta(struct trace_mapped_records *mapped_records, unsigned int *
         }
     }
 
+    *lost_records = (last_written_record + (last_record->generation * mapped_records->imutab->max_records)) -
+        (mapped_records->old_generation * mapped_records->imutab->max_records) + (mapped_records->current_read_record);
+
+    if (*lost_records > mapped_records->imutab->max_records) {
+        *lost_records -= mapped_records->imutab->max_records;
+    } else {
+        *lost_records = 0;
+    }
+        
     *delta = *delta_a + *delta_b;
 }
 
@@ -998,6 +1007,7 @@ static int dump_metadata_if_necessary(struct trace_dumper_configuration_s *conf,
 static void init_buffer_chunk_record(struct trace_dumper_configuration_s *conf, struct trace_mapped_buffer *mapped_buffer,
                                      struct trace_mapped_records *mapped_records, struct trace_record_buffer_dump **bd,
                                      struct iovec **iovec, unsigned int *iovcnt, unsigned int delta, unsigned int delta_a,
+                                     unsigned int lost_records,
                                      unsigned long long cur_ts, unsigned int total_written_records)
 {
     memset(&mapped_records->buffer_dump_record, 0, sizeof(mapped_records->buffer_dump_record));
@@ -1011,6 +1021,7 @@ static void init_buffer_chunk_record(struct trace_dumper_configuration_s *conf, 
     (*bd)->prev_chunk_offset = mapped_records->last_flush_offset;
     (*bd)->dump_header_offset = conf->last_flush_offset;
     (*bd)->ts = cur_ts;
+    (*bd)->lost_records = lost_records;
     (*bd)->records = delta;
     (*bd)->severity_type = mapped_records->imutab->severity_type;
     mapped_records->next_flush_offset = conf->record_file.records_written + total_written_records;
@@ -1042,7 +1053,7 @@ static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *co
         
 		for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
 			mapped_records->mutab->latest_flushed_ts = mapped_records->next_flush_ts;
-			mapped_records->current_read_record =  mapped_records->next_flush_record;
+			mapped_records->current_read_record = mapped_records->next_flush_record;
 			mapped_records->last_flush_offset = mapped_records->next_flush_offset;
 		}
 	}
@@ -1065,6 +1076,7 @@ static int reap_empty_dead_buffers(struct trace_dumper_configuration_s *conf)
 {
     struct trace_mapped_buffer *mapped_buffer;
     struct trace_mapped_records *mapped_records;
+    unsigned int lost_records = 0;
     int i, rid;
     unsigned long long total_deltas[0x100];
     unsigned int delta, delta_a, delta_b;
@@ -1079,7 +1091,7 @@ static int reap_empty_dead_buffers(struct trace_dumper_configuration_s *conf)
             continue;
         }
 
-        calculate_delta(mapped_records, &delta, &delta_a, &delta_b);
+        calculate_delta(mapped_records, &delta, &delta_a, &delta_b, &lost_records);
         total_deltas[i] += delta;
         INFO("total deltas", total_deltas[i], rid + 1, i, TRACE_BUFFER_NUM_RECORDS);
         if ((rid + 1 == TRACE_BUFFER_NUM_RECORDS) && (total_deltas[i] == 0)) {
@@ -1116,6 +1128,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
     int i = 0, rid = 0;
     unsigned int total_written_records = 0;
     unsigned int delta, delta_a, delta_b;
+    unsigned int lost_records;
 
 	cur_ts = trace_get_nsec();
     init_dump_header(conf, &dump_header_rec, cur_ts, &iovec, &num_iovecs, &total_written_records);
@@ -1133,13 +1146,13 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
             continue;
         }
         
-        calculate_delta(mapped_records, &delta, &delta_a, &delta_b);
+        calculate_delta(mapped_records, &delta, &delta_a, &delta_b, &lost_records);
 		if (delta == 0) {
             continue;
         }
         
         unsigned int iovec_base_index = num_iovecs;
-        init_buffer_chunk_record(conf, mapped_buffer, mapped_records, &bd, &iovec, &num_iovecs, delta, delta_a, cur_ts, total_written_records);
+        init_buffer_chunk_record(conf, mapped_buffer, mapped_records, &bd, &iovec, &num_iovecs, delta, delta_a, lost_records, cur_ts, total_written_records);
 		last_rec = (struct trace_record *) (&mapped_records->records[mapped_records->current_read_record + delta_a - 1]);
 		if (delta_b) {
 			iovec = &conf->flush_iovec[num_iovecs++];
@@ -1162,6 +1175,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 		total_written_records += delta + 1;
 		mapped_records->next_flush_record = mapped_records->current_read_record + delta;
 		mapped_records->next_flush_record &= mapped_records->imutab->max_records_mask;
+        mapped_records->old_generation = last_rec->generation;
 	}
 
 	dump_header_rec.u.dump_header.total_dump_size = total_written_records - 1;

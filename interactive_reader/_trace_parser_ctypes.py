@@ -66,6 +66,7 @@ trace_record_buffer_dump._fields_ = [
     ('ts', c_ulonglong),
     ('records', c_uint),
     ('severity_type', c_uint),
+    ('lost_records', c_uint),
 ]
 trace_record_u._pack_ = 1
 trace_record_u._fields_ = [
@@ -274,6 +275,7 @@ TRACE_PARSER_SEARCHING_METADATA = 2
 TRACE_PARSER_OPERATION_IN_PROGRESS = 3
 TRACE_PARSER_UNKNOWN_RECORD_ENCOUNTERED = 4
 TRACE_PARSER_FOUND_METADATA = 5
+TRACE_PARSER_BUFFER_CHUNK_HEADER_PROCESSED = 6
 trace_parser_event_e = c_int # enum
 trace_parser_event_handler_t = CFUNCTYPE(None, POINTER(trace_parser), trace_parser_event_e, c_void_p, c_void_p)
 class _IO_FILE(Structure):
@@ -559,7 +561,8 @@ __all__ = ['TRACE_TYPE_ID_ENUM', 'N11__mbstate_t4DOT_26E',
            'trace_file_info', 'TRACE_MATCHER_TYPE',
            'TRACE_PARSER_UNKNOWN_RECORD_ENCOUNTERED', 'trace_parser',
            'N4DOT_234DOT_24E', 'RecordsAccumulatorList', 'tm',
-           '__cpu_mask', 'TRACE_MATCHER_FUNCTION', 'trace_record',
+           '__cpu_mask', 'TRACE_PARSER_BUFFER_CHUNK_HEADER_PROCESSED',
+           'TRACE_MATCHER_FUNCTION', 'trace_record',
            'TRACE_INPUT_STREAM_TYPE_NONSEEKABLE',
            '__pthread_internal_list', 'TRACE_MATCHER_PID',
            'TRACE_MATCHER_CONST_SUBSTRING', 'trace_input_stream_type',

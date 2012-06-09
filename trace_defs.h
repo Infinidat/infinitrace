@@ -180,6 +180,7 @@ struct trace_record {
 			unsigned long long ts;
 			unsigned int records;
 			unsigned int severity_type;
+            unsigned int lost_records;
 		} buffer_chunk;
 	} __attribute__((packed)) u;
 } __attribute__((packed));
