@@ -144,6 +144,8 @@ trace_record_accumulator._fields_ = [
     ('data_offset', c_uint),
     ('tid', c_ushort),
     ('ts', c_ulonglong),
+    ('severity', c_uint),
+    ('log_id', c_uint),
 ]
 class BufferParseContextList_s(Structure):
     pass
