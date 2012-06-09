@@ -1034,7 +1034,7 @@ static bool_t match_severity_with_match_expression(struct trace_record_matcher_s
     return TRUE;
 }
 
-static int process_dump_header_record(trace_parser_t *parser, struct trace_record_matcher_spec_s *filter, struct trace_record *record)
+static int process_dump_header_record(trace_parser_t *parser, struct trace_record_matcher_spec_s *filter, struct trace_record *record, trace_parser_event_handler_t handler, void *arg)
 {
     struct trace_record_dump_header *dump_header = &record->u.dump_header;
     struct trace_record_buffer_dump *buffer_chunk;
@@ -1065,8 +1065,9 @@ static int process_dump_header_record(trace_parser_t *parser, struct trace_recor
             return -1;
         }
 
+        
         buffer_chunk = &tmp_record.u.buffer_chunk;
-            
+
         rc = process_metadata_if_needed(parser, &tmp_record);
         if (0 != rc) {
             return -1;
@@ -1080,6 +1081,10 @@ static int process_dump_header_record(trace_parser_t *parser, struct trace_recor
         if (!match_record_dump_with_match_expression(filter, &tmp_record, buffer_context)) {
             current_offset = TRACE_PARSER__seek(parser, buffer_chunk->records, SEEK_CUR);
             continue;
+        }
+
+        if (handler) {
+            handler(parser, TRACE_PARSER_BUFFER_CHUNK_HEADER_PROCESSED, buffer_chunk, arg);
         }
         
         parser->buffer_dump_context.record_dump_contexts[i].start_offset = trace_file_current_offset(parser);
@@ -1363,8 +1368,7 @@ static int process_single_record(trace_parser_t *parser, struct trace_record_mat
         rc = accumulate_metadata(parser, record, handler, arg);
         break;
     case TRACE_REC_TYPE_DUMP_HEADER:
-        process_dump_header_record(parser, filter, record);
-        handler(parser, TRACE_PARSER_BUFFER_CHUNK_HEADER_PROCESSED, record, arg);
+        process_dump_header_record(parser, filter, record, handler, arg);
         break;
     case TRACE_REC_TYPE_BUFFER_CHUNK:
         process_buffer_chunk_record(parser, record);
@@ -1667,10 +1671,10 @@ int TRACE_PARSER__process_next_record_from_file(trace_parser_t *parser)
     return process_next_record_from_file(parser, &parser->record_filter, parser->event_handler, parser->arg);
 }
 
-static int process_dump_header_record_from_end(trace_parser_t *parser, struct trace_record_matcher_spec_s *filter, struct trace_record *record)
+static int process_dump_header_record_from_end(trace_parser_t *parser, struct trace_record_matcher_spec_s *filter, struct trace_record *record, trace_parser_event_handler_t event_handler, void *arg)
 {
     int rc;
-    rc = process_dump_header_record(parser, filter, record);
+    rc = process_dump_header_record(parser, filter, record, event_handler, arg);
     if (0 != rc) {
         return -1;
     }
@@ -1703,7 +1707,7 @@ static int process_previous_record_from_file(trace_parser_t *parser, struct trac
                 rc = -1; goto Exit;
             }
 
-            rc = process_dump_header_record_from_end(parser, filter, &record);
+            rc = process_dump_header_record_from_end(parser, filter, &record, event_handler, arg);
             if (0 != rc) {
                 rc = -1; goto Exit;
             }
@@ -1756,7 +1760,7 @@ static void count_entries(trace_parser_t *parser, enum trace_parser_event_e even
 {
     struct log_stats *stats = (struct log_stats *) arg;
     if (event == TRACE_PARSER_BUFFER_CHUNK_HEADER_PROCESSED) {
-        struct trace_record_buffer_dump *bd = &((struct trace_record *) event_data)->u.buffer_chunk;
+        struct trace_record_buffer_dump *bd = event_data;
         stats->lost_records += bd->lost_records;
         return;
     }
@@ -2071,7 +2075,7 @@ int set_buffer_dump_context_from_ts(trace_parser_t *parser, struct trace_record_
         return -1;
     }
 
-    rc = process_dump_header_record(parser, filter, &record);
+    rc = process_dump_header_record(parser, filter, &record, NULL, NULL);
     if (0 != rc) {
         return -1;
     }

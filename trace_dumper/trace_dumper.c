@@ -964,7 +964,7 @@ void calculate_delta(struct trace_mapped_records *mapped_records, unsigned int *
     *lost_records = (last_written_record + (last_record->generation * mapped_records->imutab->max_records)) -
         (mapped_records->old_generation * mapped_records->imutab->max_records) + (mapped_records->current_read_record);
 
-    if (*lost_records > mapped_records->imutab->max_records) {
+    if ((*lost_records) > mapped_records->imutab->max_records && mapped_records->old_generation < last_record->generation) {
         *lost_records -= mapped_records->imutab->max_records;
     } else {
         *lost_records = 0;
@@ -1024,6 +1024,7 @@ static void init_buffer_chunk_record(struct trace_dumper_configuration_s *conf, 
     (*bd)->lost_records = lost_records;
     (*bd)->records = delta;
     (*bd)->severity_type = mapped_records->imutab->severity_type;
+    
     mapped_records->next_flush_offset = conf->record_file.records_written + total_written_records;
     (*iovec) = &conf->flush_iovec[(*iovcnt)++];
     (*iovec)->iov_base = &mapped_records->buffer_dump_record;
@@ -1128,7 +1129,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
     int i = 0, rid = 0;
     unsigned int total_written_records = 0;
     unsigned int delta, delta_a, delta_b;
-    unsigned int lost_records;
+    unsigned int lost_records = 0;
 
 	cur_ts = trace_get_nsec();
     init_dump_header(conf, &dump_header_rec, cur_ts, &iovec, &num_iovecs, &total_written_records);
@@ -1136,6 +1137,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 	for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
 		struct trace_record_buffer_dump *bd;
 		struct trace_record *last_rec;
+        lost_records = 0;
         int rc = dump_metadata_if_necessary(conf, mapped_buffer);
         if (0 != rc) {
             return rc;
@@ -1167,8 +1169,6 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
                 return -1;
             }
         }
-            
-
         
 		mapped_records->next_flush_ts = last_rec->ts;
 
