@@ -17,6 +17,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 
 #define _GNU_SOURCE
 #include <sys/types.h>
+#include <errno.h>
 #include <sys/inotify.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -1322,7 +1323,9 @@ static int process_single_record(trace_parser_t *parser, struct trace_record_mat
             complete_rec.buffer = buffer;
             complete_rec.record = complete_record;
             if (!should_filter_record(filter, buffer, complete_record)) {
-                handler(parser, TRACE_PARSER_COMPLETE_TYPED_RECORD_PROCESSED, &complete_rec, arg);
+                if (handler(parser, TRACE_PARSER_COMPLETE_TYPED_RECORD_PROCESSED, &complete_rec, arg) < 0) {
+                    return -1;
+                }
                 *complete_typed_record_found = 1;
             }
 
@@ -1510,16 +1513,21 @@ static int process_next_record_from_file(trace_parser_t *parser, struct trace_re
     }
 }
 
-static void dumper_event_handler(trace_parser_t *parser, enum trace_parser_event_e event, void *event_data, void __attribute__((unused)) *arg)
+static int dumper_event_handler(trace_parser_t *parser, enum trace_parser_event_e event, void *event_data, void __attribute__((unused)) *arg)
 {
     if (event != TRACE_PARSER_COMPLETE_TYPED_RECORD_PROCESSED) {
-        return;
+        return 0;
     }
 
     char formatted_record[2048];
     struct parser_complete_typed_record *complete_typed_record = (struct parser_complete_typed_record *) event_data;
     TRACE_PARSER__format_typed_record(parser, complete_typed_record->buffer, complete_typed_record->record, formatted_record, sizeof(formatted_record));
-    printf("%s\n", formatted_record);
+    if (printf("%s\n", formatted_record) < 0) {
+        fprintf(stderr, "error writing log (%s)\n", strerror(errno));
+        return -1;
+    } else {
+        return 0;
+    }
 }
 
 int TRACE_PARSER__dump(trace_parser_t *parser)
@@ -1583,10 +1591,10 @@ static int log_id_to_log_template(trace_parser_t *parser, struct trace_parser_bu
 }
 
 
-static void dump_metadata(trace_parser_t *parser, enum trace_parser_event_e event, void *event_data, void __attribute__((unused)) *arg)
+static int dump_metadata(trace_parser_t *parser, enum trace_parser_event_e event, void *event_data, void __attribute__((unused)) *arg)
 {
     if (event != TRACE_PARSER_FOUND_METADATA) {
-        return;
+        return 0;
     }
 
     struct trace_parser_buffer_context *context = (struct trace_parser_buffer_context *) event_data;
@@ -1594,8 +1602,12 @@ static void dump_metadata(trace_parser_t *parser, enum trace_parser_event_e even
     char formatted_template[512];
     for (i = 0; i < context->metadata->log_descriptor_count; i++) {
         log_id_to_log_template(parser, context, i, formatted_template, sizeof(formatted_template));
-        printf("(%d) %s\n", i, formatted_template);
+        if (printf("(%d) %s\n", i, formatted_template) < 0) {
+            return -1;
+        }
     }
+
+    return 0;
 }
 
 int TRACE_PARSER__dump_all_metadata(trace_parser_t *parser)
@@ -1604,17 +1616,17 @@ int TRACE_PARSER__dump_all_metadata(trace_parser_t *parser)
     return 0;
 }
 
-static void format_record_event_handler(trace_parser_t *parser, enum trace_parser_event_e event, void *event_data, void *arg)
+static int format_record_event_handler(trace_parser_t *parser, enum trace_parser_event_e event, void *event_data, void *arg)
 {
     if (event != TRACE_PARSER_COMPLETE_TYPED_RECORD_PROCESSED) {
-        return;
+        return 0;
     }
 
     struct parser_complete_typed_record *complete_typed_record = (struct parser_complete_typed_record *) event_data;
     struct dump_context_s *dump_context = (struct dump_context_s *) arg;
     TRACE_PARSER__format_typed_record(parser, complete_typed_record->buffer, complete_typed_record->record, dump_context->formatted_record, sizeof(dump_context->formatted_record));
 
-    return;
+    return 0;
 }
 
 int TRACE_PARSER__process_next_from_memory(trace_parser_t *parser, struct trace_record *rec, char *formatted_record, unsigned int formatted_record_size, unsigned int *record_formatted)
@@ -1730,17 +1742,17 @@ int TRACE_PARSER__process_previous_record_from_file(trace_parser_t *parser)
 }
 
 
-static void count_entries(trace_parser_t *parser, enum trace_parser_event_e event, void __attribute__((unused)) *event_data, void __attribute__((unused)) *arg)
+static int count_entries(trace_parser_t *parser, enum trace_parser_event_e event, void __attribute__((unused)) *event_data, void __attribute__((unused)) *arg)
 {
     struct log_stats *stats = (struct log_stats *) arg;
     if (event == TRACE_PARSER_BUFFER_CHUNK_HEADER_PROCESSED) {
         struct trace_record_buffer_dump *bd = event_data;
         stats->lost_records += bd->lost_records;
-        return;
+        return 0;
     }
     
     if (event != TRACE_PARSER_COMPLETE_TYPED_RECORD_PROCESSED) {
-        return;
+        return 0;
     }
 
     struct parser_complete_typed_record *complete_typed_record = (struct parser_complete_typed_record *) event_data;
@@ -1748,7 +1760,7 @@ static void count_entries(trace_parser_t *parser, enum trace_parser_event_e even
     char template[512];
 
     if (!(complete_typed_record->record->termination & TRACE_TERMINATION_LAST)) {
-        return;
+        return 0;
     }
 
     unsigned int metadata_index = complete_typed_record->record->u.typed.log_id;
@@ -1766,8 +1778,7 @@ static void count_entries(trace_parser_t *parser, enum trace_parser_event_e even
     }
 
     stats->record_count_by_severity[complete_typed_record->record->severity]++;
-    
-    return;
+    return 0;
 }
 
 int TRACE_PARSER__dump_statistics(trace_parser_t *parser)
@@ -2142,18 +2153,20 @@ struct find_record_context_s {
 
 typedef int (*record_getter_t)(trace_parser_t *parser, struct trace_record_matcher_spec_s *filter, trace_parser_event_handler_t event_handler, void *arg);
 
-static void matcher_event_handler(trace_parser_t *parser, enum trace_parser_event_e event, void *event_data, void *arg)
+static int matcher_event_handler(trace_parser_t *parser, enum trace_parser_event_e event, void *event_data, void *arg)
 {
     struct find_record_context_s *context = (struct find_record_context_s *) arg;
     if (event != TRACE_PARSER_COMPLETE_TYPED_RECORD_PROCESSED) {
-        return;
+        return 0;
     }
 
     struct parser_complete_typed_record *complete_typed_record = (struct parser_complete_typed_record *) event_data;
     context->record_matched = match_record_with_match_expression(context->expression, complete_typed_record->buffer, complete_typed_record->record);
     if (context->record_matched) {
         parser->event_handler(parser, TRACE_PARSER_MATCHED_RECORD, complete_typed_record, parser->arg);
-    }    
+    }
+
+    return 0;
 }
 
 static int find_record_by_expression(trace_parser_t *parser, record_getter_t record_getter, struct trace_record_matcher_spec_s *expression)

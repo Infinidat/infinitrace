@@ -157,7 +157,7 @@ struct trace_record_matcher_spec_s {
 };
 
 struct trace_parser;
-typedef void (*trace_parser_event_handler_t)(struct trace_parser *parser, enum trace_parser_event_e event, void *event_data, void *arg);
+typedef int (*trace_parser_event_handler_t)(struct trace_parser *parser, enum trace_parser_event_e event, void *event_data, void *arg);
 typedef struct trace_parser {
     struct trace_file_info file_info;
     BufferParseContextList buffer_contexts;

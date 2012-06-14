@@ -195,9 +195,9 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, char **a
     return 0;
 }
 
-void read_event_handler(struct trace_parser  __attribute__((unused)) *parser, enum trace_parser_event_e  __attribute__((unused)) event, void  __attribute__((unused)) *event_data, void  __attribute__((unused)) *arg)
+int read_event_handler(struct trace_parser  __attribute__((unused)) *parser, enum trace_parser_event_e  __attribute__((unused)) event, void  __attribute__((unused)) *event_data, void  __attribute__((unused)) *arg)
 {
-    
+    return 0;
 }
 
 static void set_parser_filter(struct trace_reader_conf *conf, trace_parser_t *parser)

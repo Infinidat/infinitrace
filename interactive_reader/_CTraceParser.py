@@ -77,13 +77,13 @@ def make_bound_handler(parser_obj):
         pointer(record_copy)[0] = complete_record_ptr.contents.record[0]
         parser_obj.raw_record = record_copy
 
+        return 0;
     def safe_event_handler(parser, event_type, event_data, arg):
         try:
             event_handler(parser, event_type, event_data, arg)
         except KeyboardInterrupt:
-            parser_obj._event_handler('interrupted')
             if parser_obj._event_handler:
-                parser_obj._event_handler('interrupted')
+                return parser_obj._event_handler('interrupted')
 
     return safe_event_handler
 

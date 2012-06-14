@@ -1612,8 +1612,9 @@ static int parse_commandline(struct trace_dumper_configuration_s *conf, int argc
 #define ROTATION_COUNT 10
 #define FLUSH_DELTA 5000
 
-static void parser_event_handler(trace_parser_t __attribute__((unused)) *parser, enum trace_parser_event_e __attribute__((unused))event, void __attribute__((unused))*event_data, void __attribute__((unused)) *arg)
+static int parser_event_handler(trace_parser_t __attribute__((unused)) *parser, enum trace_parser_event_e __attribute__((unused))event, void __attribute__((unused))*event_data, void __attribute__((unused)) *arg)
 {
+    return 0;
 }
 
 static unsigned long long calculate_free_percentage(unsigned int percent, const char *logdir)
