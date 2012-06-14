@@ -25,6 +25,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include <unistd.h>
 #include <stdlib.h>
 #include <limits.h>
+#include <errno.h>
 #include <sys/mman.h>
 #include "min_max.h"
 #include "array_length.h"
@@ -197,6 +198,7 @@ static int read_file_header(trace_parser_t *parser, struct trace_record *record)
     }
 
     if (record->rec_type != TRACE_REC_TYPE_FILE_HEADER) {
+        errno = EINVAL;
         return -1;
     }
 

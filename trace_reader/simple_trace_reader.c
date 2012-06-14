@@ -270,7 +270,7 @@ static int dump_all_files(struct trace_reader_conf *conf)
         FilenameList__get_element(&conf->files_to_process, i, &filename);
         int rc = TRACE_PARSER__from_file(&parser, conf->tail, filename, read_event_handler, NULL);
         if (0 != rc) {
-            fprintf(stderr, "Error opening file %s\n", filename);
+            fprintf(stderr, "Error opening file %s (%s)\n", filename, strerror(errno));
             return -1;
         }
         set_parser_params(conf, &parser);
