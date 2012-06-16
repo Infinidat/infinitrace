@@ -43,7 +43,7 @@ class trace_record_file_header(Structure):
     pass
 trace_record_file_header._fields_ = [
     ('machine_id', c_ubyte * 24),
-    ('boot_time', c_ulonglong),
+    ('format_version', c_ushort),
 ]
 class trace_record_metadata(Structure):
     pass
@@ -180,7 +180,6 @@ class trace_file_info(Structure):
 trace_file_info._fields_ = [
     ('filename', c_char * 256),
     ('machine_id', c_char * 256),
-    ('boot_time', c_long),
     ('current_offset', c_longlong),
     ('end_offset', c_longlong),
     ('fd', c_int),

@@ -1353,7 +1353,6 @@ static int process_single_record(trace_parser_t *parser, struct trace_record_mat
         break;
     case TRACE_REC_TYPE_FILE_HEADER:
         strncpy(parser->file_info.machine_id, (char * ) record->u.file_header.machine_id, sizeof(parser->file_info.machine_id));
-        parser->file_info.boot_time = record->u.file_header.boot_time;
         break;
     case TRACE_REC_TYPE_METADATA_HEADER:
         rc = metadata_info_started(parser, record);
@@ -2005,10 +2004,13 @@ int TRACE_PARSER__from_file(trace_parser_t *parser, bool_t wait_for_input, const
         unmap_file(parser);
         return -1;
     }
+
+    if (file_header.u.file_header.format_version != TRACE_FORMAT_VERSION) {
+        return -1;
+    }
     
     strncpy(parser->file_info.filename, filename, sizeof(parser->file_info.filename));    
     strncpy(parser->file_info.machine_id, (char * ) file_header.u.file_header.machine_id, sizeof(parser->file_info.machine_id));
-    parser->file_info.boot_time = file_header.u.file_header.boot_time;
     return 0;
 }
 

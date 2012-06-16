@@ -964,14 +964,6 @@ static unsigned long long trace_get_walltime(void)
     return (((unsigned long long)tv.tv_sec) * 100000) + tv.tv_usec;
 }
 
-static long get_uptime(void)
-{
-    struct sysinfo info;
-    sysinfo(&info);
-
-    return info.uptime;
-}
-
 static int trace_write_header(struct trace_dumper_configuration_s *conf)
 {
     struct utsname ubuf;
@@ -987,7 +979,7 @@ static int trace_write_header(struct trace_dumper_configuration_s *conf)
 	rec.termination = (TRACE_TERMINATION_LAST | TRACE_TERMINATION_FIRST);
 
 	snprintf((char *)file_header->machine_id, sizeof(file_header->machine_id), "%s", ubuf.nodename);
-    file_header->boot_time = (time(NULL) - get_uptime()) * 1000000;
+    file_header->format_version = TRACE_FORMAT_VERSION;
 	SIMPLE_WRITE(conf, &rec, sizeof(rec));
 	if (rc != sizeof(rec)) {
 		return -1;

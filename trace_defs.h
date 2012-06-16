@@ -126,7 +126,8 @@ enum trace_file_type {
     TRACE_TYPE_ID_TYPEDEF = 3
 };
 
-
+#define TRACE_FORMAT_VERSION (0xA1)
+     
 struct trace_type_definition {
     enum trace_type_id type_id;
     const char *type_name;
@@ -163,7 +164,7 @@ struct trace_record {
 		} typed;
 		struct trace_record_file_header {
 			unsigned char machine_id[TRACE_MACHINE_ID_SIZE];
-            unsigned long long boot_time;
+            unsigned short format_version;
 		} file_header;
 		struct trace_record_metadata {
 			unsigned int metadata_size_bytes;

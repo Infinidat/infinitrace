@@ -64,7 +64,6 @@ struct parser_buffer_chunk_processed {
 struct trace_file_info {
     char filename[0x100];
     char machine_id[0x100];
-    long boot_time;
     long long current_offset;
     long long end_offset;
     int fd;
