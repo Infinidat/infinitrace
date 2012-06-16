@@ -165,6 +165,16 @@ parser_complete_typed_record._fields_ = [
     ('record', POINTER(trace_record)),
     ('buffer', POINTER(trace_parser_buffer_context)),
 ]
+class parser_buffer_chunk_processed(Structure):
+    pass
+class trace_record_buffer_dump(Structure):
+    pass
+parser_buffer_chunk_processed._fields_ = [
+    ('bd', POINTER(trace_record_buffer_dump)),
+    ('buffer', POINTER(trace_parser_buffer_context)),
+]
+trace_record_buffer_dump._fields_ = [
+]
 class trace_file_info(Structure):
     pass
 trace_file_info._fields_ = [
@@ -279,7 +289,7 @@ TRACE_PARSER_UNKNOWN_RECORD_ENCOUNTERED = 4
 TRACE_PARSER_FOUND_METADATA = 5
 TRACE_PARSER_BUFFER_CHUNK_HEADER_PROCESSED = 6
 trace_parser_event_e = c_int # enum
-trace_parser_event_handler_t = CFUNCTYPE(None, POINTER(trace_parser), trace_parser_event_e, c_void_p, c_void_p)
+trace_parser_event_handler_t = CFUNCTYPE(c_int, POINTER(trace_parser), trace_parser_event_e, c_void_p, c_void_p)
 class _IO_FILE(Structure):
     pass
 FILE = _IO_FILE
@@ -558,9 +568,10 @@ __va_list_tag._fields_ = [
 ]
 __all__ = ['TRACE_TYPE_ID_ENUM', 'N11__mbstate_t4DOT_26E',
            'cpu_set_t', '__pthread_mutex_s', 'trace_type_definition',
-           'TRACE_MATCHER_TRUE', 'N14pthread_cond_t3DOT_6E',
-           '__fsid_t', 'FILE', '__off64_t', 'size_t',
-           'trace_file_info', 'TRACE_MATCHER_TYPE',
+           'TRACE_MATCHER_TRUE', 'parser_buffer_chunk_processed',
+           'N14pthread_cond_t3DOT_6E', '__fsid_t', 'FILE',
+           '__off64_t', 'size_t', 'trace_file_info',
+           'TRACE_MATCHER_TYPE',
            'TRACE_PARSER_UNKNOWN_RECORD_ENCOUNTERED', 'trace_parser',
            'N4DOT_234DOT_24E', 'RecordsAccumulatorList', 'tm',
            '__cpu_mask', 'TRACE_PARSER_BUFFER_CHUNK_HEADER_PROCESSED',

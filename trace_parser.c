@@ -33,7 +33,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "list_template.h"
 #include "trace_metadata_util.h"
 #include "trace_parser.h"
-
+#include "object_pool.h"
 #define COLOR_BOOL parser->color
 #include "colors.h"
 CREATE_LIST_IMPLEMENTATION(BufferParseContextList, struct trace_parser_buffer_context)
@@ -386,13 +386,19 @@ struct log_occurrences {
 };
 
 
-struct log_stats {
-    struct log_occurrences logs[0x10000];
+typedef struct log_stats {
+    struct log_occurrences *logs;
+    unsigned int max_log_count;
     unsigned int unique_count;
     unsigned int record_count;
     unsigned long long lost_records;
     unsigned int record_count_by_severity[TRACE_SEV__MAX];
-};
+    struct trace_parser_buffer_context *buffer_context;
+} log_stats_t;
+
+OBJECT_POOL(log_stats_pool, log_stats_t, 20);
+static log_stats_pool_t log_stats_pool;
+#define LOG_STATS_POOL_LENGTH sizeof(log_stats_pool_t) / sizeof(log_stats_t)
 
 int compare_log_occurrence_entries(const void *a, const void *b)
 {
@@ -410,34 +416,43 @@ int compare_log_occurrence_entries(const void *a, const void *b)
     return 1;
 }
 
-static void dump_stats(struct log_stats *stats)
+static void dump_stats_pool(log_stats_pool_t stats_pool)
 {
-    unsigned int i;
-    qsort(stats->logs, stats->unique_count, sizeof(stats->logs[0]), compare_log_occurrence_entries);
-    printf("Unique log records count: %d\n", stats->unique_count);
-    printf("Record count: %d\n", stats->record_count);
-    printf("Lost records: %llu\n", stats->lost_records);
-    printf("Records by severity:\n");
-    for (i = 0; i < TRACE_SEV__MAX; i++) {
-        printf("    %s: %d\n", sev_to_str[i], stats->record_count_by_severity[i]);
-    }
-        
-    for (i = 0; i < stats->unique_count; i++) {
-        printf("%-10d : %-100s\n", stats->logs[i].occurrences, stats->logs[i].template);
-    }
-}
-
-static int find_log_stats(struct log_stats *stats, const char *template, struct log_occurrences **out)
-{
-    unsigned int i;
-    for (i = 0; i < stats->unique_count; i++) {
-        if (strcmp(stats->logs[i].template, template) == 0) {
-            *out = &stats->logs[i];
-            return 0;
+    unsigned int i, j;
+    char header[512];
+    char underline[512];
+    struct log_stats *stats;
+    for (i = 0; i < LOG_STATS_POOL_LENGTH; i++) {
+        if (!stats_pool[i].allocated) {
+            continue;
         }
-    }
+        
+        snprintf(header, sizeof(header), "Statistics for buffer %s [%d]\n",
+                 stats_pool[i].data.buffer_context->name,
+                 stats_pool[i].data.buffer_context->id);
+        memset(underline, '-', strlen(header));
+        underline[strlen(underline)] = '\0';
+        printf("%s", header);
+        printf("%s\n", underline);
 
-    return -1;
+        stats = &stats_pool[i].data;
+        qsort(stats->logs, stats->max_log_count, sizeof(stats->logs[0]), compare_log_occurrence_entries);
+        printf("Unique log records count: %d\n", stats->unique_count);
+        printf("Record count: %d\n", stats->record_count);
+        printf("Lost records: %llu\n", stats->lost_records);
+        printf("Records by severity:\n");
+        for (j = 0; j < TRACE_SEV__MAX; j++) {
+            printf("    %s: %d\n", sev_to_str[j], stats->record_count_by_severity[j]);
+        }
+        
+        for (j = 0; j < stats->max_log_count; j++) {
+            if (stats->logs[j].occurrences) {
+                printf("%-10d : %-100s\n", stats->logs[j].occurrences, stats->logs[j].template);
+            }
+        }
+
+        printf("\n\n");
+    }
 }
 
 struct dump_context_s {
@@ -1060,7 +1075,8 @@ static int process_dump_header_record(trace_parser_t *parser, struct trace_recor
         }
 
         if (handler) {
-            handler(parser, TRACE_PARSER_BUFFER_CHUNK_HEADER_PROCESSED, buffer_chunk, arg);
+            struct parser_buffer_chunk_processed chunk_processed = {buffer_chunk, buffer_context};
+            handler(parser, TRACE_PARSER_BUFFER_CHUNK_HEADER_PROCESSED, &chunk_processed, arg);
         }
         
         parser->buffer_dump_context.record_dump_contexts[i].start_offset = trace_file_current_offset(parser);
@@ -1627,6 +1643,7 @@ static int log_id_to_log_template(trace_parser_t *parser, struct trace_parser_bu
 {
     int total_length = 0;
     unsigned int minimal_log_size = get_minimal_log_id_size(context, log_id);
+    memset(formatted_record, 0, formatted_record_size);
     if (parser->color) {
         APPEND_FORMATTED_TEXT(_F_MAGENTA("%-20s") _ANSI_DEFAULTS(" [") _F_BLUE_BOLD("%5d") _ANSI_DEFAULTS("] <%03d>:  "),
                               context->name, context->id, minimal_log_size);
@@ -1795,44 +1812,89 @@ int TRACE_PARSER__process_previous_record_from_file(trace_parser_t *parser)
     return rc;
 }
 
+static struct log_stats *get_buffer_log_stats(log_stats_pool_t pool, struct trace_parser_buffer_context *buffer)
+{
+    unsigned int i;
+    for (i = 0; i < LOG_STATS_POOL_LENGTH; i++) {
+        if (pool[i].allocated && pool[i].data.buffer_context == buffer) {
+            return &pool[i].data;
+        }
+    }
+
+    struct log_stats *stats = log_stats_pool__allocate(pool);
+    if (stats == NULL) {
+        return NULL;
+    }
+
+    stats->logs = malloc(buffer->metadata->log_descriptor_count * sizeof(struct log_occurrences));
+    if (NULL == stats->logs) {
+        return NULL;
+    }
+
+    memset(stats->logs, 0, buffer->metadata->log_descriptor_count * sizeof(struct log_occurrences));
+    stats->max_log_count = buffer->metadata->log_descriptor_count;
+    stats->buffer_context = buffer;
+    return stats;
+}
 
 static int count_entries(trace_parser_t *parser, enum trace_parser_event_e event, void __attribute__((unused)) *event_data, void __attribute__((unused)) *arg)
 {
-    struct log_stats *stats = (struct log_stats *) arg;
+    log_stats_pool_t *stats_pool = (log_stats_pool_t *) arg;
+    char template[512];
+    struct log_stats *stats;
+    
     if (event == TRACE_PARSER_BUFFER_CHUNK_HEADER_PROCESSED) {
-        struct trace_record_buffer_dump *bd = event_data;
-        stats->lost_records += bd->lost_records;
+        struct parser_buffer_chunk_processed *chunk_processed = (struct parser_buffer_chunk_processed *) event_data;
+        stats = get_buffer_log_stats(*stats_pool, chunk_processed->buffer);
+        if (NULL == stats) {
+            return 0;
+        }
+        stats->lost_records += chunk_processed->bd->lost_records;
         return 0;
     }
     
     if (event != TRACE_PARSER_COMPLETE_TYPED_RECORD_PROCESSED) {
         return 0;
     }
-
+    
     struct parser_complete_typed_record *complete_typed_record = (struct parser_complete_typed_record *) event_data;
-    struct log_occurrences *s = NULL;
-    char template[512];
-
     if (!(complete_typed_record->record->termination & TRACE_TERMINATION_LAST)) {
         return 0;
     }
 
+    stats = get_buffer_log_stats(*stats_pool, complete_typed_record->buffer);
+    if (NULL == stats) {
+        return 0;
+    }
+    
     unsigned int metadata_index = complete_typed_record->record->u.typed.log_id;
-    
-    log_id_to_log_template(parser, complete_typed_record->buffer, metadata_index, template, sizeof(template));
-    
-    int rc = find_log_stats(stats, template, &s);
-    stats->record_count++;
-    if (rc < 0) {
-            strncpy(stats->logs[stats->unique_count].template, template, sizeof(stats->logs[stats->unique_count]));
-            stats->logs[stats->unique_count].occurrences = 1;
-            stats->unique_count++;
-    } else {
-        s->occurrences++;
+    if (metadata_index >= stats->max_log_count) {
+        abort();
     }
 
+    if (stats->logs[metadata_index].template[0] == '\0') {
+        log_id_to_log_template(parser, complete_typed_record->buffer, metadata_index, template, sizeof(template));
+        strncpy(stats->logs[metadata_index].template, template, sizeof(stats->logs[metadata_index]));
+        stats->logs[metadata_index].occurrences = 1;
+        stats->unique_count++;
+    } else {
+        stats->logs[metadata_index].occurrences++;
+    }
+    
     stats->record_count_by_severity[complete_typed_record->record->severity]++;
     return 0;
+}
+
+static void free_stats_pool(log_stats_pool_t stats_pool)
+{
+    unsigned int i;
+    for (i = 0; i < LOG_STATS_POOL_LENGTH; i++) {
+        if (!stats_pool[i].allocated) {
+            continue;
+        }
+
+        free(stats_pool[i].data.logs);
+    }
 }
 
 int TRACE_PARSER__dump_statistics(trace_parser_t *parser)
@@ -1840,18 +1902,20 @@ int TRACE_PARSER__dump_statistics(trace_parser_t *parser)
     if (parser->stream_type != TRACE_INPUT_STREAM_TYPE_SEEKABLE_FILE) {
         return -1;
     }
-    
-    struct log_stats *stats = malloc(sizeof(struct log_stats));
+
+    log_stats_pool__init(log_stats_pool);
     unsigned int count = 0;
     while (1) {
-        int rc = process_next_record_from_file(parser, &parser->record_filter, count_entries, (void *) stats);
+        int rc = process_next_record_from_file(parser, &parser->record_filter, count_entries, (void *) log_stats_pool);
         count++;
         if (0 != rc) {
-            dump_stats(stats);
-            free(stats);
-            return 0;
+            break;
         }
     }
+
+    dump_stats_pool(log_stats_pool);
+    free_stats_pool(log_stats_pool);
+    return 0;
 }
 
 static int init_inotify(trace_parser_t *parser, const char *filename)

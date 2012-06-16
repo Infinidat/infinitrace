@@ -56,6 +56,11 @@ struct parser_complete_typed_record {
     struct trace_parser_buffer_context *buffer;
 };
 
+struct parser_buffer_chunk_processed {
+    struct trace_record_buffer_dump *bd;
+    struct trace_parser_buffer_context *buffer;
+};
+    
 struct trace_file_info {
     char filename[0x100];
     char machine_id[0x100];
