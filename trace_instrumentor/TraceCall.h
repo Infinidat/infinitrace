@@ -15,6 +15,8 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
    limitations under the License.
 ***/
 
+/* A CLANG plug-in that allows instrumentation to be generated. */
+
 #include "clang/Rewrite/ASTConsumers.h"
 #include "clang/Rewrite/Rewriter.h"
 #include "clang/Lex/Lexer.h"

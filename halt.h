@@ -23,6 +23,8 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 extern "C" {
 #endif
 
+/* Hang the thread indefinitely */
+
 void halt(const char *filename, const char *function, int lineno);
     
 #ifdef __cplusplus

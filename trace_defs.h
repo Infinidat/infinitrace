@@ -15,6 +15,8 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
    limitations under the License.
 ***/
 
+/* Trace dumper common formats, constants and inline functions */
+
 #ifndef __TRACE_DEFS_H__
 #define __TRACE_DEFS_H__
 
@@ -73,12 +75,19 @@ static inline enum trace_severity trace_function_name_to_severity(const char *fu
     return TRACE_SEV_INVALID;
 }
 
+/* The trace record type constants defined below are used in the rec_type field of the trace_record structure */
+
 enum trace_rec_type {
 	TRACE_REC_TYPE_UNKNOWN = 0,
-	TRACE_REC_TYPE_TYPED = 1,
-	TRACE_REC_TYPE_FILE_HEADER = 2,
+	TRACE_REC_TYPE_TYPED = 1,		/* A produced by the user logging explicitly or function traces */
+	TRACE_REC_TYPE_FILE_HEADER = 2,	/* Appears only at the start of a new file */
+	
+	/* For every process that is being traced the file contains a metadata block,
+	   comprising a metadata h header abd metadata payload records. */
 	TRACE_REC_TYPE_METADATA_HEADER = 3,
 	TRACE_REC_TYPE_METADATA_PAYLOAD = 4,
+	
+	/* Appears at the beginning of every chunk of data written in a single writev() invocation */
 	TRACE_REC_TYPE_DUMP_HEADER = 5,
 	TRACE_REC_TYPE_BUFFER_CHUNK = 6,
     TRACE_REC_TYPE_END_OF_FILE = 7
@@ -158,6 +167,9 @@ struct trace_record {
 	/* 44 bytes payload */
 	union trace_record_u {
 		unsigned char payload[TRACE_RECORD_PAYLOAD_SIZE];
+		
+		/* For explanation of the role of each record type, see above the comments for the 
+           corresponding rec_type value */
 		struct trace_record_typed {
 			unsigned int log_id;
 			unsigned char payload[0];
@@ -209,6 +221,7 @@ enum trace_param_desc_flags {
     TRACE_PARAM_FLAG_RECORD  = 0x20000,
 };
 
+/* Descriptor for an individual parameter being logged */
 struct trace_param_descriptor {
 	unsigned long flags;
     const char *param_name;
@@ -219,6 +232,7 @@ struct trace_param_descriptor {
     };
 };
 
+/* Descriptor for an individual instance of logging in the code, e.g. an invocation of DEBUG(), etc. */
 struct trace_log_descriptor {
     enum trace_log_descriptor_kind kind;
     struct trace_param_descriptor *params;

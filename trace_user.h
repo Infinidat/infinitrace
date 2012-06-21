@@ -30,13 +30,21 @@ void TRACE__fini(void);// __attribute__((destructor));
     
 typedef unsigned char hex_t;
 #define HEX_REPR(x, size) (hex_t (*)[size]) x
+
+/* Function instrumentation */
 #define NO_INSTRUMENT __attribute__((no_instrument_function))
 #define INSTRUMENTED __attribute__((no_instrument_function))
+
+/* Allow the meaning of __attribute__((no_instrument_function)) to be reversed if the user wants no-instrumentation as the default for
+   a particular file
+*/
 #define ENTIRE_FILE_NO_FUNC_TRACE static const int __traces_file_no_instrument = 1;
 
- #ifndef __has_attribute         
+#ifndef __has_attribute         
   #define __has_attribute(x) 0
 #endif
+
+/* The following macros are detected by the source-code preprocessor and converted to calls to dumper functions. */
     
 #ifdef __TRACE_INSTRUMENTATION
 #define CALL_INVALID __attribute__((error("traces: Trace symbol name should not appear in final code, this is a bug. Contact Yotam Rubin <yotamrubin@gmail.com> and report a bug")))

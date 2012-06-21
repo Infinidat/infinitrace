@@ -14,6 +14,8 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
    See the License for the specific language governing permissions and
    limitations under the License.
 ***/
+/* Allows code with tracing to compile without linking tracing */
+
 
 #include "trace_lib.h"
 #include "trace_user.h"
@@ -41,11 +43,6 @@ void WARN()
 void FATAL()
 {
 }
-
-/* Variabled for monitoring trace run duration */
-const unsigned trace_duration_thresholds_ms[] = {1<<31};  /* Note: Should be in ascending order */
-const unsigned trace_duration_thresholds_count = 1;
-unsigned trace_duration_counters[1];
 
 void trace_runtime_control_set_default_min_sev(enum trace_severity sev __attribute__ ((unused))) {}
 

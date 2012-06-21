@@ -15,6 +15,8 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
    limitations under the License.
 ***/
 
+/* Supporting functions and data structures used by the trace code that that ccwrap.py injects into the source files */
+
 #ifndef __TRACE_LIB_H__
 #define __TRACE_LIB_H__
 
@@ -41,6 +43,8 @@ extern "C" {
 #endif    
 
 #define _O_RDONLY	00000000   
+
+/* Declarations of data structures which are defined in trace_user.c */
 extern struct trace_buffer *current_trace_buffer;
 extern struct trace_log_descriptor __static_log_information_start;
 extern struct trace_log_descriptor __static_log_information_end;
@@ -50,6 +54,7 @@ extern __thread unsigned short trace_current_nesting;
 extern const struct trace_runtime_control *p_trace_runtime_control;    
 void trace_runtime_control_set_default_min_sev(enum trace_severity sev);
 
+/* Supporting inline functions used by the trace code that that ccwrap.py injects into the source files */
 static inline unsigned short int trace_get_pid(void)
 {
     static __thread int pid_cache = 0;
@@ -143,6 +148,7 @@ static inline void set_current_trace_buffer_ptr(struct trace_buffer *trace_buffe
     current_trace_buffer = trace_buffer_ptr;
 }
 
+/* TODO: Consider allowing an option for lossless tracing. */
 static inline struct trace_record *trace_get_record(enum trace_severity severity, unsigned int *generation)
 {
 	struct trace_records *records;
@@ -156,6 +162,9 @@ static inline struct trace_record *trace_get_record(enum trace_severity severity
     } else {
 		records = &current_trace_buffer->u.records._other;
     }
+
+	/* To implement lossless mode: Make sure we don't overwrite data beyond 
+	   records->imutab.latest_flush_ts */
 
     record_index = __sync_fetch_and_add(&records->mutab.current_record, 1);
     *generation = record_index >> records->imutab.max_records_shift;

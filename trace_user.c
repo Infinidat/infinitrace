@@ -15,6 +15,8 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
    limitations under the License.
 ***/
 
+
+
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/mman.h>
@@ -33,7 +35,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 
 #include "halt.h"
 
-
+/* Global per process/thread data structures */
 struct trace_buffer *current_trace_buffer = NULL;
 __thread unsigned short trace_current_nesting;
 
@@ -57,6 +59,9 @@ void trace_runtime_control_set_default_min_sev(enum trace_severity sev)
     dest = *string_table;                               \
     *string_table += str_size;      \
     } while(0);                                              
+
+/* Routines for initializing the data structures that support tracing inside the traced process. */
+
 
 static void copy_log_params_to_allocated_buffer(struct trace_log_descriptor *log_desc, struct trace_param_descriptor **params,
                                                 char **string_table)
@@ -371,7 +376,9 @@ static void get_exec_name(char *exec_name, unsigned int exec_name_size)
     strncpy(exec_name, basename(exec_path), exec_name_size);    
 }
 
+/* Place TRACE__init in the constructors section, which causes it to be executed before main() */
 static void TRACE__init(void) __attribute__((constructor));
+
 static void TRACE__init(void)
 {
     char buffer_name[512];
