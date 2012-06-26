@@ -261,6 +261,7 @@ private:
     bool prepareSingleTraceParam(const Expr *trace_param, TraceParam &parsed_trace_param);
     void replaceExpr(const Expr *expr, std::string replacement);
 
+    std::string getSeverity();
     std::string getTypeDefinitionExternDeclratations();
     std::string genMIN(std::string &a, std::string &b);
     

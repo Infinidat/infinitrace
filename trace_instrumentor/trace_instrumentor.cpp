@@ -58,6 +58,15 @@ static const Type *get_expr_type(const Expr *expr)
      }
  }
 
+std::string externGlobal(LangOptions const& langOpts)
+{
+	if (langOpts.CPlusPlus == 1) {
+		return "extern\"C\"";
+	} else {
+		return "extern";
+	}
+}
+
  std::string & replaceAll(
      std::string &result, 
      const std::string& replaceWhat, 
@@ -327,6 +336,11 @@ void TraceCall::replaceExpr(const Expr *expr, std::string replacement)
 
 const char *sev_to_str[] = {"INVALID", "FUNC_TRACE", "DEBUG", "INFO", "WARN", "ERR", "FATAL"};
 
+std::string TraceCall::getSeverity()
+{
+	return "TRACE_SEV_" + std::string(sev_to_str[severity]);
+}
+
 std::string TraceCall::constlength_commitRecord()
 {
     return "__builtin_memcpy(" + castTo(ast.getLangOptions(), "_record_ptr", "char *") + ", " + castTo(ast.getLangOptions(), "&_record", "char *") + ", sizeof(struct trace_record));";
@@ -362,7 +376,7 @@ std::string TraceCall::varlength_initializeTypedRecord(enum trace_severity sever
     code << "_record->termination = TRACE_TERMINATION_FIRST;";
     code << "_record->rec_type  = TRACE_REC_TYPE_TYPED;";
     code << "_record->nesting = trace_get_nesting_level();";
-    code << "_record->severity = TRACE_SEV_" << sev_to_str[severity] << ";";
+    code << "_record->severity = " << getSeverity() << ";";
     code << "_record->u.typed.log_id = &tracelog - &__static_log_information_start;";
     code << "(*buf_left) = " << TRACE_RECORD_PAYLOAD_SIZE << " - 4;";
     code << "(*typed_buf) += 4;";
@@ -378,7 +392,7 @@ std::string TraceCall::constlength_initializeTypedRecord(enum trace_severity sev
     code << "_record.termination = TRACE_TERMINATION_FIRST;";
     code << "_record.rec_type  = TRACE_REC_TYPE_TYPED;";
     code << "_record.nesting = trace_get_nesting_level();";
-    code << "_record.severity = TRACE_SEV_" << sev_to_str[severity] << ";";
+    code << "_record.severity = " << getSeverity() << ";";
     code << "_record.u.typed.log_id = &tracelog - &__static_log_information_start;";
     (*buf_left) = TRACE_RECORD_PAYLOAD_SIZE - 4;
     return code.str();
@@ -584,7 +598,8 @@ void TraceCall::expand()
 {
     std::string declaration = getTraceDeclaration();
     std::string trace_write_expression = varlength_getFullTraceWriteExpression();
-    replaceExpr(call_expr, "{" + declaration + "if (current_trace_buffer != 0){"  + trace_write_expression + "}}");    
+    replaceExpr(call_expr, "{" + declaration + "if ((" + 
+    	getSeverity() +  ">= p_trace_runtime_control->default_min_sev) && (current_trace_buffer != 0)){"  + trace_write_expression + "}}");    
 }
 
 void TraceCall::expandWithoutDeclaration()

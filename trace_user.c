@@ -37,6 +37,19 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 struct trace_buffer *current_trace_buffer = NULL;
 __thread unsigned short trace_current_nesting;
 
+
+static struct trace_runtime_control runtime_control = 
+{
+	TRACE_SEV_INVALID /* 0 */
+};
+
+const struct trace_runtime_control *p_trace_runtime_control = &runtime_control;
+
+void trace_runtime_control_set_default_min_sev(enum trace_severity sev)
+{
+	runtime_control.default_min_sev = sev;
+}
+
 #define ALLOC_STRING(dest, source)                      \
     do {                                                \
     unsigned int str_size = __builtin_strlen(source) + 1;   \

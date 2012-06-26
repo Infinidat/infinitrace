@@ -46,7 +46,10 @@ extern struct trace_log_descriptor __static_log_information_start;
 extern struct trace_log_descriptor __static_log_information_end;
 extern struct trace_type_definition *__type_information_start;
 extern __thread unsigned short trace_current_nesting; 
-    
+
+extern const struct trace_runtime_control *p_trace_runtime_control;    
+void trace_runtime_control_set_default_min_sev(enum trace_severity sev);
+
 static inline unsigned short int trace_get_pid(void)
 {
     static __thread int pid_cache = 0;

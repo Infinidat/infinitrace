@@ -232,6 +232,13 @@ struct trace_metadata_region {
     char data[0];
 };
      
+     
+/* Used to control at runtime what data will be written to the trace */
+struct trace_runtime_control {
+	enum trace_severity default_min_sev; /* Minimum severity for reporting. Per-subsystem definitions take precedence over it */
+	/* TODO: Define per-subsystem severity limits. */
+};
+     
 #ifdef __cplusplus
 }
 #endif
