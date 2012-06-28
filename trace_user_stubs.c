@@ -15,6 +15,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
    limitations under the License.
 ***/
 
+#include "trace_lib.h"
 #include "trace_user.h"
 
 void REPR()
@@ -40,3 +41,11 @@ void WARN()
 void FATAL()
 {
 }
+
+/* Variabled for monitoring trace run duration */
+const unsigned trace_duration_thresholds_ms[] = {1<<31};  /* Note: Should be in ascending order */
+const unsigned trace_duration_thresholds_count = 1;
+unsigned trace_duration_counters[1];
+
+void trace_runtime_control_set_default_min_sev(enum trace_severity sev __attribute__ ((unused))) {}
+
