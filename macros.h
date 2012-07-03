@@ -21,5 +21,6 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "halt.h"
 
 #define ASSERT(x) {if (!(x)) { HALT();}}
-
+#define REPORT_ERROR_RETURN(ret_val) ERR(__func__, "() (in", __FILE__, ":", __LINE__,") returned", (ret_val));
+#define REPORT_AND_RETURN(ret_val) if (0 != (ret_val)) { REPORT_ERROR_RETURN(ret_val); } return ret_val;
 #endif

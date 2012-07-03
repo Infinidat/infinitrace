@@ -232,7 +232,7 @@ static int dump_iovector_to_parser(struct trace_dumper_configuration_s *conf, st
                     }
                 }
                 if (0 != rc) {
-                    return -1;
+                	REPORT_AND_RETURN(-1);
                 }
             }
 
@@ -320,7 +320,8 @@ static int find_oldest_trace_file(struct trace_dumper_configuration_s *conf, cha
     dir = opendir(conf->logs_base);
 
     if (dir == NULL) {
-        return -1;
+    	syslog(LOG_USER|LOG_WARNING, "Failed to open the trace directory %s", conf->logs_base);
+    	return -1;
     }
     
     while (TRUE) {
@@ -347,14 +348,19 @@ Exit:
 
 static int delete_oldest_trace_file(struct trace_dumper_configuration_s *conf)
 {
-    char filename[0x100];
+    char filename[0x100] = { '\0' };
     int rc = find_oldest_trace_file(conf, filename, sizeof(filename));
     if (0 != rc) {
-        return -1;
+    	syslog(LOG_NOTICE|LOG_USER, "Failed to find an oldest trace file to delete");
+    	return -1;
     }
 
     INFO("Deleting oldest trace file", filename);
-    return unlink(filename);
+    rc = unlink(filename);
+    if (0 != rc) {
+    	syslog(LOG_WARNING|LOG_USER, "Failed to delete the log file %s due to error: %s", filename, strerror(errno));
+    }
+    return rc;
 }
 
 
@@ -487,10 +493,29 @@ static int handle_full_filesystem(struct trace_dumper_configuration_s *conf, con
     return 0;
 }
 
+static int dump_to_parser_if_necessary(struct trace_dumper_configuration_s *conf, const struct iovec *iov, int iovcnt, bool_t dump_to_parser)
+{
+	if (dump_to_parser && conf->online && iovcnt > 0) {
+	        int parser_rc = dump_iovector_to_parser(conf, &conf->parser, iov, iovcnt);
+	        if (parser_rc != 0) {
+	        	int err = errno;
+				syslog(LOG_USER|LOG_ERR, "trace_dumper: Dumping parsed traces failed due to %s", strerror(err));
+				ERR("Dumping parsed traces failed with error", strerror(err));
+				return -1;
+	        }
+	    }
+
+	return 0;
+}
+
 static int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, const struct iovec *iov, int iovcnt, bool_t dump_to_parser)
 {
-    int expected_bytes = total_iovec_len(iov, iovcnt);
+	int expected_bytes = total_iovec_len(iov, iovcnt);
     int rc = 0;
+    unsigned retries_due_to_full_fs = 0;
+    unsigned retries_due_to_partial_write = 0;
+    const useconds_t retry_interval = TRACE_SECOND / 60;
+    const useconds_t partial_write_retry_interval = 10000;
     
     if (conf->record_file.fd >= 0) {
         while (TRUE) {
@@ -500,14 +525,50 @@ static int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct 
                 rc = writev(record_file->fd, iov, iovcnt);
             }
         
-            if (rc == -1 && errno == ENOSPC) {
-                handle_full_filesystem(conf, iov, iovcnt);
-                usleep(TRACE_SECOND / 3);
+            if (rc < 0) {
+            	if (errno == ENOSPC) {
+					if (0 == retries_due_to_full_fs)
+					{
+						syslog(LOG_USER|LOG_WARNING, "Writing traces to %s paused due to a full filesystem", conf->record_file.filename);
+					}
+					handle_full_filesystem(conf, iov, iovcnt);
+					++retries_due_to_full_fs;
+            	}
+            	else
+            	{
+            		syslog(LOG_USER|LOG_ERR, "Had unexpected error %s while writing to %s", strerror(errno), conf->record_file.filename);
+            	}
+                usleep(retry_interval);
                 continue;
             }
+            else if (rc != expected_bytes) {
+            	int err = errno;
 
-            if (rc != expected_bytes) {
-                return -1;
+            	ERR("Only wrote", rc, "of", expected_bytes, "bytes, and got error", err, ". rewinding by the number of bytes written");
+            	off64_t eof_pos = lseek64(record_file->fd, (off64_t)-rc, SEEK_CUR);
+            	ftruncate64(record_file->fd, eof_pos);
+
+            	if (0 == retries_due_to_partial_write % 500) {
+            		syslog(LOG_USER|LOG_WARNING, "Writing traces to %s had to be rolled back since only %d of %d bytes were written. retried %u times so far.",
+            				conf->record_file.filename, rc, expected_bytes, retries_due_to_partial_write);
+            	}
+            	++retries_due_to_partial_write;
+            	usleep(partial_write_retry_interval);
+            	continue;
+            }
+
+            if (retries_due_to_full_fs > 0) {
+            	syslog(LOG_USER|LOG_NOTICE,
+            		  "Writing traces to %s resumed after a pause due a full file-system after %u retries every %.2f seconds",
+            		  conf->record_file.filename, retries_due_to_full_fs, retry_interval/1E6);
+            	retries_due_to_full_fs = 0;
+            }
+
+            if (retries_due_to_partial_write > 0) {
+                syslog(LOG_USER|LOG_NOTICE,
+				  "Writing traces to %s resumed after a pause due to to partial write after %u retries every %.1f ms",
+				  conf->record_file.filename, retries_due_to_partial_write, partial_write_retry_interval/1000.0);
+                retries_due_to_partial_write = 0;
             }
 
             record_file->records_written += expected_bytes / sizeof(struct trace_record);
@@ -515,12 +576,7 @@ static int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct 
         }
     }
 
-    if (dump_to_parser && conf->online) {
-        int parser_rc = dump_iovector_to_parser(conf, &conf->parser, iov, iovcnt);
-        if (parser_rc != 0) {
-            return -1;
-        }
-    }
+    dump_to_parser_if_necessary(conf, iov, iovcnt, dump_to_parser);
 
     return expected_bytes;
 }
@@ -602,11 +658,10 @@ static int trace_dump_metadata(struct trace_dumper_configuration_s *conf, struct
     num_records = mapped_buffer->metadata.size / (TRACE_RECORD_PAYLOAD_SIZE) + ((mapped_buffer->metadata.size % (TRACE_RECORD_PAYLOAD_SIZE)) ? 1 : 0);
     rc = trace_dumper_write(conf, &conf->record_file, mapped_buffer->metadata.metadata_iovec, 2 * num_records, TRUE);
     if ((unsigned int) rc != num_records * sizeof(struct trace_record)) {
-        return -1;
+    	return -1;
     }
 
-    rc = write_metadata_end(conf, mapped_buffer);
-    return rc;
+    return write_metadata_end(conf, mapped_buffer);
 }
 
 static int stat_pid(unsigned short pid, struct stat *stat_buf)
@@ -621,10 +676,10 @@ static int get_process_time(unsigned short pid, unsigned long long *curtime)
     struct stat stat_buf;
     int rc = stat_pid(pid, &stat_buf);
     if (0 != rc) {
-        return -1;
+    	REPORT_AND_RETURN(-1);
     }
 
-    *curtime = stat_buf.st_ctim.tv_sec * 1000000000;
+    *curtime = stat_buf.st_ctim.tv_sec * 1000000000ULL;
     *curtime += stat_buf.st_ctim.tv_nsec;
     return 0;
 }
@@ -720,7 +775,7 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
     }
     
     struct trace_buffer *unmapped_trace_buffer = (struct trace_buffer *) mapped_dynamic_addr;
-    struct trace_mapped_buffer *new_mapped_buffer;
+    struct trace_mapped_buffer *new_mapped_buffer = NULL;
     struct trace_metadata_region *static_log_data_region = (struct trace_metadata_region *) mapped_static_log_data_addr;
     
     if (trace_should_filter(conf, static_log_data_region->name)) {
@@ -794,7 +849,12 @@ close_static:
 delete_shm_files:
     delete_shm_files(pid);
 exit:
-    return rc;
+	if (0 != rc) {
+		const char *err_name = strerror(errno);
+		const char *proc_name = ((NULL == new_mapped_buffer) ? "(unknown)" : new_mapped_buffer->name);
+		syslog(LOG_USER|LOG_ERR, "Failed to map buffer for pid %d - %s. Last Error: %s.", (int) pid, proc_name, err_name);
+	}
+	return rc;
 }
 
 static bool_t buffer_mapped(struct trace_dumper_configuration_s * conf, unsigned short pid)
@@ -820,7 +880,7 @@ static int process_potential_trace_buffer(struct trace_dumper_configuration_s *c
 
     pid_t pid = get_pid_from_shm_name(shm_name);
     if (pid <= 0) {
-        return -1;
+    	return -1;
     }
 
     if (is_dynamic_log_data_shm_region(shm_name) && !buffer_mapped(conf, pid)) {
@@ -839,7 +899,8 @@ static int map_new_buffers(struct trace_dumper_configuration_s *conf)
     dir = opendir(SHM_DIR);
 
     if (dir == NULL) {
-        return -1;
+    	syslog(LOG_USER|LOG_ERR, "Failed to access the shared-memory directory " SHM_DIR);
+    	return -1;
     }
     
     while (TRUE) {
@@ -850,7 +911,8 @@ static int map_new_buffers(struct trace_dumper_configuration_s *conf)
 
         rc = process_potential_trace_buffer(conf, ent->d_name);
         if (0 != rc) {
-            ERR("Error processing trace buffer");
+        	syslog(LOG_USER|LOG_ERR, "Failed to process the trace buffer %s.", ent->d_name);
+            ERR("Error processing trace buffer", ent->d_name);
             continue;
         }
     }
@@ -879,7 +941,9 @@ static long long total_records_in_logdir(const char *logdir)
     dir = opendir(logdir);
 
     if (dir == NULL) {
-        ERR("Error opening dir %s", strerror(errno));
+    	int err = errno;
+        syslog(LOG_USER|LOG_ERR, "Error %s while trying to open the log directory %s", strerror(err), logdir);
+    	ERR("Error opening dir %s", strerror(err));
         return -1;
     }
 
@@ -909,6 +973,7 @@ Exit:
     closedir(dir);
     // If not a multiple of a trace record - return an error
     if (total_bytes % sizeof(struct trace_record)) {
+    	syslog(LOG_USER|LOG_WARNING, "At least one file in the directory %s appears to be corrupt, with a size that's not a multiple of %lu", logdir, sizeof(struct trace_record));
         INFO(total_bytes, "is not a multiple of", sizeof(struct trace_record));
         return 0;
     }
@@ -982,7 +1047,7 @@ static int trace_write_header(struct trace_dumper_configuration_s *conf)
     file_header->format_version = TRACE_FORMAT_VERSION;
 	SIMPLE_WRITE(conf, &rec, sizeof(rec));
 	if (rc != sizeof(rec)) {
-		return -1;
+		REPORT_AND_RETURN(-1);
     }
 
 	return 0;
@@ -1013,7 +1078,7 @@ static int trace_open_file(struct trace_dumper_configuration_s *conf, struct tra
 
     rc = trace_write_header(conf);
     strncpy(record_file->filename, filename, sizeof(record_file->filename));
-    return rc;
+    REPORT_AND_RETURN(rc);
 }
 
 void calculate_delta(struct trace_mapped_records *mapped_records, unsigned int *delta, unsigned int *delta_a, unsigned int *delta_b, unsigned int *lost_records)
@@ -1085,7 +1150,7 @@ static int dump_metadata_if_necessary(struct trace_dumper_configuration_s *conf,
         if (0 != rc) {
             ERR("Error dumping metadata");
             mapped_buffer->last_metadata_offset = -1;
-            return -1;
+            REPORT_AND_RETURN(-1);
         }
     }
     
@@ -1138,6 +1203,7 @@ static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *co
 
         int ret = trace_dumper_write(conf, &conf->record_file, conf->flush_iovec, num_iovecs, FALSE);
 		if ((unsigned int)ret != (total_written_records * sizeof(struct trace_record))) {
+			syslog(LOG_ERR|LOG_USER, "Wrote only %d records out of %u requested", (ret / (int)sizeof(struct trace_record)), total_written_records);
             return -1;
 		}
         
@@ -1384,7 +1450,8 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
     while (1) {
         rc = rotate_trace_file_if_necessary(conf);
         if (0 != rc) {
-            return -1;
+        	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while rotating trace files.", strerror(errno));
+            break;
         }
 
         if (conf->stopping && !has_mapped_buffers(conf)) {
@@ -1393,19 +1460,22 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
         
         rc = open_trace_file_if_necessary(conf);
         if (rc != 0) {
-            return -1;
+        	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while opening the trace file.", strerror(errno));
+        	break;
         }
         
         possibly_dump_online_statistics(conf);
         
         rc = trace_flush_buffers(conf);
         if (0 != rc) {
-            return -1;
+        	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while flushing trace buffers.", strerror(errno));
+        	break;
         }
 
         rc = reap_empty_dead_buffers(conf);
         if (0 != rc) {
-            return -1;
+        	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while emptying dead buffers.", strerror(errno));
+        	break;
         }
         
         usleep(20000);
@@ -1417,42 +1487,57 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
         
         rc = unmap_discarded_buffers(conf);
         if (0 != rc) {
-            return rc;
+        	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while unmapping discarded buffers.", strerror(errno));
+            break;
         }
     }
+
+    rc = errno;
+    syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while writing traces.", strerror(rc));
+    ERR("Unexpected failure writing trace file, error code =", rc);
+    return -1;
+}
+
+static int attach_and_map_buffers(struct trace_dumper_configuration_s *conf)
+{
+	int rc;
+	    if (!conf->attach_to_pid) {
+	        rc = map_new_buffers(conf);
+	    }  else {
+	        rc = map_buffer(conf, atoi(conf->attach_to_pid));
+	    }
+
+	    if (0 != rc) {
+	    	rc = errno;
+	    	ERR("Failed to attach to buffers, error code =", rc);
+	        syslog(LOG_USER|LOG_CRIT, "trace_dumper: Attach to buffers failed due to error %d", rc);
+	        return -1;
+	    }
+
+	    return 0;
 }
 
 static int op_dump_records(struct trace_dumper_configuration_s *conf)
 {
     int rc;
-    if (!conf->attach_to_pid) {
-        rc = map_new_buffers(conf);
-    }  else {
-        rc = map_buffer(conf, atoi(conf->attach_to_pid));
-    }
-    
+
+    rc = attach_and_map_buffers(conf);
     if (0 != rc) {
-        ERR("Error mapping buffers");
         return 1;
     }
+
     conf->start_time = trace_get_walltime();
     return dump_records(conf);
-
 }
 
 static int op_dump_stats(struct trace_dumper_configuration_s *conf)
 {
     int rc;
-    if (!conf->attach_to_pid) {
-        rc = map_new_buffers(conf);
-    }  else {
-        rc = map_buffer(conf, atoi(conf->attach_to_pid));
-    }
 
-    if (0 != rc) {
-        ERR("Error mapping buffers");
-        return 1;
-    }
+    rc = attach_and_map_buffers(conf);
+	if (0 != rc) {
+		return -1;
+	}
 
     dump_online_statistics(conf);
     return 0;
