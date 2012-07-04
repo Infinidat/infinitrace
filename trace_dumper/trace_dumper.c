@@ -1519,7 +1519,7 @@ static void print_usage(void)
 
 static const char shortopts[] = "vtdiaer:q:sw::p:hf:ob:n";
 
-#define DEFAULT_LOG_DIRECTORY "/mnt/logs"
+#define DEFAULT_LOG_DIRECTORY "/mnt/logs/traces"
 static void clear_mapped_records(struct trace_dumper_configuration_s *conf)
 {
     MappedBuffers__init(&conf->mapped_buffers);
