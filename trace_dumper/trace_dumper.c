@@ -14,6 +14,7 @@
 #include <string.h>
 #include <errno.h>
 #include <limits.h>
+#include <sysexits.h>
 #include <sys/uio.h>
 #include <sys/time.h>
 #include <sys/utsname.h>
@@ -942,9 +943,16 @@ static long long total_records_in_logdir(const char *logdir)
 
     if (dir == NULL) {
     	int err = errno;
-        syslog(LOG_USER|LOG_ERR, "Error %s while trying to open the log directory %s", strerror(err), logdir);
-    	ERR("Error opening dir %s", strerror(err));
-        return -1;
+    	switch (err) {
+    	case ENOENT:  /* The directory hasn't yet been created */
+    		syslog(LOG_NOTICE|LOG_USER, "The log-directory %s hasn't yet been created", logdir);
+    		return 0;
+
+    	default:
+			syslog(LOG_USER|LOG_ERR, "Error %s while trying to open the log directory %s", strerror(err), logdir);
+			ERR("Error opening dir %s", strerror(err));
+			return -1;
+    	}
     }
 
     
@@ -1053,6 +1061,28 @@ static int trace_write_header(struct trace_dumper_configuration_s *conf)
 	return 0;
 }
 
+
+static int trace_create_dir_if_necessary(const char *base_dir)
+{
+	int rc = mkdir(base_dir, 0755);
+	if (rc < 0)
+	{
+		switch (errno)
+		{
+		case EEXIST:
+			break;
+
+		default:
+			syslog(LOG_ERR|LOG_USER, "The trace directory %s does not exist and could not be created due to error %s",
+					base_dir, strerror(errno));
+			return -1;
+		}
+	}
+
+	return 0; /* Created successfully */
+}
+
+
 static int trace_open_file(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, const char *filename_base)
 {
     unsigned long long now;
@@ -1065,6 +1095,9 @@ static int trace_open_file(struct trace_dumper_configuration_s *conf, struct tra
     if (conf->fixed_output_filename) {
         strncpy(filename, conf->fixed_output_filename, sizeof(filename));
     } else {
+    	if (trace_create_dir_if_necessary(filename_base) < 0) {
+    		return -1;
+    	}
         snprintf(filename, sizeof(filename),
                  "%s/trace.%lld.dump", filename_base, now);
     }
@@ -1072,6 +1105,7 @@ static int trace_open_file(struct trace_dumper_configuration_s *conf, struct tra
     INFO("Opening trace file:", filename);
     record_file->fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (record_file->fd < 0) {
+    	syslog(LOG_ERR|LOG_USER, "Failed to open new trace file %s due to error %s", filename, strerror(errno));
         fprintf(stderr, "Error opening %s for writing\n", filename);
         return -1;
     }
@@ -1495,7 +1529,7 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
     rc = errno;
     syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while writing traces.", strerror(rc));
     ERR("Unexpected failure writing trace file, error code =", rc);
-    return -1;
+    return EX_IOERR;
 }
 
 static int attach_and_map_buffers(struct trace_dumper_configuration_s *conf)
@@ -1523,7 +1557,7 @@ static int op_dump_records(struct trace_dumper_configuration_s *conf)
 
     rc = attach_and_map_buffers(conf);
     if (0 != rc) {
-        return 1;
+        return EX_NOINPUT;
     }
 
     conf->start_time = trace_get_walltime();
@@ -1536,7 +1570,7 @@ static int op_dump_stats(struct trace_dumper_configuration_s *conf)
 
     rc = attach_and_map_buffers(conf);
 	if (0 != rc) {
-		return -1;
+		return EX_NOINPUT;
 	}
 
     dump_online_statistics(conf);
@@ -1570,6 +1604,9 @@ static const char usage[] = {
     " -b  --logdir                          Specify the base log directory trace files are written to              \n" \
     " -p  --pid [pid]                       Attach the specified process                                           \n" \
     " -d  --debug-online                    Display DEBUG records in online mode                                   \n" \
+    " -i  --info-online                     Dump info traces online                                                \n" \
+    " -a  --warn-online                     Dump warning traces online                                             \n" \
+    " -e  --error-online                    Dump error traces online                                               \n" \
     " -s  --syslog                          In online mode, write the entries to syslog instead of displaying them \n" \
     " -q  --quota-size [bytes/percent]      Specify the total number of bytes that may be taken up by trace files  \n" \
     " -r  --record-write-limit [records]    Specify maximal amount of records that can be written per-second (unlimited if not specified)  \n" \
@@ -1762,7 +1799,14 @@ static int init_dumper(struct trace_dumper_configuration_s *conf)
         conf->op_type = OPERATION_TYPE_DUMP_RECORDS;
     }
     
-    conf->logs_base = DEFAULT_LOG_DIRECTORY;
+    if (! conf->logs_base) {
+    	conf->logs_base = DEFAULT_LOG_DIRECTORY;
+    }
+
+    if (trace_create_dir_if_necessary(conf->logs_base) != 0) {
+        return EX_CANTCREAT;
+    }
+
     conf->record_file.fd = -1;
     conf->ts_flush_delta = FLUSH_DELTA;
     TRACE_PARSER__from_external_stream(&conf->parser, parser_event_handler, NULL);
@@ -1802,7 +1846,7 @@ static int init_dumper(struct trace_dumper_configuration_s *conf)
     TRACE_PARSER__set_filter(&conf->parser, conf->severity_filter);
 
     if (set_quota(conf) != 0) {
-        return -1;
+        return EX_IOERR;
     }
 
     return 0;
@@ -1853,20 +1897,22 @@ int main(int argc, char **argv)
     memset(conf, 0, sizeof(*conf));
     
     if (0 != parse_commandline(conf, argc, argv)) {
-        return 1;
+        return EX_USAGE;
+    }
+
+    if (!conf->write_to_file && !conf->online && !conf->dump_online_statistics) {
+            fprintf(stderr, "Must specify either -w, -o or -v\n");
+            print_usage();
+            return EX_USAGE;
     }
 
     int rc = init_dumper(&trace_dumper_configuration);
     if (0 != rc) {
         print_usage();
-        return 1;
+        return rc;
     }
     
     set_signal_handling();
-    if (!conf->write_to_file && !conf->online && !conf->dump_online_statistics) {
-        fprintf(stderr, "Must specify either -w, -o or -v\n");
-        print_usage();
-        return 1;
-    }
+
     return run_dumper(conf);
 }
