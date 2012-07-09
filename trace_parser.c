@@ -828,12 +828,13 @@ static char *escape_string(const char *input, char *output, unsigned output_size
     unsigned int current_offset = 0;
     unsigned int escaped_length;
     for (i = 0; i < strlen(input); i++) {
-        escaped_length = strlen(escapes[(int) input[i]]);
+    	const char *escaped_char = escapes[(unsigned char) input[i]];
+        escaped_length = strlen(escaped_char);
         if ( (escaped_length + current_offset) > output_size - 1) {
             return NULL;
         }
 
-        memcpy(&output[current_offset], escapes[(int) input[i]], escaped_length);
+        memcpy(&output[current_offset], escaped_char, escaped_length);
         current_offset += escaped_length;
     }
 
