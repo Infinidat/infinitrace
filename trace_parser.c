@@ -2240,7 +2240,7 @@ static int mmap_file(trace_parser_t *parser, const char *filename)
     }
 
     addr = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
-    if (NULL == addr) {
+    if (MAP_FAILED == addr) {
         close(fd);
         return -1;
     }

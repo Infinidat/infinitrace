@@ -761,7 +761,7 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
     }
 
     void *mapped_dynamic_addr = mmap(NULL, trace_region_size, PROT_READ | PROT_WRITE, MAP_SHARED, dynamic_fd, 0);
-    if (NULL == mapped_dynamic_addr) {
+    if (MAP_FAILED == mapped_dynamic_addr) {
         ERR("Unable to map log information buffer");
         rc = -1;
         goto close_dynamic;
@@ -770,7 +770,7 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
     
     void * mapped_static_log_data_addr = mmap(NULL, static_log_data_region_size, PROT_READ | PROT_WRITE, MAP_SHARED, static_fd, 0);
 
-    if (NULL == mapped_static_log_data_addr) {
+    if (MAP_FAILED == mapped_static_log_data_addr) {
         ERR("Unable to map static log area: %s", strerror(errno));
         rc = -1;
         goto unmap_dynamic;
