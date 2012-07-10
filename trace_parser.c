@@ -320,6 +320,11 @@ static void free_accumulator(trace_parser_t *parser, struct trace_record *rec)
 {
     int i;
     struct trace_record_accumulator *accumulator;
+
+    if (NULL == rec) {
+    	return;
+    }
+
     for (i = 0; i < RecordsAccumulatorList__element_count(&parser->records_accumulators); i++) {
         RecordsAccumulatorList__get_element_ptr(&parser->records_accumulators, i, &accumulator);
         if (accumulator->tid == rec->tid && rec->ts == accumulator->ts && accumulator->severity == rec->severity) {
@@ -1115,6 +1120,10 @@ static int process_typed_record(trace_parser_t *parser, bool_t accumulate_forwar
     *buffer = get_buffer_context_by_pid(parser, complete_record->pid);
     complete_record->termination |= TRACE_TERMINATION_LAST;
     *out_record = complete_record;
+
+    if (NULL == *buffer) {
+    	return -1;
+    }
 
     return 0;
 }
