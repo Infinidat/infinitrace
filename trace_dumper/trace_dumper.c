@@ -30,7 +30,6 @@
 #include <sys/sysinfo.h>
 #include "../trace_lib.h"
 #include "../trace_user.h"
-#include <sys/resource.h>
 
 #define COLOR_BOOL conf->color
 #include "../colors.h"
@@ -1891,18 +1890,11 @@ static void set_signal_handling(void)
     signal(SIGUSR2, usr2_handler);
 }
 
-static void remove_limits(void)
-{
-    struct rlimit limit = { RLIM_INFINITY, RLIM_INFINITY };
-    setrlimit(RLIMIT_AS, &limit);
-}
 
 int main(int argc, char **argv)
 {
     struct trace_dumper_configuration_s *conf = &trace_dumper_configuration;
     memset(conf, 0, sizeof(*conf));
-
-    remove_limits();
     
     if (0 != parse_commandline(conf, argc, argv)) {
     	print_usage(argv[0]);
