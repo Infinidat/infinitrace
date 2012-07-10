@@ -1528,8 +1528,8 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
     }
 
     rc = errno;
-    syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while writing traces.", strerror(rc));
-    ERR("Unexpected failure writing trace file, error code =", rc);
+    syslog(LOG_USER|LOG_ERR, "trace_dumper: Error encountered while writing traces: %s.", strerror(rc));
+    ERR("Unexpected failure writing trace file:", strerror(rc));
     return EX_IOERR;
 }
 
@@ -1635,9 +1635,10 @@ static const struct option longopts[] = {
 	{ 0, 0, 0, 0}
 };
 
-static void print_usage(void)
+static void print_usage(const char *prog_name)
 {
-    printf(usage, "trace_dumper");
+	const char *display_name = (NULL == prog_name) ? "trace_dumper" : prog_name;
+    printf(usage, display_name);
 }
 
 static const char shortopts[] = "vtdiaer:q:sw::p:hf:ob:n";
@@ -1713,7 +1714,6 @@ static int parse_commandline(struct trace_dumper_configuration_s *conf, int argc
             conf->dump_online_statistics = 1;
             break;
         case '?':
-            print_usage();
             return -1;
             break;
         default:
@@ -1804,7 +1804,7 @@ static int init_dumper(struct trace_dumper_configuration_s *conf)
     	conf->logs_base = DEFAULT_LOG_DIRECTORY;
     }
 
-    if (trace_create_dir_if_necessary(conf->logs_base) != 0) {
+    if ((! conf->fixed_output_filename) && (trace_create_dir_if_necessary(conf->logs_base) != 0)) {
         return EX_CANTCREAT;
     }
 
@@ -1905,18 +1905,24 @@ int main(int argc, char **argv)
     remove_limits();
     
     if (0 != parse_commandline(conf, argc, argv)) {
+    	print_usage(argv[0]);
         return EX_USAGE;
     }
 
     if (!conf->write_to_file && !conf->online && !conf->dump_online_statistics) {
-            fprintf(stderr, "Must specify either -w, -o or -v\n");
-            print_usage();
+            fprintf(stderr, "%s: Must specify either -w, -o or -v\n", argv[0]);
+            print_usage(argv[0]);
             return EX_USAGE;
     }
 
     int rc = init_dumper(&trace_dumper_configuration);
     if (0 != rc) {
-        print_usage();
+    	if (EX_USAGE == rc) {
+    		print_usage(argv[0]);
+    	}
+    	else {
+    		fprintf(stderr, "%s failed to start with error code %d (see sysexits.h for its meaning)\n", argv[0], rc);
+    	}
         return rc;
     }
     
