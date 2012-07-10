@@ -27,6 +27,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include <limits.h>
 #include <errno.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include "min_max.h"
 #include "array_length.h"
 #include "trace_defs.h"
@@ -2232,6 +2233,18 @@ static int init_inotify(trace_parser_t *parser, const char *filename)
     return 0;
 }
 
+/* Remove rlimits for virtual memory, which could prevent trace_reader from running */
+static int remove_limits(void)
+{
+    static const struct rlimit limit = { RLIM_INFINITY, RLIM_INFINITY };
+    return setrlimit(RLIMIT_AS, &limit);
+}
+
+static void *mmap_fd(int fd, long long size)
+{
+	return mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
+}
+
 static int mmap_file(trace_parser_t *parser, const char *filename)
 {
     long long size;
@@ -2248,7 +2261,15 @@ static int mmap_file(trace_parser_t *parser, const char *filename)
         return -1;
     }
 
-    addr = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
+    addr = mmap_fd(fd, size);
+    if ((MAP_FAILED == addr) && (ENOMEM == errno)) {
+    	/* The failure may be due to rlimit for virtual memory set too low, so try to raise it */
+    	if (0 != remove_limits()) {
+    		return -1;
+    	}
+    	addr = mmap_fd(fd, size);
+    }
+
     if (MAP_FAILED == addr) {
         close(fd);
         return -1;
