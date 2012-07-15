@@ -1490,7 +1490,7 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
             break;
         }
 
-        if (conf->stopping && !has_mapped_buffers(conf)) {
+        if ((conf->stopping || conf->attach_to_pid) && !has_mapped_buffers(conf)) {
             return 0;
         }
         
