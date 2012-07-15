@@ -27,3 +27,4 @@ xn_env.Append(LIBPATH = Dir('.'))
     
 xn_env.SConscript("trace_dumper/SConscript")
 xn_env.SConscript("trace_reader/SConscript")
+xn_env.SConscript("tools/SConscript")

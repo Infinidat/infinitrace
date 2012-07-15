@@ -1,0 +1,8 @@
+Import('xn_env')
+
+srcs = xn_env.AutoSplit('''dumper_stress.cpp''')
+libs = ["rt", "pthread"]
+
+prog = xn_env.XnProgram(target = "dumper_stress", source = srcs, LIBS = libs)
+xn_env.Alias('xn', prog)
+
