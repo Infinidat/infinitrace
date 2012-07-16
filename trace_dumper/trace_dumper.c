@@ -1286,9 +1286,6 @@ static int reap_empty_dead_buffers(struct trace_dumper_configuration_s *conf)
         INFO("total deltas", total_deltas[i], rid + 1, i, TRACE_BUFFER_NUM_RECORDS);
         if ((rid + 1 == TRACE_BUFFER_NUM_RECORDS) && (total_deltas[i] == 0)) {
             discard_buffer(conf, mapped_buffer);
-            if (conf->attach_to_pid) {
-                return -1;
-            }
         }
     }
 
