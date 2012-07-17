@@ -22,12 +22,14 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <ctype.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <limits.h>
 #include <errno.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
+#include <assert.h>
 #include "min_max.h"
 #include "array_length.h"
 #include "trace_defs.h"
@@ -505,7 +507,18 @@ void format_timestamp(trace_parser_t *parser, unsigned long long ts, char *times
       memcpy(formatted_record + total_length, source, _srclen);       \
       total_length += _srclen;                                                \
     } while (0);
+
+/* A macro for appending literal text strings */
+#define APPEND_LITERAL_TEXT(source) do {                            			\
+      if ((total_length + sizeof(source)) >= formatted_record_size) return -1;  \
+      memcpy(formatted_record + total_length, source, sizeof(source)); 			\
+      total_length += sizeof(source) - 1;                                       \
+    } while (0);
     
+#define APPEND_COLORED_LITERAL_TEXT(color, source) if (COLOR_BOOL) { APPEND_LITERAL_TEXT(color(source)); } else if (source[0]) { APPEND_LITERAL_TEXT(source); }
+
+
+
 static void get_type(struct trace_parser_buffer_context *context, const char *type_name, struct trace_type_definition **type)
 {
     struct trace_type_definition *tmp_type = context->types;
@@ -535,20 +548,22 @@ do {                                                                            
             fmt_str = _unsigned;                                                         \
         else if (param->flags & TRACE_PARAM_FLAG_ZERO)                                   \
             fmt_str = _leading_zero;                                                     \
-                                                                                         \
-        SIMPLE_APPEND_FORMATTED_TEXT(F_CYAN_BOLD(""));                                   \
+            																			 \
+        APPEND_COLORED_LITERAL_TEXT(_F_CYAN_BOLD, "");                                   \
         APPEND_FORMATTED_TEXT(fmt_str, v);                                               \
-        SIMPLE_APPEND_FORMATTED_TEXT(ANSI_DEFAULTS(""));                                 \
+        APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "");                                 \
 } while (0);
+
+
+#define APPEND_TYPE_NAME(_type_name) if (COLOR_BOOL) { APPEND_LITERAL_TEXT(_F_CYAN_BOLD("<" _type_name ">") _ANSI_DEFAULTS("")); } else { APPEND_LITERAL_TEXT("<" _type_name ">"); }
 
 #define HANDLE_CSTR()                                                                    \
             if (param->const_str) {                                                      \
                 if (((trace_kind == TRACE_LOG_DESCRIPTOR_KIND_FUNC_ENTRY) ||             \
                      (trace_kind == TRACE_LOG_DESCRIPTOR_KIND_FUNC_LEAVE)) && first) {   \
-                    SIMPLE_APPEND_FORMATTED_TEXT(F_YELLOW_BOLD(""));                     \
+                	APPEND_COLORED_LITERAL_TEXT(_F_YELLOW_BOLD, "");					 \
                     SIMPLE_APPEND_FORMATTED_TEXT(param->const_str);                      \
-                    SIMPLE_APPEND_FORMATTED_TEXT(ANSI_DEFAULTS(""));                     \
-                    SIMPLE_APPEND_FORMATTED_TEXT("(");                                   \
+                    APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "(");                     \
                                                                                          \
                                                                                          \
                     first = 0;                                                           \
@@ -562,328 +577,75 @@ do {                                                                            
                 }                                                                        \
                                                                                          \
                 if ((param + 1)->flags != 0) {                                           \
-                    SIMPLE_APPEND_FORMATTED_TEXT(ANSI_DEFAULTS(""));                     \
+                	APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "");                      \
                     SIMPLE_APPEND_FORMATTED_TEXT(delimiter);                             \
                 }                                                                        \
             } else {                                                                     \
-                SIMPLE_APPEND_FORMATTED_TEXT("<cstr?>");                                 \
+            	APPEND_LITERAL_TEXT("<cstr?>");                                  	     \
             }
-const char *escapes[] = {
-    "\\x00", // 0
-    "\\x01", // 1
-    "\\x02", // 2
-    "\\x03", // 3
-    "\\x04", // 4
-    "\\x05", // 5
-    "\\x06", // 6
-    "\\x07", // 7
-    "\\x08", // 8
-    "\\t", // 9
-    "\\n", // 10
-    "\\x0b", // 11
-    "\\x0c", // 12
-    "\\r", // 13
-    "\\x0e", // 14
-    "\\x0f", // 15
-    "\\x10", // 16
-    "\\x11", // 17
-    "\\x12", // 18
-    "\\x13", // 19
-    "\\x14", // 20
-    "\\x15", // 21
-    "\\x16", // 22
-    "\\x17", // 23
-    "\\x18", // 24
-    "\\x19", // 25
-    "\\x1a", // 26
-    "\\x1b", // 27
-    "\\x1c", // 28
-    "\\x1d", // 29
-    "\\x1e", // 30
-    "\\x1f", // 31
-    " ", // 32
-    "!", // 33
-    "\\\"", // 34
-    "#", // 35
-    "$", // 36
-    "%", // 37
-    "&", // 38
-    "'", // 39
-    "(", // 40
-    ")", // 41
-    "*", // 42
-    "+", // 43
-    ",", // 44
-    "-", // 45
-    ".", // 46
-    "/", // 47
-    "0", // 48
-    "1", // 49
-    "2", // 50
-    "3", // 51
-    "4", // 52
-    "5", // 53
-    "6", // 54
-    "7", // 55
-    "8", // 56
-    "9", // 57
-    ":", // 58
-    ";", // 59
-    "<", // 60
-    "=", // 61
-    ">", // 62
-    "?", // 63
-    "@", // 64
-    "A", // 65
-    "B", // 66
-    "C", // 67
-    "D", // 68
-    "E", // 69
-    "F", // 70
-    "G", // 71
-    "H", // 72
-    "I", // 73
-    "J", // 74
-    "K", // 75
-    "L", // 76
-    "M", // 77
-    "N", // 78
-    "O", // 79
-    "P", // 80
-    "Q", // 81
-    "R", // 82
-    "S", // 83
-    "T", // 84
-    "U", // 85
-    "V", // 86
-    "W", // 87
-    "X", // 88
-    "Y", // 89
-    "Z", // 90
-    "[", // 91
-    "\\\\", // 92
-    "]", // 93
-    "^", // 94
-    "_", // 95
-    "`", // 96
-    "a", // 97
-    "b", // 98
-    "c", // 99
-    "d", // 100
-    "e", // 101
-    "f", // 102
-    "g", // 103
-    "h", // 104
-    "i", // 105
-    "j", // 106
-    "k", // 107
-    "l", // 108
-    "m", // 109
-    "n", // 110
-    "o", // 111
-    "p", // 112
-    "q", // 113
-    "r", // 114
-    "s", // 115
-    "t", // 116
-    "u", // 117
-    "v", // 118
-    "w", // 119
-    "x", // 120
-    "y", // 121
-    "z", // 122
-    "{", // 123
-    "|", // 124
-    "}", // 125
-    "~", // 126
-    "\\x7f", // 127
-    "\\x80", // 128
-    "\\x81", // 129
-    "\\x82", // 130
-    "\\x83", // 131
-    "\\x84", // 132
-    "\\x85", // 133
-    "\\x86", // 134
-    "\\x87", // 135
-    "\\x88", // 136
-    "\\x89", // 137
-    "\\x8a", // 138
-    "\\x8b", // 139
-    "\\x8c", // 140
-    "\\x8d", // 141
-    "\\x8e", // 142
-    "\\x8f", // 143
-    "\\x90", // 144
-    "\\x91", // 145
-    "\\x92", // 146
-    "\\x93", // 147
-    "\\x94", // 148
-    "\\x95", // 149
-    "\\x96", // 150
-    "\\x97", // 151
-    "\\x98", // 152
-    "\\x99", // 153
-    "\\x9a", // 154
-    "\\x9b", // 155
-    "\\x9c", // 156
-    "\\x9d", // 157
-    "\\x9e", // 158
-    "\\x9f", // 159
-    "\\xa0", // 160
-    "\\xa1", // 161
-    "\\xa2", // 162
-    "\\xa3", // 163
-    "\\xa4", // 164
-    "\\xa5", // 165
-    "\\xa6", // 166
-    "\\xa7", // 167
-    "\\xa8", // 168
-    "\\xa9", // 169
-    "\\xaa", // 170
-    "\\xab", // 171
-    "\\xac", // 172
-    "\\xad", // 173
-    "\\xae", // 174
-    "\\xaf", // 175
-    "\\xb0", // 176
-    "\\xb1", // 177
-    "\\xb2", // 178
-    "\\xb3", // 179
-    "\\xb4", // 180
-    "\\xb5", // 181
-    "\\xb6", // 182
-    "\\xb7", // 183
-    "\\xb8", // 184
-    "\\xb9", // 185
-    "\\xba", // 186
-    "\\xbb", // 187
-    "\\xbc", // 188
-    "\\xbd", // 189
-    "\\xbe", // 190
-    "\\xbf", // 191
-    "\\xc0", // 192
-    "\\xc1", // 193
-    "\\xc2", // 194
-    "\\xc3", // 195
-    "\\xc4", // 196
-    "\\xc5", // 197
-    "\\xc6", // 198
-    "\\xc7", // 199
-    "\\xc8", // 200
-    "\\xc9", // 201
-    "\\xca", // 202
-    "\\xcb", // 203
-    "\\xcc", // 204
-    "\\xcd", // 205
-    "\\xce", // 206
-    "\\xcf", // 207
-    "\\xd0", // 208
-    "\\xd1", // 209
-    "\\xd2", // 210
-    "\\xd3", // 211
-    "\\xd4", // 212
-    "\\xd5", // 213
-    "\\xd6", // 214
-    "\\xd7", // 215
-    "\\xd8", // 216
-    "\\xd9", // 217
-    "\\xda", // 218
-    "\\xdb", // 219
-    "\\xdc", // 220
-    "\\xdd", // 221
-    "\\xde", // 222
-    "\\xdf", // 223
-    "\\xe0", // 224
-    "\\xe1", // 225
-    "\\xe2", // 226
-    "\\xe3", // 227
-    "\\xe4", // 228
-    "\\xe5", // 229
-    "\\xe6", // 230
-    "\\xe7", // 231
-    "\\xe8", // 232
-    "\\xe9", // 233
-    "\\xea", // 234
-    "\\xeb", // 235
-    "\\xec", // 236
-    "\\xed", // 237
-    "\\xee", // 238
-    "\\xef", // 239
-    "\\xf0", // 240
-    "\\xf1", // 241
-    "\\xf2", // 242
-    "\\xf3", // 243
-    "\\xf4", // 244
-    "\\xf5", // 245
-    "\\xf6", // 246
-    "\\xf7", // 247
-    "\\xf8", // 248
-    "\\xf9", // 249
-    "\\xfa", // 250
-    "\\xfb", // 251
-    "\\xfc", // 252
-    "\\xfd", // 253
-    "\\xfe", // 254
-    "\\xff", // 255
-};
 
-
-static char *escape_string(const char *input, char *output, unsigned output_size)
+static char *escape_string(const char *input, char *output, unsigned input_size)
 {
-    unsigned int i;
-    unsigned int current_offset = 0;
-    unsigned int escaped_length;
-    for (i = 0; i < strlen(input); i++) {
-    	const char *escaped_char = escapes[(unsigned char) input[i]];
-        escaped_length = strlen(escaped_char);
-        if ( (escaped_length + current_offset) > output_size - 1) {
-            return NULL;
-        }
+	/* Note: the output array should have space for at least input_size*4 + 1 characters */
+	char escaped[4] = {'\\', 'x', '\0'};
+	static const char hex_digits[] = "0123456789abcdef";
+	char *out_ptr = output;
 
-        memcpy(&output[current_offset], escaped_char, escaped_length);
-        current_offset += escaped_length;
+	unsigned int i;
+    for (i = 0; i < input_size; i++) {
+    	if (isprint(input[i])) {
+    		*out_ptr++ = input[i];
+    	}
+    	else {
+    		escaped[2] = hex_digits[(input[i] >> 4) & 0x0f];
+    		escaped[3] = hex_digits[input[i] & 0x0f];
+    		memcpy(out_ptr, escaped, sizeof(escaped));
+    		out_ptr += sizeof(escaped);
+    	}
     }
 
-    output[current_offset] = '\0';
+    *out_ptr = '\0';
     return output;
 }
 
 #define HANDLE_VSTR()                                                                    \
             if (param->flags & TRACE_PARAM_FLAG_STR) {                                   \
-                SIMPLE_APPEND_FORMATTED_TEXT(F_CYAN_BOLD("\""));                         \
+            	APPEND_COLORED_LITERAL_TEXT(_F_CYAN_BOLD, "\"");                         \
             }                                                                            \
 			                                                                             \
             while (1) {                                                                  \
 				unsigned char sl = (*(unsigned char *)pdata);                            \
 				unsigned char len = sl & 0x7f;                                           \
 				unsigned char continuation = sl & 0x80;                                  \
-				char strbuf[255], escaped_buf[512];                                      \
+				char strbuf[255];														 \
+				char escaped_buf[sizeof(strbuf)*4 + 1];                                  \
                                                                                          \
 				memcpy(strbuf, pdata + 1, len);                                          \
 				strbuf[len] = 0;                                                         \
 				pdata += sizeof(len) + len;                                              \
 				if (param->flags & TRACE_PARAM_FLAG_STR) {                               \
-                    SIMPLE_APPEND_FORMATTED_TEXT(F_CYAN_BOLD(""));                       \
-                    SIMPLE_APPEND_FORMATTED_TEXT(escape_string(strbuf, escaped_buf, sizeof(escaped_buf))); \
-                    SIMPLE_APPEND_FORMATTED_TEXT(ANSI_DEFAULTS(""));                     \
-				}                                                                        \
+					APPEND_COLORED_LITERAL_TEXT(_F_CYAN_BOLD, "");                       \
+                    SIMPLE_APPEND_FORMATTED_TEXT(escape_string(strbuf, escaped_buf, len)); \
+                    APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "");                     \
                                                                                          \
-                if (param->flags & TRACE_PARAM_FLAG_STR && !continuation) {              \
-                    SIMPLE_APPEND_FORMATTED_TEXT(F_CYAN_BOLD(""));                       \
-                    SIMPLE_APPEND_FORMATTED_TEXT("\"");                                  \
-                    SIMPLE_APPEND_FORMATTED_TEXT(ANSI_DEFAULTS(""));                     \
-                    SIMPLE_APPEND_FORMATTED_TEXT(delimiter);                             \
-                }                                                                        \
-                if (!continuation) {                                                     \
+					if (!continuation) {          										 \
+						APPEND_COLORED_LITERAL_TEXT(_F_CYAN_BOLD, "\"");                 \
+						APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "");                 \
+						SIMPLE_APPEND_FORMATTED_TEXT(delimiter);                         \
+					}                                                                    \
+				}                                                                        \
+                																		 \
+				if (!continuation) {                                                     \
                     break;                                                               \
                 }                                                                        \
            }
+
 
 #define WRITE_ENUM_FROM_PDATA()                                                                                              \
             char enum_val_name[100];                                                                                         \
             get_enum_val_name(parser, context, param, (*(unsigned int *)pdata), enum_val_name, sizeof(enum_val_name));       \
             SIMPLE_APPEND_FORMATTED_TEXT(enum_val_name);                                                                     \
-            SIMPLE_APPEND_FORMATTED_TEXT(ANSI_DEFAULTS(""));                                                                 \
+            APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "");                                                                 \
             pdata += sizeof(int);                                                                                           
 
 static void get_enum_val_name(trace_parser_t *parser, struct trace_parser_buffer_context *context, struct trace_param_descriptor *param, unsigned int value, char *val_name, unsigned int val_name_size)
@@ -935,30 +697,30 @@ static int format_typed_params(trace_parser_t *parser, struct trace_parser_buffe
 
     for (param = log_desc->params; (param->flags != 0); param++) {
         if (trace_kind == TRACE_LOG_DESCRIPTOR_KIND_FUNC_ENTRY && first) {
-            SIMPLE_APPEND_FORMATTED_TEXT("--> ");
+        	APPEND_LITERAL_TEXT("--> ");
         } else if (trace_kind == TRACE_LOG_DESCRIPTOR_KIND_FUNC_LEAVE && first) {
-            SIMPLE_APPEND_FORMATTED_TEXT("<-- ");
+        	APPEND_LITERAL_TEXT("<-- ");
         }
 
         if (param->flags & TRACE_PARAM_FLAG_NAMED_PARAM) {
             if (trace_kind == TRACE_LOG_DESCRIPTOR_KIND_FUNC_ENTRY || parser->show_field_names) {
-                SIMPLE_APPEND_FORMATTED_TEXT(F_WHITE_BOLD(""));
+            	APPEND_COLORED_LITERAL_TEXT(_F_WHITE_BOLD, "");
                 SIMPLE_APPEND_FORMATTED_TEXT(param->param_name);
-                SIMPLE_APPEND_FORMATTED_TEXT(" = ");
+                APPEND_LITERAL_TEXT(" = ");
             }
         }
 
         if (param->flags & TRACE_PARAM_FLAG_NESTED_LOG) {
             if (describe_params) {
                 APPEND_FORMATTED_TEXT(F_WHITE_BOLD("{<%s>}"), param->type_name);
-                SIMPLE_APPEND_FORMATTED_TEXT(ANSI_DEFAULTS(""));
+                APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "");
             } else {
-                SIMPLE_APPEND_FORMATTED_TEXT(F_WHITE_BOLD("{ "));
+            	APPEND_COLORED_LITERAL_TEXT(_F_WHITE_BOLD, "{ ");
                 int _bytes_processed;
                 total_length = format_typed_params(parser, context, (struct trace_record_typed *) pdata, formatted_record, formatted_record_size, total_length, &_bytes_processed, describe_params);
                 pdata += _bytes_processed;
-                SIMPLE_APPEND_FORMATTED_TEXT(F_WHITE_BOLD(" }"));
-                SIMPLE_APPEND_FORMATTED_TEXT(ANSI_DEFAULTS(""));
+                APPEND_COLORED_LITERAL_TEXT(_F_WHITE_BOLD, " }");
+                APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "");
             }
         }
         
@@ -968,8 +730,7 @@ static int format_typed_params(trace_parser_t *parser, struct trace_parser_buffe
         
         if (param->flags & TRACE_PARAM_FLAG_VARRAY) {
             if (describe_params) {
-                SIMPLE_APPEND_FORMATTED_TEXT(F_CYAN_BOLD("<vstr>"));
-                SIMPLE_APPEND_FORMATTED_TEXT(ANSI_DEFAULTS(""));
+            	APPEND_TYPE_NAME("vstr");
             } else {
                 HANDLE_VSTR();
             }
@@ -978,7 +739,7 @@ static int format_typed_params(trace_parser_t *parser, struct trace_parser_buffe
         if (param->flags & TRACE_PARAM_FLAG_ENUM) {
             if (describe_params) {
                 APPEND_FORMATTED_TEXT(F_CYAN_BOLD("<%s>"), param->type_name);
-                SIMPLE_APPEND_FORMATTED_TEXT(ANSI_DEFAULTS(""));
+                APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "");
             } else {
                 WRITE_ENUM_FROM_PDATA();
             }
@@ -986,8 +747,7 @@ static int format_typed_params(trace_parser_t *parser, struct trace_parser_buffe
         
         if (param->flags & TRACE_PARAM_FLAG_NUM_8) {
             if (describe_params) {
-                SIMPLE_APPEND_FORMATTED_TEXT(F_CYAN_BOLD("<char>"));
-                SIMPLE_APPEND_FORMATTED_TEXT(ANSI_DEFAULTS(""));
+            	APPEND_TYPE_NAME("char");
             } else {
                 WRITE_SIMPLE_PDATA_VALUE("%hh", "%hhu", "%08hhx", "0x%hhx", unsigned char);
             }
@@ -995,8 +755,7 @@ static int format_typed_params(trace_parser_t *parser, struct trace_parser_buffe
         
         if (param->flags & TRACE_PARAM_FLAG_NUM_16) {
             if (describe_params) {
-                SIMPLE_APPEND_FORMATTED_TEXT(F_CYAN_BOLD("<short>"));
-                SIMPLE_APPEND_FORMATTED_TEXT(ANSI_DEFAULTS(""));
+            	APPEND_TYPE_NAME("short");
             } else {
                 WRITE_SIMPLE_PDATA_VALUE("%h", "%hu", "%08hx", "0x%hx", unsigned short);
             }
@@ -1004,8 +763,7 @@ static int format_typed_params(trace_parser_t *parser, struct trace_parser_buffe
 
         if (param->flags & TRACE_PARAM_FLAG_NUM_32) {
             if (describe_params) {
-                SIMPLE_APPEND_FORMATTED_TEXT(F_CYAN_BOLD("<int>"));
-                SIMPLE_APPEND_FORMATTED_TEXT(ANSI_DEFAULTS(""));
+                APPEND_TYPE_NAME("int");
             } else {
                 WRITE_SIMPLE_PDATA_VALUE("%d", "%u", "%08x", "0x%x", unsigned int);
             }
@@ -1013,16 +771,14 @@ static int format_typed_params(trace_parser_t *parser, struct trace_parser_buffe
 
         if (param->flags & TRACE_PARAM_FLAG_NUM_64) {
             if (describe_params) {
-                SIMPLE_APPEND_FORMATTED_TEXT(F_CYAN_BOLD("<long long>"));
-                SIMPLE_APPEND_FORMATTED_TEXT(ANSI_DEFAULTS(""));
+                APPEND_TYPE_NAME("long long");
             } else {
                 WRITE_SIMPLE_PDATA_VALUE("%lld", "%llu", "%016llx", "0x%llx", unsigned long long);
             }
         }
         
         if ((param + 1)->flags == 0 && (trace_kind == TRACE_LOG_DESCRIPTOR_KIND_FUNC_ENTRY || trace_kind == TRACE_LOG_DESCRIPTOR_KIND_FUNC_LEAVE)) {
-            SIMPLE_APPEND_FORMATTED_TEXT(ANSI_DEFAULTS(""));
-            SIMPLE_APPEND_FORMATTED_TEXT((")"));
+            APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, ")");
         }
 
         if ((param + 1)->flags != 0)
@@ -1065,41 +821,42 @@ int TRACE_PARSER__format_typed_record(trace_parser_t *parser, struct trace_parse
     const char *severity_str;
     FORMAT_SEVERITY(severity_str, record->severity);
 
-
-    if (parser->color) {
-        if (parser->compact_traces) {
-            APPEND_FORMATTED_TEXT("%s " _ANSI_DEFAULTS("%s [") _F_BLUE_BOLD("%5d:%5d") _ANSI_DEFAULTS("]") _F_GREY(" : ") _ANSI_DEFAULTS(""),
-                                  severity_str, timestamp, record->pid, record->tid);
-        } else {
-            APPEND_FORMATTED_TEXT("%s " _F_MAGENTA("%-20s ") _ANSI_DEFAULTS("%s [") _F_BLUE_BOLD("%5d") _ANSI_DEFAULTS("]") _F_GREY(" : ") _ANSI_DEFAULTS(""),
-                                  severity_str, buffer_name, timestamp, record->tid);
-        }
-    } else {
-        if (parser->compact_traces) {
-            APPEND_FORMATTED_TEXT("%s %s [%5d:%5d] : ",
-                                  severity_str, timestamp, record->pid, record->tid);
-        } else {
-            APPEND_FORMATTED_TEXT("%s %-20s %s [%5d] : ",
-                                  severity_str, buffer_name, timestamp, record->tid);
-        }
+    const char *fmt_str = NULL;
+    if (parser->compact_traces) {
+    	 if (parser->color) {
+    		 fmt_str = "%s " _ANSI_DEFAULTS("%s [") _F_BLUE_BOLD("%5d:%5d") _ANSI_DEFAULTS("]") _F_GREY(" : ") _ANSI_DEFAULTS("");
+    	 }
+    	 else {
+    		 fmt_str = "%s %s [%5d:%5d] : ";
+    	 }
+    	 APPEND_FORMATTED_TEXT(fmt_str, severity_str, timestamp, record->pid, record->tid);
     }
-    
+    else {
+    	if (parser->color) {
+    		 fmt_str = "%s " _F_MAGENTA("%-20s ") _ANSI_DEFAULTS("%s [") _F_BLUE_BOLD("%5d") _ANSI_DEFAULTS("]") _F_GREY(" : ") _ANSI_DEFAULTS("");
+		 }
+		 else {
+			 fmt_str = "%s %-20s %s [%5d] : ";
+		 }
+    	APPEND_FORMATTED_TEXT(fmt_str, severity_str, buffer_name, timestamp, record->tid);
+    }
+
     if (parser->indent) {
-        int i;
         if (record->nesting < 0) {
             record->nesting = 0;
         }
 
-        for (i = 0; i < record->nesting; i++) {
-            SIMPLE_APPEND_FORMATTED_TEXT("    ");
-        }
+        int num_spaces = 4*record->nesting;
+        if (total_length + num_spaces >= (int) formatted_record_size - 1)
+        	return -1;
+        memset(formatted_record + total_length, ' ', num_spaces);
+        total_length += num_spaces;
+        formatted_record[total_length] = '\0';
     }
-
-
 
     int bytes_processed;
     if (!context) {
-        SIMPLE_APPEND_FORMATTED_TEXT(_F_RED_BOLD("<?>"));
+    	APPEND_LITERAL_TEXT(_F_RED_BOLD("<?>"));
         goto exit;
      }
     
@@ -1108,7 +865,7 @@ int TRACE_PARSER__format_typed_record(trace_parser_t *parser, struct trace_parse
 exit:
     SIMPLE_APPEND_FORMATTED_TEXT(ANSI_DEFAULTS(""));
     formatted_record[total_length] = '\0';
-    return 0;
+    return total_length;
 }
 
 static int process_typed_record(trace_parser_t *parser, bool_t accumulate_forward, struct trace_record *rec, struct trace_record **out_record, struct trace_parser_buffer_context **buffer)
@@ -1427,7 +1184,7 @@ static bool_t record_params_contain_value(struct trace_parser_buffer_context *bu
     struct trace_param_descriptor *param = log_desc->params;
 
     unsigned char *pdata = typed_record->payload;
-    unsigned long long param_value;
+    unsigned long long param_value = 0;
     bool_t ret = FALSE;
     for (; param->flags != 0; param++) {
         bool_t valid_value = FALSE;
@@ -1826,8 +1583,15 @@ static int dumper_event_handler(trace_parser_t *parser, enum trace_parser_event_
 
     char formatted_record[2048];
     struct parser_complete_typed_record *complete_typed_record = (struct parser_complete_typed_record *) event_data;
-    TRACE_PARSER__format_typed_record(parser, complete_typed_record->buffer, complete_typed_record->record, formatted_record, sizeof(formatted_record));
-    if (printf("%s\n", formatted_record) < 0) {
+    size_t formatted_len = TRACE_PARSER__format_typed_record(parser, complete_typed_record->buffer, complete_typed_record->record, formatted_record, sizeof(formatted_record));
+    if ((long)formatted_len < 0) {
+    	errno = ENOMEM;
+    	fprintf(stderr, _F_RED_BOLD("Warning: Had to skip a record because it didn't fit in the buffer\n") _ANSI_DEFAULTS(""));
+    	return -1;
+    }
+
+    formatted_record[formatted_len] = '\n';
+    if (fwrite(formatted_record, 1, (size_t)formatted_len + 1, stdout) < formatted_len + 1) {
         fprintf(stderr, "error writing log (%s)\n", strerror(errno));
         return -1;
     } else {
@@ -1934,7 +1698,7 @@ static int log_id_to_log_template(trace_parser_t *parser, struct trace_parser_bu
 {
     int total_length = 0;
     memset(formatted_record, 0, formatted_record_size);
-    bool_t exact_size;
+    bool_t exact_size = FALSE;
     const char *exact_indicator = "*";
     unsigned int minimal_log_size = get_minimal_log_id_size(context, log_id, &exact_size);
     if (!exact_size) {
@@ -2171,7 +1935,8 @@ static int count_entries(trace_parser_t *parser, enum trace_parser_event_e event
 
     if (stats->logs[metadata_index].template[0] == '\0') {
         log_id_to_log_template(parser, complete_typed_record->buffer, metadata_index, template, sizeof(template));
-        strncpy(stats->logs[metadata_index].template, template, sizeof(stats->logs[metadata_index]));
+        strncpy(stats->logs[metadata_index].template, template, sizeof(stats->logs[metadata_index].template));
+        stats->logs[metadata_index].template[sizeof(stats->logs[metadata_index].template) - 1] = '\0';
         stats->logs[metadata_index].occurrences = 1;
         stats->unique_count++;
     } else {

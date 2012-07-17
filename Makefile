@@ -1,4 +1,4 @@
-CFLAGS=-I. -c -Wall -g -fPIC
+CFLAGS=-I. -c -Wall -g -fPIC -O2
 LIBTRACE_OBJS=trace_metadata_util.o cached_file.o trace_parser.o halt.o trace_user.o 
 LIBTRACEUSER_OBJS=trace_metadata_util.o trace_user.o halt.o
 all: libtrace libtraceuser simple_trace_reader trace_dumper trace_instrumentor interactive_reader
