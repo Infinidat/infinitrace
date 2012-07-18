@@ -16,9 +16,18 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 ***/
 
 #define _GNU_SOURCE
+#ifdef __linux__
+#define _USE_INOTIFY_
+#define _USE_MREMAP_
+#endif
+
 #include <sys/types.h>
 #include <errno.h>
+
+#ifdef _USE_INOTIFY_
 #include <sys/inotify.h>
+#endif
+
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -52,6 +61,7 @@ CREATE_LIST_IMPLEMENTATION(RecordsAccumulatorList, struct trace_record_accumulat
 
 static int wait_for_data(trace_parser_t *parser)
 {
+#ifdef _USE_INOTIFY_
     fd_set read_fdset;
     struct inotify_event event;
     while (TRUE) {
@@ -72,6 +82,10 @@ static int wait_for_data(trace_parser_t *parser)
             return 0;
         }
     }
+#else
+    sleep(1);
+    return 0;
+#endif
 }
 
 static long long get_current_end_offset_from_fd(int fd)
@@ -90,12 +104,17 @@ static long long trace_end_offset(trace_parser_t *parser)
 {
     off_t new_end = get_current_end_offset_from_fd(parser->file_info.fd);
     if (new_end != parser->file_info.end_offset) {
+#ifdef _USE_MREMAP
         void *new_addr = mremap(parser->file_info.file_base, parser->file_info.end_offset, new_end, MREMAP_MAYMOVE);
-        if (!new_addr || (long long) new_addr == -1) {
+        if (!new_addr || MAP_FAILED == new_addr) {
             return -1;
         }
         parser->file_info.end_offset = new_end;
         parser->file_info.file_base = new_addr;
+#else
+        fprintf(stderr, "Could not increase memory mapping size since this platform doesn't have mremap()\n");
+        return -1;
+#endif
     }
 
     return new_end;
@@ -1982,6 +2001,7 @@ int TRACE_PARSER__dump_statistics(trace_parser_t *parser)
 
 static int init_inotify(trace_parser_t *parser, const char *filename)
 {
+#ifdef _USE_INOTIFY_
     int rc;
     rc = inotify_init();
     if (-1 == rc) {
@@ -1996,6 +2016,9 @@ static int init_inotify(trace_parser_t *parser, const char *filename)
 
     parser->inotify_descriptor = rc;
     return 0;
+#else
+    return -1;
+#endif
 }
 
 /* Remove rlimits for virtual memory, which could prevent trace_reader from running */
@@ -2062,6 +2085,13 @@ int TRACE_PARSER__from_file(trace_parser_t *parser, bool_t wait_for_input, const
     if (wait_for_input) {
         parser->wait_for_input = TRUE;
         if (0 != init_inotify(parser, filename)) {
+        	fprintf(stderr, "Failed to set-up inotify"
+#ifdef _USE_INOTIFY_
+      "because of the following error: %s\n", strerror(errno)
+#else
+      "because it is unsupported on this platform"
+#endif
+        	);
             return -1;
         }
     }

@@ -34,7 +34,7 @@ extern "C" {
 #endif
     
 #define __repr__ _trace_represent(unsigned int *buf_left, struct trace_record *_record, struct trace_record **__record_ptr, unsigned char **typed_buf)
-#ifndef	_UNISTD_H    
+#if !defined(_UNISTD_H) && defined(__linux__)
 #ifdef __cplusplus     
     extern long int syscall (long int __sysno, ...) throw ();
 #else
@@ -55,6 +55,9 @@ extern const struct trace_runtime_control *p_trace_runtime_control;
 void trace_runtime_control_set_default_min_sev(enum trace_severity sev);
 
 /* Supporting inline functions used by the trace code that that ccwrap.py injects into the source files */
+
+#ifdef __linux__
+
 static inline unsigned short int trace_get_pid(void)
 {
     static __thread int pid_cache = 0;
@@ -79,6 +82,8 @@ static inline unsigned long long trace_get_nsec(void)
      clock_gettime(CLOCK_REALTIME, &tv);
      return ((unsigned long long) tv.tv_sec * 1000000000) + tv.tv_nsec;
 }
+
+#endif
 
 static inline void trace_increment_nesting_level(void)
 {
