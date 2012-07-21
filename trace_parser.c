@@ -46,6 +46,8 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "object_pool.h"
 #define COLOR_BOOL parser->color
 #include "colors.h"
+#include "string.h"
+
 CREATE_LIST_IMPLEMENTATION(BufferParseContextList, struct trace_parser_buffer_context)
 CREATE_LIST_IMPLEMENTATION(RecordsAccumulatorList, struct trace_record_accumulator)
 
@@ -504,44 +506,94 @@ void format_timestamp(trace_parser_t *parser, unsigned long long ts, char *times
     }
     
     time_t seconds = ts / TRACE_SECOND;
-    char fmt_time[200];
     struct tm *_time = localtime(&seconds);
-    strftime(fmt_time, sizeof(fmt_time), "%d/%m %H:%M:%S", _time);
+
     if (!parser->compact_traces) {
         char *_full_time = ctime(&seconds);
         _full_time[strlen(_full_time) - 1] = '\0';
         snprintf(timestamp, timestamp_size, "%s:%-10llu", _full_time, ts % TRACE_SECOND);
     } else {
-        strncpy(timestamp, fmt_time, timestamp_size);
+        strftime(timestamp, timestamp_size, "%d/%m %H:%M:%S", _time); 
     }
 }
 
-#define APPEND_FORMATTED_TEXT(...) do { char _tmpbuf[0x200]; snprintf(_tmpbuf, sizeof(_tmpbuf), __VA_ARGS__);     \
-                                        unsigned int _srclen = strlen(_tmpbuf);                                   \
-                                              if (total_length + _srclen >= formatted_record_size - 1) return -1; \
-                                        memcpy(formatted_record + total_length, _tmpbuf, _srclen);                \
-                                        total_length += _srclen;                                                  \
-    } while(0);
-#define SIMPLE_APPEND_FORMATTED_TEXT(source) do {                             \
-      unsigned int _srclen = strlen(source);                                  \
-      if (total_length + _srclen >= formatted_record_size - 1) return -1;     \
-      memcpy(formatted_record + total_length, source, _srclen);       \
-      total_length += _srclen;                                                \
+#define APPEND_FORMATTED_TEXT(...) do {                                   \
+        int _len_ = snprintf(&formatted_record[total_length],             \
+                             formatted_record_size - total_length - 1,    \
+                             __VA_ARGS__);                                \
+        if (_len_ < 0 || _len_ >= formatted_record_size - total_length - 1) return -1; \
+        total_length += _len_;                                            \
     } while (0);
+
+
+#define SIMPLE_APPEND_FORMATTED_TEXT(source) {  \
+        total_length += my_strncpy(formatted_record + total_length, source, formatted_record_size - total_length); \
+        if (total_length >= formatted_record_size -1 ) return -1;      \
+    }
+
+static int my_strncpy(char* formatted_record, const char* source, int max_size) {
+    // Heaven knows why, but this is much faster than strncpy
+    int i;
+    for (i = 0; source[i] && i < max_size && 0 < max_size; i++)
+        formatted_record[i] = source[i]; 
+    return i;
+}
 
 /* A macro for appending literal text strings */
 #define APPEND_LITERAL_TEXT(source) do {                            			\
-      if ((total_length + sizeof(source)) >= formatted_record_size) return -1;  \
+    if ((total_length + sizeof(source)) >= (unsigned int) formatted_record_size) return -1; \
       memcpy(formatted_record + total_length, source, sizeof(source)); 			\
       total_length += sizeof(source) - 1;                                       \
     } while (0);
     
 #define APPEND_COLORED_LITERAL_TEXT(color, source) if (COLOR_BOOL) { APPEND_LITERAL_TEXT(color(source)); } else if (source[0]) { APPEND_LITERAL_TEXT(source); }
 
+struct trace_type_definition_mapped {
+    struct trace_type_definition* def;
+    map_t map;
+};
 
+static struct trace_type_definition_mapped * new_trace_type_definition_mapped(struct trace_type_definition* def) {
+    struct trace_type_definition_mapped* ptr =
+        (struct trace_type_definition_mapped*) malloc(sizeof(struct trace_type_definition_mapped));
+    ptr->def = def;
+    ptr->map = NULL;
+    return ptr;
+}
 
-static void get_type(struct trace_parser_buffer_context *context, const char *type_name, struct trace_type_definition **type)
+// static void get_type(struct trace_parser_buffer_context *context, const char *type_name, struct trace_type_definition **type)
+static char* get_type_name(struct trace_parser_buffer_context *context, const char *type_name, unsigned int value)
 {
+    if (context->type_hash == 0) {
+        context->type_hash = hashmap_new();
+        for (unsigned int i = 0; i < context->metadata->type_definition_count; i++) {
+            hashmap_put(context->type_hash,
+                        context->types[i].type_name,
+                        new_trace_type_definition_mapped(&context->types[i]));
+        }
+    }
+    /* trace_type_definition_mapped* ttdm; */
+    any_t ptr ;
+    int rc = hashmap_get(context->type_hash, type_name, &ptr);
+    if (rc != MAP_OK)
+        return NULL;
+
+    struct trace_type_definition_mapped* type = (struct trace_type_definition_mapped*) ptr;
+
+    if (type->map == 0) {
+        type->map = hashmap_new();
+        for (int i = 0; type->def->enum_values[i].name; i++) {
+            hashmap_put_int(type->map,
+                            type->def->enum_values[i].value,
+                            (any_t) type->def->enum_values[i].name);
+        }
+    }
+    rc = hashmap_get_int(type->map, value, &ptr);
+    if (rc != MAP_OK)
+        return NULL;
+    return (char*) ptr;
+
+    /*
     struct trace_type_definition *tmp_type = context->types;
     unsigned int i = 0;
     for (i = 0; i < context->metadata->type_definition_count; i++) {
@@ -554,6 +606,7 @@ static void get_type(struct trace_parser_buffer_context *context, const char *ty
     }
 
     *type = NULL;
+    */
 }
 
 
@@ -575,92 +628,65 @@ do {                                                                            
         APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "");                                 \
 } while (0);
 
-
 #define APPEND_TYPE_NAME(_type_name) if (COLOR_BOOL) { APPEND_LITERAL_TEXT(_F_CYAN_BOLD("<" _type_name ">") _ANSI_DEFAULTS("")); } else { APPEND_LITERAL_TEXT("<" _type_name ">"); }
 
-#define HANDLE_CSTR()                                                                    \
-            if (param->const_str) {                                                      \
-                if (((trace_kind == TRACE_LOG_DESCRIPTOR_KIND_FUNC_ENTRY) ||             \
-                     (trace_kind == TRACE_LOG_DESCRIPTOR_KIND_FUNC_LEAVE)) && first) {   \
-                	APPEND_COLORED_LITERAL_TEXT(_F_YELLOW_BOLD, "");					 \
-                    SIMPLE_APPEND_FORMATTED_TEXT(param->const_str);                      \
-                    APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "(");                     \
-                                                                                         \
-                                                                                         \
-                    first = 0;                                                           \
-                    if ((param + 1)->flags == 0) {                                       \
-                        SIMPLE_APPEND_FORMATTED_TEXT(")");                               \
-                    }                                                                    \
-                                                                                         \
-                    continue;                                                            \
-                } else {                                                                 \
-                    SIMPLE_APPEND_FORMATTED_TEXT(param->const_str);                      \
-                }                                                                        \
-                                                                                         \
-                if ((param + 1)->flags != 0) {                                           \
-                	APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "");                      \
-                    SIMPLE_APPEND_FORMATTED_TEXT(delimiter);                             \
-                }                                                                        \
-            } else {                                                                     \
-            	APPEND_LITERAL_TEXT("<cstr?>");                                  	     \
-            }
+static inline char unprintable_char_special_repr(char c) {
+	switch (c) {
+	case '\n':
+		return 'n';
+	case '\t':
+		return 't';
+	case '\r':
+		return 'r';
+	default:
+		return '\0';
+	}
+}
 
-static char *escape_string(const char *input, char *output, unsigned input_size)
+static unsigned int append_escape_string(const char *input, char *output, unsigned input_size, unsigned output_size)
 {
 	/* Note: the output array should have space for at least input_size*4 + 1 characters */
-	char escaped[4] = {'\\', 'x', '\0'};
+
 	static const char hex_digits[] = "0123456789abcdef";
 	char *out_ptr = output;
+    unsigned used = 0;
 
 	unsigned int i;
     for (i = 0; i < input_size; i++) {
+    	if (++used >= output_size) {
+            return output_size;
+        }
+                
     	if (isprint(input[i])) {
     		*out_ptr++ = input[i];
     	}
     	else {
-    		escaped[2] = hex_digits[(input[i] >> 4) & 0x0f];
-    		escaped[3] = hex_digits[input[i] & 0x0f];
-    		memcpy(out_ptr, escaped, sizeof(escaped));
-    		out_ptr += sizeof(escaped);
+    		out_ptr[0] = '\\';
+    		if (isspace(input[i])) {
+    			char c_repr = unprintable_char_special_repr(input[i]);
+    			if(c_repr) {
+    				if (++used >= output_size)
+    					return output_size;
+    				
+    				out_ptr[1] = c_repr;
+    				out_ptr += 2;
+    				continue;
+    			}
+    		}
+    		
+    		if (used + 3 >= output_size)
+                return output_size;
+    		out_ptr[1] = 'x';
+    		out_ptr[2] = hex_digits[(input[i] >> 4) & 0x0f];
+    		out_ptr[3] = hex_digits[input[i] & 0x0f];
+    		out_ptr += 4;
+            used += 3;
     	}
     }
 
     *out_ptr = '\0';
-    return output;
+    return used;
 }
-
-#define HANDLE_VSTR()                                                                    \
-            if (param->flags & TRACE_PARAM_FLAG_STR) {                                   \
-            	APPEND_COLORED_LITERAL_TEXT(_F_CYAN_BOLD, "\"");                         \
-            }                                                                            \
-			                                                                             \
-            while (1) {                                                                  \
-				unsigned char sl = (*(unsigned char *)pdata);                            \
-				unsigned char len = sl & 0x7f;                                           \
-				unsigned char continuation = sl & 0x80;                                  \
-				char strbuf[255];														 \
-				char escaped_buf[sizeof(strbuf)*4 + 1];                                  \
-                                                                                         \
-				memcpy(strbuf, pdata + 1, len);                                          \
-				strbuf[len] = 0;                                                         \
-				pdata += sizeof(len) + len;                                              \
-				if (param->flags & TRACE_PARAM_FLAG_STR) {                               \
-					APPEND_COLORED_LITERAL_TEXT(_F_CYAN_BOLD, "");                       \
-                    SIMPLE_APPEND_FORMATTED_TEXT(escape_string(strbuf, escaped_buf, len)); \
-                    APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "");                     \
-                                                                                         \
-					if (!continuation) {          										 \
-						APPEND_COLORED_LITERAL_TEXT(_F_CYAN_BOLD, "\"");                 \
-						APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "");                 \
-						SIMPLE_APPEND_FORMATTED_TEXT(delimiter);                         \
-					}                                                                    \
-				}                                                                        \
-                																		 \
-				if (!continuation) {                                                     \
-                    break;                                                               \
-                }                                                                        \
-           }
-
 
 #define WRITE_ENUM_FROM_PDATA()                                                                                              \
             char enum_val_name[100];                                                                                         \
@@ -671,31 +697,16 @@ static char *escape_string(const char *input, char *output, unsigned input_size)
 
 static void get_enum_val_name(trace_parser_t *parser, struct trace_parser_buffer_context *context, struct trace_param_descriptor *param, unsigned int value, char *val_name, unsigned int val_name_size)
 {
-    struct trace_type_definition *enum_def;
-    struct trace_enum_value *enum_value;
-    get_type(context, param->type_name, &enum_def);
-    if (enum_def == NULL) {
+    char* name = get_type_name(context, param->type_name, value);
+    if (name == NULL)
         snprintf(val_name, val_name_size, "%s", F_BLUE_BOLD("<? enum>"));
-        return;
-    }
-
-    enum_value = enum_def->enum_values;
-    while (enum_value->name) {
-        if (enum_value->value == value) {
-            snprintf(val_name, val_name_size, F_BLUE_BOLD("%s"), enum_value->name);
-            return;
-        }
-
-        enum_value++;
-    }
-
-    snprintf(val_name, val_name_size, "%s", F_BLUE_BOLD("<? enum>"));
-    return;
+    else 
+        snprintf(val_name, val_name_size, F_BLUE_BOLD("%s"), name);
 }
 
 
 
-static int format_typed_params(trace_parser_t *parser, struct trace_parser_buffer_context *context, struct trace_record_typed *typed_record, char *formatted_record, unsigned int formatted_record_size, int total_length, int *bytes_processed, bool_t describe_params)
+static int format_typed_params(trace_parser_t *parser, struct trace_parser_buffer_context *context, struct trace_record_typed *typed_record, char *formatted_record, int formatted_record_size, int total_length, int *bytes_processed, bool_t describe_params)
 {
     unsigned int metadata_index = typed_record->log_id;
     unsigned char *pdata = typed_record->payload;
@@ -746,14 +757,66 @@ static int format_typed_params(trace_parser_t *parser, struct trace_parser_buffe
         }
         
         if (param->flags & TRACE_PARAM_FLAG_CSTR) {
-            HANDLE_CSTR();
+            // HANDLE_CSTR();
+            if (param->const_str) {
+                if (((trace_kind == TRACE_LOG_DESCRIPTOR_KIND_FUNC_ENTRY) ||
+                     (trace_kind == TRACE_LOG_DESCRIPTOR_KIND_FUNC_LEAVE)) && first) {
+                	APPEND_COLORED_LITERAL_TEXT(_F_YELLOW_BOLD, "");
+                    SIMPLE_APPEND_FORMATTED_TEXT(param->const_str);
+                    APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "(");
+
+                    first = 0;
+                    if ((param + 1)->flags == 0) {
+                        SIMPLE_APPEND_FORMATTED_TEXT(")");
+                    }
+                    continue;
+                } else {
+                    SIMPLE_APPEND_FORMATTED_TEXT(param->const_str);
+                }
+
+                if ((param + 1)->flags != 0) {
+                	APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "");
+                    SIMPLE_APPEND_FORMATTED_TEXT(delimiter);
+                }
+            } else {
+            	APPEND_LITERAL_TEXT("<cstr?>");
+            }
         }
         
         if (param->flags & TRACE_PARAM_FLAG_VARRAY) {
             if (describe_params) {
             	APPEND_TYPE_NAME("vstr");
             } else {
-                HANDLE_VSTR();
+                // HANDLE_VSTR();
+                if (param->flags & TRACE_PARAM_FLAG_STR) {
+                    APPEND_COLORED_LITERAL_TEXT(_F_CYAN_BOLD, "\"");
+                }
+
+                while (1) {
+                    unsigned char sl = (*(unsigned char *)pdata);
+                    unsigned char len = sl & 0x7f;
+                    unsigned char continuation = sl & 0x80;
+                    pdata ++;
+                    if (param->flags & TRACE_PARAM_FLAG_STR) {
+                        APPEND_COLORED_LITERAL_TEXT(_F_CYAN_BOLD, "");
+
+                        total_length += append_escape_string((char*)pdata, formatted_record + total_length, len, formatted_record_size - total_length);
+                        if (total_length >= (int)formatted_record_size -1 ) return -1;
+
+                        APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "");
+
+                        if (!continuation) {
+                            APPEND_COLORED_LITERAL_TEXT(_F_CYAN_BOLD, "\"");
+                            APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "");
+                            SIMPLE_APPEND_FORMATTED_TEXT(delimiter);
+                        }
+                    }
+                    pdata+= len;
+
+                    if (!continuation) {
+                        break;
+                    }
+                }
             }
         }
         
@@ -810,7 +873,7 @@ static int format_typed_params(trace_parser_t *parser, struct trace_parser_buffe
     return total_length;
 }
 
-#define FORMAT_SEVERITY(str, __severity)                                        \
+#define FORMAT_SEVERITY(str, __severity)                              \
     if (TRACE_SEV__MIN <= __severity &&  TRACE_SEV__MAX >= __severity)          \
 		str = sev_to_str[__severity];                                           \
 	else                                                                        \
@@ -827,22 +890,46 @@ static int format_typed_params(trace_parser_t *parser, struct trace_parser_buffe
     default: break;                                                             \
     }
 
-int TRACE_PARSER__format_typed_record(trace_parser_t *parser, struct trace_parser_buffer_context *context, struct trace_record *record, char *formatted_record, unsigned int formatted_record_size)
+
+static inline const char * severity_to_str(trace_parser_t *parser, unsigned int severity) {
+
+	struct s_sev_display_info {
+		const char *plain_text;
+		const char *ascii_colored_text;
+	};
+
+#define COLOR_TEXT_ENTRY(color, text) {text, color(text) }
+
+	static const struct s_sev_display_info sev_display_info[] = {
+			COLOR_TEXT_ENTRY(_F_GREY, 		 "-----"),
+			COLOR_TEXT_ENTRY(_F_WHITE,		 "DEBUG"),
+			COLOR_TEXT_ENTRY(_F_GREEN_BOLD,	 "INFO "),
+			COLOR_TEXT_ENTRY(_F_YELLOW_BOLD, "WARN "),
+			COLOR_TEXT_ENTRY(_F_RED_BOLD, 	 "ERR  "),
+			COLOR_TEXT_ENTRY(_F_RED_BOLD, 	 "FATAL")
+	};
+
+	assert(ARRAY_LENGTH(sev_display_info) == TRACE_SEV__MAX - TRACE_SEV__MIN + 1);
+
+	if (TRACE_SEV__MIN <= severity &&  TRACE_SEV__MAX >= severity) {
+		return parser->color ? sev_display_info[severity - TRACE_SEV__MIN].ascii_colored_text : sev_display_info[severity - TRACE_SEV__MIN].plain_text;
+	}
+	else {
+		return "???";
+	}
+}
+
+int TRACE_PARSER__format_typed_record(trace_parser_t *parser, struct trace_parser_buffer_context *context, struct trace_record *record, char *formatted_record, int formatted_record_size)
 {
-    const char *buffer_name = "<? unknown ?>";
-    if (context) {
-        buffer_name = context->name;
-    }
-    
+    const char *buffer_name = context ? context->name : "<? unknown ?>";
     char timestamp[0x100];
     int total_length = 0;
 
     format_timestamp(parser, record->ts, timestamp, sizeof(timestamp));
 
-    const char *severity_str;
-    FORMAT_SEVERITY(severity_str, record->severity);
-
+    const char *severity_str = severity_to_str(parser, record->severity);
     const char *fmt_str = NULL;
+
     if (parser->compact_traces) {
     	 if (parser->color) {
     		 fmt_str = "%s " _ANSI_DEFAULTS("%s [") _F_BLUE_BOLD("%5d:%5d") _ANSI_DEFAULTS("]") _F_GREY(" : ") _ANSI_DEFAULTS("");
@@ -1715,11 +1802,12 @@ static int get_minimal_log_id_size(struct trace_parser_buffer_context *context, 
     return minimal_log_id_size;
 }
 
-static int log_id_to_log_template(trace_parser_t *parser, struct trace_parser_buffer_context *context, int log_id, char *formatted_record, unsigned int formatted_record_size)
+static int log_id_to_log_template(trace_parser_t *parser, struct trace_parser_buffer_context *context, int log_id, char *formatted_record, int formatted_record_size)
 {
     int total_length = 0;
     memset(formatted_record, 0, formatted_record_size);
     bool_t exact_size = FALSE;
+
     const char *exact_indicator = "*";
     unsigned int minimal_log_size = get_minimal_log_id_size(context, log_id, &exact_size);
     if (!exact_size) {
@@ -1782,7 +1870,7 @@ static int format_record_event_handler(trace_parser_t *parser, enum trace_parser
     return 0;
 }
 
-int TRACE_PARSER__process_next_from_memory(trace_parser_t *parser, struct trace_record *rec, char *formatted_record, unsigned int formatted_record_size, unsigned int *record_formatted)
+int TRACE_PARSER__process_next_from_memory(trace_parser_t *parser, struct trace_record *rec, char *formatted_record, int formatted_record_size, unsigned int *record_formatted)
 {
     if (parser->stream_type != TRACE_INPUT_STREAM_TYPE_NONSEEKABLE) {
         return -1;
@@ -1956,7 +2044,7 @@ static int count_entries(trace_parser_t *parser, enum trace_parser_event_e event
 
     if (stats->logs[metadata_index].template[0] == '\0') {
         log_id_to_log_template(parser, complete_typed_record->buffer, metadata_index, template, sizeof(template));
-        strncpy(stats->logs[metadata_index].template, template, sizeof(stats->logs[metadata_index].template));
+        my_strncpy(stats->logs[metadata_index].template, template, sizeof(stats->logs[metadata_index].template));
         stats->logs[metadata_index].template[sizeof(stats->logs[metadata_index].template) - 1] = '\0';
         stats->logs[metadata_index].occurrences = 1;
         stats->unique_count++;

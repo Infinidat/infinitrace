@@ -1,5 +1,5 @@
-CFLAGS=-I. -c -Wall -g -fPIC -O2
-LIBTRACE_OBJS=trace_metadata_util.o cached_file.o trace_parser.o halt.o trace_user.o 
+CFLAGS=-I. -c -Wall -g -std=gnu99 -fPIC -O2
+LIBTRACE_OBJS=trace_metadata_util.o cached_file.o trace_parser.o halt.o hashmap.o
 LIBTRACEUSER_OBJS=trace_metadata_util.o trace_user.o halt.o
 
 TARGET_PLATFORM=$(shell gcc -v 2>&1|fgrep Target|cut -d':' -d' ' -f2|cut -d'-' -f 2,3)
@@ -14,8 +14,8 @@ trace_dumper: $(LIBTRACE_OBJS) trace_dumper/trace_dumper.o trace_dumper/filesyst
 	gcc -L.  trace_dumper/filesystem.o trace_dumper/trace_dumper.o trace_user_stubs.o -ltrace $(EXTRA_LIBS) -o trace_dumper/trace_dumper 
 
 libtrace: $(LIBTRACE_OBJS)
-	ar rcs libtrace.a trace_metadata_util.o cached_file.o trace_parser.o halt.o  
-	gcc -shared -g trace_metadata_util.o cached_file.o trace_parser.o halt.o -o traces.so
+	ar rcs libtrace.a $(LIBTRACE_OBJS)
+	gcc -shared -g $(LIBTRACE_OBJS) -o traces.so
 
 libtraceuser: $(LIBTRACEUSER_OBJS)
 	ar rcs libtraceuser.a trace_metadata_util.o trace_user.o halt.o

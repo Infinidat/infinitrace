@@ -21,6 +21,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "list_template.h"
 #include <stdio.h>
 #include "trace_defs.h"
+#include "hashmap.h"
 
 enum trace_parser_failure_e {
     TRACE_PARSER_NO_METADATA,
@@ -28,6 +29,7 @@ enum trace_parser_failure_e {
 
 struct trace_parser_buffer_context {
     struct trace_metadata_region *metadata;
+    map_t type_hash;
     unsigned long metadata_size;
     unsigned long current_metadata_offset;
     unsigned long metadata_read;
@@ -206,12 +208,12 @@ int TRACE_PARSER__dump_all_metadata(trace_parser_t *parser);
 void TRACE_PARSER__set_filter(trace_parser_t *parser, struct trace_record_matcher_spec_s *filter);
 int TRACE_PARSER__find_next_record_by_expression(trace_parser_t *parser, struct trace_record_matcher_spec_s *expression);
 int TRACE_PARSER__find_previous_record_by_expression(trace_parser_t *parser, struct trace_record_matcher_spec_s *expression);
-int TRACE_PARSER__format_typed_record(trace_parser_t *parser, struct trace_parser_buffer_context *context, struct trace_record *record, char *formatted_record, unsigned int formatted_record_size);
+int TRACE_PARSER__format_typed_record(trace_parser_t *parser, struct trace_parser_buffer_context *context, struct trace_record *record, char *formatted_record, int formatted_record_size);
 void TRACE_PARSER__cancel_ongoing_operation(trace_parser_t *parser);
 
 int TRACE_PARSER__dump(trace_parser_t *parser);
 int TRACE_PARSER__dump_statistics(trace_parser_t *parser);
-int TRACE_PARSER__process_next_from_memory(trace_parser_t *parser, struct trace_record *rec, char *formatted_record, unsigned int formatted_record_size, unsigned int *record_formatted);
+int TRACE_PARSER__process_next_from_memory(trace_parser_t *parser, struct trace_record *rec, char *formatted_record, int formatted_record_size, unsigned int *record_formatted);
 long long TRACE_PARSER__seek(trace_parser_t *parser, long long offset, int whence);
 unsigned long long TRACE_PARSER__seek_to_time(trace_parser_t *parser, unsigned long long ts, int *error_occurred);
 int TRACE_PARSER__matcher_spec_from_severity_mask(unsigned int severity_mask, struct trace_record_matcher_spec_s filter[], unsigned int filter_count);

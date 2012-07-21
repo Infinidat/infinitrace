@@ -44,7 +44,7 @@ enum trace_severity {
 
 TRACE_SEVERITY_DEF
         TRACE_SEV__MIN = 1,
-        TRACE_SEV__MAX = 6
+        TRACE_SEV__MAX = TRACE_SEV_FATAL
 #undef TRACE_SEV_X
 };
 
