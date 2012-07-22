@@ -271,8 +271,8 @@ static int delete_shm_files(unsigned short pid)
     char full_dynamic_trace_filename[0x100];
     char full_static_log_data_filename[0x100];
     int rc;
-    snprintf(dynamic_trace_filename, sizeof(dynamic_trace_filename), "_trace_shm_%d_dynamic_trace_data", pid);
-    snprintf(static_log_data_filename, sizeof(static_log_data_filename), "_trace_shm_%d_static_trace_metadata", pid);
+    snprintf(dynamic_trace_filename, sizeof(dynamic_trace_filename), TRACE_DYNAMIC_DATA_REGION_NAME_FMT, pid);
+    snprintf(static_log_data_filename, sizeof(static_log_data_filename), TRACE_STATIC_DATA_REGION_NAME_FMT, pid);
     snprintf(full_dynamic_trace_filename, sizeof(full_dynamic_trace_filename), "%s/%s", SHM_DIR, dynamic_trace_filename);
     snprintf(full_static_log_data_filename, sizeof(full_static_log_data_filename), "%s/%s", SHM_DIR, static_log_data_filename);
 
@@ -291,7 +291,7 @@ static void map_static_log_data(const char *buffer_name)
     unsigned int type_definition_count;
     unsigned int enum_value_count;
     static_log_alloc_size(log_descriptor_count, &total_log_descriptor_params, &type_definition_count, &enum_value_count, &alloc_size);
-    snprintf(shm_name, sizeof(shm_name), "%s%d_static_trace_metadata", TRACE_SHM_ID, getpid());
+    snprintf(shm_name, sizeof(shm_name), TRACE_STATIC_DATA_REGION_NAME_FMT, getpid());
 
     int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0660);
     if (shm_fd < 0) {
@@ -337,7 +337,7 @@ static void init_records_metadata(void)
 static void map_dynamic_log_buffers()
 {
     char shm_name[0x100];
-    snprintf(shm_name, sizeof(shm_name), "%s%d_dynamic_trace_data", TRACE_SHM_ID, getpid());
+    snprintf(shm_name, sizeof(shm_name), TRACE_DYNAMIC_DATA_REGION_NAME_FMT, getpid());
     int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0660);
     if (shm_fd < 0) {
         return;
