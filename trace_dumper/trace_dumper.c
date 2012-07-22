@@ -208,7 +208,7 @@ bool_t is_dynamic_log_data_shm_region(const char *shm_name)
     }
 }
 
-static int dump_iovector_to_parser(struct trace_dumper_configuration_s *conf, struct trace_parser *parser, const struct iovec *iov, int iovcnt)
+static int dump_iovector_to_parser(const struct trace_dumper_configuration_s *conf, struct trace_parser *parser, const struct iovec *iov, int iovcnt)
 {
     int i;
     int rc;
@@ -322,7 +322,7 @@ int get_trace_file_timestamp(const char *filename)
     return result;
 }
 
-static int find_oldest_trace_file(struct trace_dumper_configuration_s *conf, char *filename, unsigned int filename_size)
+static int find_oldest_trace_file(const struct trace_dumper_configuration_s *conf, char *filename, unsigned int filename_size)
 {
     DIR *dir;
     struct dirent *ent;
@@ -358,7 +358,7 @@ Exit:
     return 0;
 }
 
-static int delete_oldest_trace_file(struct trace_dumper_configuration_s *conf)
+static int delete_oldest_trace_file(const struct trace_dumper_configuration_s *conf)
 {
     char filename[0x100] = { '\0' };
     int rc = find_oldest_trace_file(conf, filename, sizeof(filename));
@@ -405,7 +405,7 @@ static void severity_type_to_str(unsigned int severity_type, char *severity_str,
     }
 }
 
-static void dump_online_statistics(struct trace_dumper_configuration_s *conf)
+static void dump_online_statistics(const struct trace_dumper_configuration_s *conf)
 {
     char display_bar[60];
     char severity_type_str[100];
@@ -416,7 +416,7 @@ static void dump_online_statistics(struct trace_dumper_configuration_s *conf)
     unsigned int j;
     int rid;
     struct trace_mapped_buffer *mapped_buffer;
-    struct trace_mapped_records *mapped_records;
+    const struct trace_mapped_records *mapped_records;
     
     for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
         current_display_index = 0;
@@ -472,30 +472,35 @@ static void possibly_dump_online_statistics(struct trace_dumper_configuration_s 
     conf->next_stats_dump_ts = current_time + STATS_DUMP_DELTA;
 }
 
-static int handle_full_filesystem(struct trace_dumper_configuration_s *conf, const struct iovec *iov, unsigned int num_iovecs)
+static int handle_full_filesystem(const struct trace_dumper_configuration_s *conf, const struct iovec *iov, unsigned int num_iovecs)
 {
     long long total_iov_length = total_iovec_len(iov, num_iovecs);
     long long free_bytes_remaining = free_bytes_in_fs(conf->logs_base);
     
-    if (conf->attach_to_pid) {
+    /* Note: In the unit test environment we might have several dumpers running, and they could delete each other's files.
+     * Not sure how to handle this.
+     *  if (conf->attach_to_pid) {
         return 0;
-    }
+    } */
+
     if (free_bytes_remaining < 0) {
         return -1;
     }
 
-    if (total_iov_length > free_bytes_remaining) {
+    while (total_iov_length > free_bytes_remaining) {
         if (!conf->fixed_output_filename) {
-            delete_oldest_trace_file(conf);
+            if (0 != delete_oldest_trace_file(conf)) {
+            	return -1;
+            }
         } else {
             ERR("Request to write", total_iov_length, "while there are", free_bytes_remaining, "on the filesystem. Aborting");
             return -1;
         }
-    }
 
-    free_bytes_remaining = free_bytes_in_fs(conf->logs_base);
-    if (free_bytes_remaining < 0) {
-        return -1;
+        free_bytes_remaining = free_bytes_in_fs(conf->logs_base);
+		if (free_bytes_remaining < 0) {
+			return -1;
+		}
     }
 
     if (total_iov_length > free_bytes_remaining) {
@@ -543,22 +548,28 @@ static int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct 
 					{
 						syslog(LOG_USER|LOG_WARNING, "Writing traces to %s paused due to a full filesystem", conf->record_file.filename);
 					}
-					handle_full_filesystem(conf, iov, iovcnt);
+
 					++retries_due_to_full_fs;
+					if (0!= handle_full_filesystem(conf, iov, iovcnt)) {
+						usleep(retry_interval);
+					}
+					continue;
             	}
             	else
             	{
             		syslog(LOG_USER|LOG_ERR, "Had unexpected error %s while writing to %s", strerror(errno), conf->record_file.filename);
+            		expected_bytes = -1;
+            		break;
             	}
-                usleep(retry_interval);
-                continue;
             }
             else if (rc != expected_bytes) {
             	int err = errno;
 
             	ERR("Only wrote", rc, "of", expected_bytes, "bytes, and got error", err, ". rewinding by the number of bytes written");
             	off64_t eof_pos = lseek64(record_file->fd, (off64_t)-rc, SEEK_CUR);
-            	ftruncate64(record_file->fd, eof_pos);
+            	if (ftruncate64(record_file->fd, eof_pos) < 0) {
+            		return -1;
+            	}
 
             	if (0 == retries_due_to_partial_write % 500) {
             		syslog(LOG_USER|LOG_WARNING, "Writing traces to %s had to be rolled back since only %d of %d bytes were written. retried %u times so far.",
@@ -578,7 +589,7 @@ static int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct 
 
             if (retries_due_to_partial_write > 0) {
                 syslog(LOG_USER|LOG_NOTICE,
-				  "Writing traces to %s resumed after a pause due to to partial write after %u retries every %.1f ms",
+				  "Writing traces to %s resumed after a pause due to to a partial write after %u retries every %.1f ms",
 				  conf->record_file.filename, retries_due_to_partial_write, partial_write_retry_interval/1000.0);
                 retries_due_to_partial_write = 0;
             }
@@ -586,6 +597,10 @@ static int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct 
             record_file->records_written += expected_bytes / sizeof(struct trace_record);
             break;
         }
+    }
+    else {
+    	errno = EBADF;
+    	expected_bytes = -1;
     }
 
     dump_to_parser_if_necessary(conf, iov, iovcnt, dump_to_parser);
@@ -618,7 +633,7 @@ static void init_metadata_iovector(struct trace_mapped_metadata *metadata, unsig
                                                                         \
         struct iovec __iov__ = {__data__, __size__}; rc = trace_dumper_write(conf, &conf->record_file, &__iov__, 1, TRUE); } while (0);
 
-static int write_metadata_header_start(struct trace_dumper_configuration_s *conf, struct trace_mapped_buffer *mapped_buffer)
+static int write_metadata_header_start(struct trace_dumper_configuration_s *conf, const struct trace_mapped_buffer *mapped_buffer)
 {
     struct trace_record rec;
     int rc;
@@ -636,7 +651,7 @@ static int write_metadata_header_start(struct trace_dumper_configuration_s *conf
 }
 
 
-static int write_metadata_end(struct trace_dumper_configuration_s *conf, struct trace_mapped_buffer *mapped_buffer)
+static int write_metadata_end(struct trace_dumper_configuration_s *conf, const struct trace_mapped_buffer *mapped_buffer)
 {
     struct trace_record rec;
     int rc;
@@ -1500,9 +1515,9 @@ static void handle_overwrite(struct trace_dumper_configuration_s *conf)
     conf->last_overwrite_test_record_count = conf->record_file.records_written;
 }
 
-static bool_t has_mapped_buffers(struct trace_dumper_configuration_s *conf)
+static bool_t has_mapped_buffers(const struct trace_dumper_configuration_s *conf)
 {
-    return MappedBuffers__element_count(&conf->mapped_buffers);
+    return MappedBuffers__element_count(&conf->mapped_buffers) > 0;
 }
 
 static int dump_records(struct trace_dumper_configuration_s *conf)

@@ -150,7 +150,7 @@ def main():
     cpp_args.extend(["-include", os.path.join(os.path.dirname(sys.argv[0]),  "trace_lib.h")])
     cpp_args.extend(["-include", os.path.join(os.path.dirname(sys.argv[0]),  "trace_user.h")])
 
-    out_pp_file = pp_file + ".i"
+    out_pp_file = pp_file + ".c"
     ret = spawn(cpp_args)
     if ret:
         return ret

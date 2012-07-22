@@ -33,6 +33,7 @@ struct trace_parser_buffer_context {
     unsigned long metadata_size;
     unsigned long current_metadata_offset;
     unsigned long metadata_read;
+    size_t metadata_log_desciptor_size;
     struct trace_log_descriptor *descriptors;
     struct trace_type_definition *types;
     char name[0x100];
@@ -70,6 +71,7 @@ struct trace_file_info {
     long long end_offset;
     int fd;
     void *file_base;
+    unsigned short format_version;
 };
 
 enum trace_parser_event_e {

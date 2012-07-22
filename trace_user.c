@@ -33,6 +33,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "trace_lib.h"
 #include "trace_user.h"
 #include "trace_metadata_util.h"
+#include "bool.h"
 #include "halt.h"
 
 /* Global per process/thread data structures */
@@ -62,13 +63,22 @@ void trace_runtime_control_set_default_min_sev(enum trace_severity sev)
 
 /* Routines for initializing the data structures that support tracing inside the traced process. */
 
+static bool_t is_same_str(const char *s1, const char *s2) {
+	if ((NULL ==  s1) || (NULL == s2)) {
+		return FALSE;
+	}
 
-static void copy_log_params_to_allocated_buffer(const struct trace_log_descriptor *log_desc, struct trace_param_descriptor **params,
+	return 0 == __builtin_strcmp(s1, s2);
+}
+
+static void copy_log_params_to_allocated_buffer(struct trace_log_descriptor *log_desc, struct trace_param_descriptor **params,
                                                 char **string_table)
 {
-    const struct trace_param_descriptor *param = log_desc->params;
+	const struct trace_param_descriptor *param = log_desc->params;
+
     while (param->flags != 0) {
         __builtin_memcpy(*params, param, sizeof(struct trace_param_descriptor));
+
         if (param->str) {
             ALLOC_STRING((*params)->str, param->str);
         }
@@ -91,10 +101,37 @@ static void copy_log_descriptors_to_allocated_buffer(unsigned int log_descriptor
                                                      char **string_table)
     
 {
+#if TRACE_FORMAT_VERSION >= TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA
+    const char *last_file = NULL;
+    const char *last_function = NULL;
+#endif
+
+    /* NOTE: The allocations performed in this function should not exceed the size computed in static_log_alloc_size. Care should be taken to keep the algorithms
+     * use here and there compatible. */
+
     unsigned int i;
     for (i = 0; i < log_descriptor_count; i++) {
         struct trace_log_descriptor *orig_log_desc = &__static_log_information_start + i;
         memcpy(log_desc, orig_log_desc, sizeof(*log_desc));
+
+#if TRACE_FORMAT_VERSION >= TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA
+        if (is_same_str(last_file, orig_log_desc->file)) {
+        	log_desc->file = last_file;
+        }
+        else {
+        	ALLOC_STRING(last_file, orig_log_desc->file);
+        	log_desc->file = last_file;
+        }
+
+        if (is_same_str(last_function, orig_log_desc->function)) {
+            log_desc->function = last_function;
+        }
+        else {
+			ALLOC_STRING(last_function, orig_log_desc->function);
+			log_desc->function = last_function;
+		}
+#endif
+
         log_desc->params = params;
         copy_log_params_to_allocated_buffer(orig_log_desc, &params, string_table);
         log_desc++;
@@ -175,7 +212,7 @@ static void copy_log_section_shared_area(int shm_fd, const char *buffer_name,
                                       &string_table);
 }
 
-static void param_alloc_size(struct trace_param_descriptor *params, unsigned int *alloc_size, unsigned int *total_params)
+static void param_alloc_size(const struct trace_param_descriptor *params, unsigned int *alloc_size, unsigned int *total_params)
 {
     while (params->flags != 0) {
         if (params->str) {
@@ -252,12 +289,25 @@ static void static_log_alloc_size(unsigned int log_descriptor_count, unsigned in
     unsigned int i;
     *alloc_size = 0;
     *total_params = 0;
+
+    const char *latest_file = NULL;
+    const char *latest_function = NULL;
+
     for (i = 0; i < log_descriptor_count; i++) {
-        struct trace_log_descriptor *element = &__static_log_information_start + i;
+        const struct trace_log_descriptor *element = &__static_log_information_start + i;
         *alloc_size += sizeof(*element);
         param_alloc_size(element->params, alloc_size, total_params);
-    }
 
+        if (!is_same_str(element->file, latest_file)) {
+        	latest_file = element->file;
+        	*alloc_size += strlen(latest_file) + 1;
+        }
+
+        if (!is_same_str(element->function, latest_function)) {
+        	latest_function = element->function;
+			*alloc_size += strlen(latest_function) + 1;
+		}
+    }
     
     type_alloc_size(__type_information_start, type_definition_count, enum_value_count, alloc_size);
 }

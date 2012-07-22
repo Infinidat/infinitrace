@@ -138,8 +138,12 @@ enum trace_file_type {
     TRACE_TYPE_ID_TYPEDEF = 3
 };
 
-#define TRACE_FORMAT_VERSION (0xA1)
-     
+#ifndef TRACE_FORMAT_VERSION
+#define TRACE_FORMAT_VERSION (0xA2)
+#endif
+
+#define TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA (0xA2)
+
 struct trace_type_definition {
     enum trace_type_id type_id;
     const char *type_name;
@@ -229,6 +233,8 @@ enum trace_param_desc_flags {
     TRACE_PARAM_FLAG_TYPEDEF  = 0x8000,
     TRACE_PARAM_FLAG_NAMED_PARAM  = 0x10000,
     TRACE_PARAM_FLAG_RECORD  = 0x20000,
+
+    TRACE_PARAM_FLAG_CONST   = 0x40000,
 };
 
 /* Descriptor for an individual parameter being logged */
@@ -242,10 +248,18 @@ struct trace_param_descriptor {
     };
 };
 
-/* Descriptor for an individual instance of logging in the code, e.g. an invocation of DEBUG(), etc. */
+/* Descriptor for an individual instance of logging in the code, e.g. an invocation of DEBUG(), etc.
+ * NOTE: The size of this data structure should be kept no greater than 32 bytes. Otherwise the linker script created by ldwrap.py will have to be changed */
 struct trace_log_descriptor {
     enum trace_log_descriptor_kind kind;
-    struct trace_param_descriptor *params;
+#if (TRACE_FORMAT_VERSION >= TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA)
+    int line;
+#endif
+    const struct trace_param_descriptor *params;
+#if (TRACE_FORMAT_VERSION >= TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA)
+    const char *file;
+    const char *function;
+#endif
 };
 
 

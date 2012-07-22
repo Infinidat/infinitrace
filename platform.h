@@ -42,4 +42,11 @@ Copyright 2012 Yitzik Casapu <yitzikc [at] infinidat.com>
 typedef off_t off64_t;
 
 #endif
+
+
+#include <errno.h>
+#ifndef EFTYPE
+#define EFTYPE EPROTONOSUPPORT
+#endif
+
 #endif /* __PLATFORM_H__ */

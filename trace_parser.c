@@ -239,6 +239,11 @@ const char *sev_to_str[] = {
 };
 #undef TRACE_SEV_X
 
+static inline const struct trace_log_descriptor *get_log_descriptor(const struct trace_parser_buffer_context *context, size_t idx)
+{
+	return (const struct trace_log_descriptor *)((const char *)(context->descriptors) + idx * context->metadata_log_desciptor_size);
+}
+
 static struct trace_parser_buffer_context *get_buffer_context_by_pid(trace_parser_t *parser, unsigned short pid)
 {
     int i;
@@ -394,9 +399,16 @@ static int accumulate_metadata(trace_parser_t *parser, const struct trace_record
             return -1;
         }
 
-        relocate_metadata(context->metadata->base_address, context->metadata, context->metadata->data, context->metadata->log_descriptor_count, context->metadata->type_definition_count);
+        relocate_metadata_for_fmt_version(
+        		context->metadata->base_address,
+        		context->metadata, context->metadata->data,
+        		context->metadata->log_descriptor_count,
+        		context->metadata->type_definition_count,
+        		parser->file_info.format_version);
+
+        context->metadata_log_desciptor_size = get_log_descriptor_size(parser->file_info.format_version);
         context->descriptors = (struct trace_log_descriptor *) context->metadata->data;
-        context->types = (struct trace_type_definition *) ((char *) context->metadata->data + (sizeof(struct trace_log_descriptor)) * context->metadata->log_descriptor_count);
+        context->types = (struct trace_type_definition *) ((char *) context->metadata->data + context->metadata_log_desciptor_size * context->metadata->log_descriptor_count);
         strncpy(context->name, context->metadata->name, sizeof(context->name) - 1);
         context->name[sizeof(context->name) - 1] = '\0';
 
@@ -790,15 +802,15 @@ static int format_typed_params(
 {
     unsigned int metadata_index = typed_record->log_id;
     const unsigned char *pdata = typed_record->payload;
-    struct trace_log_descriptor *log_desc;
-    struct trace_param_descriptor *param;
+    const struct trace_log_descriptor *log_desc;
+    const struct trace_param_descriptor *param;
 
     if (metadata_index >= context->metadata->log_descriptor_count) {
         APPEND_FORMATTED_TEXT("L? %d", metadata_index);
         return total_length;
     }
 
-    log_desc = &context->descriptors[metadata_index];
+    log_desc = get_log_descriptor(context, metadata_index);
 
     enum trace_log_descriptor_kind trace_kind = log_desc->kind;
     int first = 1;
@@ -1007,11 +1019,10 @@ int TRACE_PARSER__format_typed_record(
 		int formatted_record_size)
 {
     const char *buffer_name = context ? context->name : "<? unknown ?>";
-    char timestamp[0x100];
+
     int total_length = 0;
-
+    char timestamp[0x100];
     format_timestamp(parser, record->ts, timestamp, sizeof(timestamp));
-
     const char *severity_str = severity_to_str(parser, record->severity);
     const char *fmt_str = NULL;
 
@@ -1400,7 +1411,7 @@ static bool_t record_params_contain_value(
         return FALSE;
     }
 
-    const struct trace_log_descriptor *log_desc = &buffer->descriptors[metadata_index];
+    const struct trace_log_descriptor *log_desc = get_log_descriptor(buffer, metadata_index);;
     const struct trace_param_descriptor *param = log_desc->params;
 
     const unsigned char *pdata = typed_record->payload;
@@ -1501,7 +1512,7 @@ static bool_t match_record_with_match_expression(
         return FALSE;
     }
 
-    const struct trace_log_descriptor *log_desc = &buffer->descriptors[metadata_index];
+    const struct trace_log_descriptor *log_desc = get_log_descriptor(buffer, metadata_index);
 
     switch (matcher->type) {
     case TRACE_MATCHER_TRUE:
@@ -1642,6 +1653,7 @@ static int process_single_record(
         break;
     case TRACE_REC_TYPE_FILE_HEADER:
         strncpy(parser->file_info.machine_id, (const char * ) record->u.file_header.machine_id, sizeof(parser->file_info.machine_id));
+        parser->file_info.format_version = record->u.file_header.format_version;
         break;
     case TRACE_REC_TYPE_METADATA_HEADER:
         rc = metadata_info_started(parser, record);
@@ -1894,17 +1906,16 @@ int process_all_metadata(trace_parser_t *parser, trace_parser_event_handler_t ha
     return 0;
 }
 
-
-static int get_minimal_log_id_size(struct trace_parser_buffer_context *context, unsigned int log_id, bool_t *exact_size)
+static int get_minimal_log_id_size(const struct trace_parser_buffer_context *context, unsigned int log_id, bool_t *exact_size)
 {
-    struct trace_log_descriptor *log_desc;
-    struct trace_param_descriptor *param;
+    const struct trace_log_descriptor *log_desc;
+    const struct trace_param_descriptor *param;
     int minimal_log_id_size = sizeof(log_id);
     if (log_id >= context->metadata->log_descriptor_count) {
         return -1;
     }
 
-    log_desc = &context->descriptors[log_id];
+    log_desc = get_log_descriptor(context, log_id);
 
     *exact_size = TRUE;
     for (param = log_desc->params; (param->flags != 0); param++) {
@@ -1962,17 +1973,23 @@ static int log_id_to_log_template(trace_parser_t *parser, struct trace_parser_bu
     }
     
     if (parser->color) {
-        APPEND_FORMATTED_TEXT(_F_MAGENTA("%-20s") _ANSI_DEFAULTS(" [") _F_BLUE_BOLD("%5d") _ANSI_DEFAULTS("] <%03d%-1s>:  "),
+        APPEND_FORMATTED_TEXT(_F_MAGENTA("%-20s") _ANSI_DEFAULTS(" [") _F_BLUE_BOLD("%5d") _ANSI_DEFAULTS("] <%03d%-1s> "),
                               context->name, context->id, minimal_log_size, exact_indicator);
     } else {
-        APPEND_FORMATTED_TEXT("%-20s [%5d] <%03d%-1s>: ", context->name, context->id, minimal_log_size, exact_indicator);
+        APPEND_FORMATTED_TEXT("%-20s [%5d] <%03d%-1s> ", context->name, context->id, minimal_log_size, exact_indicator);
     }
     
 
     struct trace_record_typed record;
     record.log_id = log_id;
-    int bytes_processed;
-    total_length = format_typed_params(parser, context, &record, formatted_record, formatted_record_size, total_length - 1, &bytes_processed, TRUE);
+    int bytes_processed = 0;
+
+    if (parser->file_info.format_version >= TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA) {
+    	const struct trace_log_descriptor *descriptor = get_log_descriptor(context, log_id);
+    	APPEND_FORMATTED_TEXT("[%s:%d - %s()] ", descriptor->file, descriptor->line, descriptor->function);
+    }
+
+    total_length = format_typed_params(parser, context, &record, formatted_record, formatted_record_size, total_length, &bytes_processed, TRUE);
     formatted_record[total_length] = '\0';
 
     return 0;
@@ -2354,8 +2371,17 @@ int TRACE_PARSER__from_file(trace_parser_t *parser, bool_t wait_for_input, const
         return -1;
     }
 
-    if (file_header.u.file_header.format_version != TRACE_FORMAT_VERSION) {
-        return -1;
+    parser->file_info.format_version = file_header.u.file_header.format_version;
+    switch (parser->file_info.format_version) {
+    case 0xA1:
+    	break;
+
+    case 0xA2:
+    	break;
+
+    default:
+    	errno = EFTYPE;
+    	return -1;
     }
     
     strncpy(parser->file_info.filename, filename, sizeof(parser->file_info.filename));    

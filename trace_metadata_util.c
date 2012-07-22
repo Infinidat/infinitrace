@@ -34,9 +34,9 @@ static int relocate_ptr(unsigned long long original_base_address, unsigned long 
     return 0;
 }
 
-static void relocate_descriptor_parameters(const void *old_base, const void *new_base, struct trace_log_descriptor *descriptor)
+static void relocate_descriptor_parameters(const void *old_base, const void *new_base, const struct trace_log_descriptor *descriptor)
 {
-    struct trace_param_descriptor *param;
+    const struct trace_param_descriptor *param;
     param = descriptor->params;
 
     while (param->flags != 0) {
@@ -63,18 +63,39 @@ static void relocate_type_definition_params(const void *old_base, const void *ne
     }
 }
 
+size_t get_log_descriptor_size(unsigned fmt_version)
+{
+	return (fmt_version < TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA) ? 16 : sizeof(struct trace_log_descriptor);
+}
+
 void relocate_metadata(const void *original_base_address, const void *new_base_address, char *data, unsigned int descriptor_count, unsigned int type_count)
+{
+	relocate_metadata_for_fmt_version(original_base_address,new_base_address, data, descriptor_count, type_count, TRACE_FORMAT_VERSION);
+}
+
+void relocate_metadata_for_fmt_version(
+		const void *original_base_address,
+		const void *new_base_address,
+		char *data,
+		unsigned int descriptor_count,
+		unsigned int type_count,
+		unsigned int fmt_version)
 {
     unsigned int i;
 
     assert(sizeof(unsigned long long) >= sizeof(void *));
 
-    struct trace_log_descriptor *log_descriptors = (struct trace_log_descriptor *) data;
-    struct trace_type_definition *type_definitions = (struct trace_type_definition *) (data + (sizeof(struct trace_log_descriptor) * descriptor_count));
+    size_t log_descriptor_size = get_log_descriptor_size(fmt_version);
+    struct trace_type_definition *type_definitions = (struct trace_type_definition *) (data + log_descriptor_size * descriptor_count);
 
     for (i = 0; i < descriptor_count; i++) {
-        relocate_ptr((unsigned long long)original_base_address, (unsigned long long)new_base_address, (unsigned long long *) &log_descriptors[i].params);
-        relocate_descriptor_parameters(original_base_address, new_base_address, &log_descriptors[i]);
+    	struct trace_log_descriptor *log_descr = (struct trace_log_descriptor *) (data + log_descriptor_size * i);
+        relocate_ptr((unsigned long long)original_base_address, (unsigned long long)new_base_address, (unsigned long long *) &log_descr->params);
+        if (fmt_version >= TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA) {
+        	relocate_ptr((unsigned long long)original_base_address, (unsigned long long)new_base_address, (unsigned long long *) &log_descr->file);
+        	relocate_ptr((unsigned long long)original_base_address, (unsigned long long)new_base_address, (unsigned long long *) &log_descr->function);
+        }
+        relocate_descriptor_parameters(original_base_address, new_base_address, log_descr);
     }
 
     for (i = 0; i < type_count; i++) {
@@ -83,6 +104,7 @@ void relocate_metadata(const void *original_base_address, const void *new_base_a
         relocate_type_definition_params(original_base_address, new_base_address, &type_definitions[i]);
     }
 }
+
 
 /* Functions for manipulating the shared-memory objects. */
 

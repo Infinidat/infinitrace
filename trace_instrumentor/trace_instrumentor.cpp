@@ -320,7 +320,9 @@ std::string TraceCall::getTraceDeclaration()
     descriptor << params.str() << "};";
     descriptor << "static struct trace_log_descriptor __attribute__((__section__(\".static_log_data\"))) " << trace_call_name << "= { ";
     descriptor << kind;
-    descriptor << + ", " << trace_call_name << "_params };";
+    descriptor << ", __LINE__";
+    descriptor << ", " << trace_call_name << "_params" << ", ";
+    descriptor << "__FILE__, __FUNCTION__" << " };";
     
     return descriptor.str();
 }
