@@ -16,7 +16,10 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 ***/
 
 #include <stdio.h>
+#include <unistd.h>
+#include <sys/mman.h>
 #include "trace_defs.h"
+#include "trace_lib.h"
 #include "trace_metadata_util.h"
 
 static int relocate_ptr(unsigned long long original_base_address, unsigned long long new_base_address, unsigned long long *ptr)
@@ -74,3 +77,21 @@ void relocate_metadata(void *original_base_address, void *new_base_address, char
         relocate_type_definition_params(original_base_address, new_base_address, &type_definitions[i]);
     }
 }
+
+
+
+int delete_shm_files(pid_t pid)
+{
+    char dynamic_trace_filename[0x100];
+    char static_log_data_filename[0x100];
+
+    int rc;
+    snprintf(dynamic_trace_filename, sizeof(dynamic_trace_filename), TRACE_DYNAMIC_DATA_REGION_NAME_FMT, (int)pid);
+    snprintf(static_log_data_filename, sizeof(static_log_data_filename), TRACE_STATIC_DATA_REGION_NAME_FMT, (int)pid);
+
+    rc = shm_unlink(dynamic_trace_filename);
+    rc |= shm_unlink(static_log_data_filename);
+
+    return rc;
+}
+

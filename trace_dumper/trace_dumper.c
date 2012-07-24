@@ -391,7 +391,7 @@ static void severity_type_to_str(unsigned int severity_type, char *severity_str,
             if (!first_element) {
                 strncat(severity_str, ", ", severity_str_size);
             }
-            strncat(severity_str, sev_to_str[i], severity_str_size);
+            strncat(severity_str, sev_to_str[i], severity_str_size - 1 - strlen(severity_str));
             first_element = 0;
         }
     }
@@ -686,22 +686,6 @@ static int get_process_time(unsigned short pid, unsigned long long *curtime)
     *curtime = stat_buf.st_ctim.tv_sec * 1000000000ULL;
     *curtime += stat_buf.st_ctim.tv_nsec;
     return 0;
-}
-
-static int delete_shm_files(unsigned short pid)
-{
-    INFO("Deleting shm files for pid", pid);
-    char dynamic_trace_filename[0x100];
-    char static_log_data_filename[0x100];
-
-    int rc;
-    snprintf(dynamic_trace_filename, sizeof(dynamic_trace_filename), TRACE_DYNAMIC_DATA_REGION_NAME_FMT, pid);
-    snprintf(static_log_data_filename, sizeof(static_log_data_filename), TRACE_STATIC_DATA_REGION_NAME_FMT, pid);
-
-    rc = shm_unlink(dynamic_trace_filename);
-    rc |= shm_unlink(static_log_data_filename);
-
-    return rc;
 }
 
 bool_t trace_should_filter(struct trace_dumper_configuration_s *conf __attribute__((unused)), const char *buffer_name)

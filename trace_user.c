@@ -32,7 +32,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "macros.h"
 #include "trace_lib.h"
 #include "trace_user.h"
-
+#include "trace_metadata_util.h"
 #include "halt.h"
 
 /* Global per process/thread data structures */
@@ -260,26 +260,6 @@ static void static_log_alloc_size(unsigned int log_descriptor_count, unsigned in
 
     
     type_alloc_size(__type_information_start, type_definition_count, enum_value_count, alloc_size);
-}
-
-#define SHM_DIR "/dev/shm"
-
-static int delete_shm_files(unsigned short pid)
-{
-    char dynamic_trace_filename[0x100];
-    char static_log_data_filename[0x100];
-    char full_dynamic_trace_filename[0x100];
-    char full_static_log_data_filename[0x100];
-    int rc;
-    snprintf(dynamic_trace_filename, sizeof(dynamic_trace_filename), TRACE_DYNAMIC_DATA_REGION_NAME_FMT, pid);
-    snprintf(static_log_data_filename, sizeof(static_log_data_filename), TRACE_STATIC_DATA_REGION_NAME_FMT, pid);
-    snprintf(full_dynamic_trace_filename, sizeof(full_dynamic_trace_filename), "%s/%s", SHM_DIR, dynamic_trace_filename);
-    snprintf(full_static_log_data_filename, sizeof(full_static_log_data_filename), "%s/%s", SHM_DIR, static_log_data_filename);
-
-    rc = unlink(full_dynamic_trace_filename);
-    rc |= unlink(full_static_log_data_filename);
-
-    return rc;
 }
 
 static void map_static_log_data(const char *buffer_name)

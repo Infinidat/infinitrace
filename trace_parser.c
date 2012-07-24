@@ -16,10 +16,8 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 ***/
 
 #define _GNU_SOURCE
-#ifdef __linux__
-#define _USE_INOTIFY_
-#define _USE_MREMAP_
-#endif
+
+#include "platform.h"
 
 #include <sys/types.h>
 #include <errno.h>
@@ -51,7 +49,11 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 CREATE_LIST_IMPLEMENTATION(BufferParseContextList, struct trace_parser_buffer_context)
 CREATE_LIST_IMPLEMENTATION(RecordsAccumulatorList, struct trace_record_accumulator)
 
-#define MAX_ULLONG	18446744073709551615ULL
+#ifdef ULLONG_MAX
+#define MAX_ULLONG	ULLONG_MAX
+#else
+#define MAX_ULLONG     18446744073709551615ULL
+#endif
 
 #define TRACE_SECOND (1000000000)
 #define TRACE_MINUTE (TRACE_SECOND * 60)
@@ -90,11 +92,11 @@ static int wait_for_data(trace_parser_t *parser)
 
 static long long get_current_end_offset_from_fd(int fd)
 {
-    off_t size;
-    
-    size = lseek(fd, 0, SEEK_END);
-    if (size < 0) {
-        return -1;
+    off64_t size;
+    size = lseek64(fd, 0, SEEK_END);
+    if ((off64_t)-1 == size) {
+    	fprintf(stderr, "Failed to obtain end offset for fd %d due to error %s", fd, strerror(errno));
+        return -1LL;
     }
 
     return size;
@@ -104,7 +106,7 @@ static long long trace_end_offset(trace_parser_t *parser)
 {
     off_t new_end = get_current_end_offset_from_fd(parser->file_info.fd);
     if (new_end != parser->file_info.end_offset) {
-#ifdef _USE_MREMAP
+#ifdef _USE_MREMAP_
         void *new_addr = mremap(parser->file_info.file_base, parser->file_info.end_offset, new_end, MREMAP_MAYMOVE);
         if (!new_addr || MAP_FAILED == new_addr) {
             return -1;

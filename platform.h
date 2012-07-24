@@ -1,7 +1,7 @@
 /***
-Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
+Copyright 2012 Yitzik Casapu <yitzikc [at] infinidat.com>
    Sponsored by infinidat (http://infinidat.com)
-   
+
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
@@ -15,15 +15,31 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
    limitations under the License.
 ***/
 
-#ifndef __TRACE_METADATA_UTIL_H__
-#define __TRACE_METADATA_UTIL_H__
+#ifndef __PLATFORM_H__
+#define __PLATFORM_H__
 
-#include "trace_defs.h"
+#ifdef __linux__
 
-/* Fix the base address of metadata to accomodate different shared-mem mappings in different processes */
-void relocate_metadata(void *original_base_address, void *new_base_address, char *data, unsigned int descriptor_count, unsigned int type_count);
+#define _USE_INOTIFY_
+#define _USE_MREMAP_
+#define _USE_PROC_FS_
+#define _LARGEFILE64_SOURCE
+#define SHM_DIR "/dev/shm"
 
-/* Functions for handling the shared-memory areas */
-int delete_shm_files(pid_t pid);
+#endif
 
-#endif 
+#if defined(__APPLE_CC_) || defined(__MACH__)
+
+#define _LARGEFILE_IS_DEFAULT_
+
+#endif
+
+#include <unistd.h>
+
+#ifdef _LARGEFILE_IS_DEFAULT_ /* Normal Posix API functions support 64-bit files, no need for special functions */
+#define lseek64 lseek
+#define ftruncate64 ftruncate
+typedef off_t off64_t;
+
+#endif
+#endif /* __PLATFORM_H__ */

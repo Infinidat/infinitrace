@@ -7,11 +7,11 @@ Import('TracesDisabled')
 with TracesDisabled(xn_env) as untraced_env:
     lib = untraced_env.SConscript("trace_instrumentor/SConscript")
 
-    srcs = untraced_env.AutoSplit('''trace_user.c halt.c''')
+    srcs = untraced_env.AutoSplit('''trace_user.c trace_metadata_util_untraced.c  halt.c''')
     lib = untraced_env.XnStaticLibrary(target = 'traces', source = srcs)
     untraced_env.Alias('xn', lib)
 
-    srcs = untraced_env.AutoSplit('''trace_user_stubs.c''')
+    srcs = untraced_env.AutoSplit('''trace_user_stubs.c trace_metadata_util_untraced.c ''')
     lib = untraced_env.XnStaticLibrary(target = 'tracesstubs', source = srcs)
     untraced_env.Alias('xn', lib)
 
