@@ -10,7 +10,7 @@ ifeq ($(TARGET_PLATFORM),linux-gnu)
 endif
 
 all: libtrace libtraceuser simple_trace_reader trace_dumper trace_instrumentor interactive_reader
-trace_dumper: $(LIBTRACE_OBJS) trace_dumper/trace_dumper.o trace_dumper/filesystem.o trace_user_stubs.o
+trace_dumper: libtrace trace_dumper/trace_dumper.o trace_dumper/filesystem.o trace_user_stubs.o
 	gcc -L.  trace_dumper/filesystem.o trace_dumper/trace_dumper.o trace_user_stubs.o -ltrace $(EXTRA_LIBS) -o trace_dumper/trace_dumper 
 
 libtrace: $(LIBTRACE_OBJS)
@@ -20,7 +20,7 @@ libtrace: $(LIBTRACE_OBJS)
 libtraceuser: $(LIBTRACEUSER_OBJS)
 	ar rcs libtraceuser.a trace_metadata_util.o trace_user.o halt.o
 
-simple_trace_reader: $(LIBTRACE_OBJS) trace_reader/simple_trace_reader.o
+simple_trace_reader: libtrace trace_reader/simple_trace_reader.o
 	gcc -L. trace_reader/simple_trace_reader.o -ltrace $(EXTRA_LIBS) -o trace_reader/simple_trace_reader
 
 interactive_reader: trace_parser.h
