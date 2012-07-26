@@ -301,6 +301,7 @@ static int append_metadata(struct trace_parser_buffer_context *context, struct t
     }
     memcpy(((char *)context->metadata) + context->current_metadata_offset, rec->u.payload, MIN(remaining, TRACE_RECORD_PAYLOAD_SIZE));
     context->current_metadata_offset += MIN(remaining, TRACE_RECORD_PAYLOAD_SIZE);
+    context->type_hash = 0;
     return 0;
 }
 
