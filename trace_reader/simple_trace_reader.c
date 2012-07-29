@@ -6,11 +6,12 @@
 #include <errno.h>
 #include <limits.h>
 #include <getopt.h>
+#include <sysexits.h>
 #include "../list_template.h"
 #include "../array_length.h"
 
 typedef char trace_filename_t[0x100];
-CREATE_LIST_PROTOTYPE(FilenameList, trace_filename_t)
+CREATE_LIST_PROTOTYPE(FilenameList, trace_filename_t, 20)
 CREATE_LIST_IMPLEMENTATION(FilenameList, trace_filename_t)
 
 enum op_type_e {
@@ -263,7 +264,7 @@ static int dump_all_files(struct trace_reader_conf *conf)
 {
     int i;
     trace_filename_t filename;
-    int error_occurred;
+    int error_occurred = 0;
     trace_parser_t parser;
     
     for (i = 0; i < FilenameList__element_count(&conf->files_to_process); i++) {
@@ -271,28 +272,35 @@ static int dump_all_files(struct trace_reader_conf *conf)
         int rc = TRACE_PARSER__from_file(&parser, conf->tail, filename, read_event_handler, NULL);
         if (0 != rc) {
             fprintf(stderr, "Error opening file %s (%s)\n", filename, strerror(errno));
-            return -1;
+            return EX_NOINPUT;
         }
         set_parser_params(conf, &parser);
 
-
-        if (conf->tail) {
-            TRACE_PARSER__seek_to_time(&parser, LLONG_MAX, &error_occurred);
-            if (error_occurred) {
-                fprintf(stderr, "Error seeking to end of file %llu\n", conf->from_time);
-            }
-        }
-                
+        unsigned long long seek_ts = 0;
         if (conf->from_time) {
-            TRACE_PARSER__seek_to_time(&parser, conf->from_time, &error_occurred);
-            if (error_occurred) {
-                fprintf(stderr, "Error seeking to time %llu\n", conf->from_time);
-                return -1;
-            }
+        	seek_ts = conf->from_time;
+        } else if (conf->tail) {
+        	seek_ts = LLONG_MAX;
         }
-        
-        TRACE_PARSER__dump(&parser);
+
+        if (seek_ts > 0) {
+        	TRACE_PARSER__seek_to_time(&parser, seek_ts, &error_occurred);
+        	if (error_occurred) {
+        		fprintf(stderr, "Failed to seek to %s in the file %s due to error %s\n",
+        				conf->tail ? "the end" : "the requested time", filename, strerror(error_occurred));
+        	}
+        }
+
+        if ((!error_occurred) && (TRACE_PARSER__dump(&parser) < 0)) {
+        	error_occurred = errno;
+        	fprintf(stderr, "Record dumping from the file %s failed due to error: %s\n", filename, strerror(error_occurred));
+        }
         TRACE_PARSER__fini(&parser);
+    }
+
+    if (error_occurred) {
+    	fprintf(stderr, "Trace has reader encountered the following error: %s",  strerror(error_occurred));
+    	return EX_IOERR;
     }
 
     return 0;
@@ -303,24 +311,27 @@ static int dump_statistics_for_all_files(struct trace_reader_conf *conf)
     int i;
     trace_filename_t filename;
     trace_parser_t parser;
+    int error_occurred = 0;
     
     for (i = 0; i < FilenameList__element_count(&conf->files_to_process); i++) {
         FilenameList__get_element(&conf->files_to_process, i, &filename);
 
         int rc = TRACE_PARSER__from_file(&parser, FALSE, filename, read_event_handler, NULL);
-        set_parser_params(conf, &parser);
-
         if (0 != rc) {
-            fprintf(stderr, "Error opening file %s\n", filename);
-            return -1;
+            fprintf(stderr, "Error opening file %s: %s\n", filename, strerror(errno));
+            return EX_NOINPUT;
         }
 
-        TRACE_PARSER__dump_statistics(&parser);
-        TRACE_PARSER__fini(&parser);
+        set_parser_params(conf, &parser);
 
+        if (TRACE_PARSER__dump_statistics(&parser) < 0) {
+        	error_occurred = errno;
+        	fprintf(stderr, "Error producing statistics from the file file %s: %s\n", filename, strerror(error_occurred));
+        }
+        TRACE_PARSER__fini(&parser);
     }
 
-    return 0;
+    return error_occurred ? EX_IOERR : 0;
 }
 
 static int dump_metadata_for_files(struct trace_reader_conf *conf)
@@ -328,6 +339,7 @@ static int dump_metadata_for_files(struct trace_reader_conf *conf)
     int i;
     trace_filename_t filename;
     trace_parser_t parser;
+    int error_occurred = 0;
     
     for (i = 0; i < FilenameList__element_count(&conf->files_to_process); i++) {
         FilenameList__get_element(&conf->files_to_process, i, &filename);
@@ -337,15 +349,19 @@ static int dump_metadata_for_files(struct trace_reader_conf *conf)
 
         if (0 != rc) {
             fprintf(stderr, "Error opening file %s\n", filename);
-            return -1;
+            return EX_NOINPUT;
         }
+
+        if (TRACE_PARSER__dump_statistics(&parser) < 0) {
+			error_occurred = errno;
+			fprintf(stderr, "Error producing statistics from the file file %s: %s\n", filename, strerror(error_occurred));
+		}
 
         TRACE_PARSER__dump_all_metadata(&parser);
         TRACE_PARSER__fini(&parser);
-
     }
 
-    return 0;
+    return error_occurred ? EX_IOERR : 0;
 }
 
 int main(int argc, char **argv)
@@ -377,7 +393,7 @@ int main(int argc, char **argv)
     case OP_TYPE_INVALID:
         fprintf(stderr, "simple_trace_reader: Must specify operation type (-s or -d)\n");
         print_usage();
-        return 1;
+        return EX_USAGE;
     default:
         break;
     }

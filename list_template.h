@@ -15,28 +15,24 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
    limitations under the License.
 ***/
 
-#ifndef MAX_ELEMENTS
-	#define MAX_ELEMENTS (20)
-#endif
-
 #include "bool.h"
 #include "macros.h"
+#include "array_length.h"
 #include <string.h>
 #include <pthread.h>
 
 /* These macros assume the following: 
   - listdatatype is defined to hold the name of the datatype in the list 
   - listname is defined to hold the name of list 
-  - MAX_ELEMENTS is defined to the hold the number of max elements in the list
 */
 
 
-#define CREATE_LIST_PROTOTYPE(listname, listdatatype)                   \
+#define CREATE_LIST_PROTOTYPE(listname, listdatatype, num_elements)     \
 	typedef struct listname##_s {                                       \
 	int element_count;                                                  \
-	listdatatype elements[MAX_ELEMENTS];                                \
+	listdatatype elements[num_elements];                                \
 } listname;                                                             \
-                                                                        \
+																		\
 void listname ## __##init(listname *self);                              \
 void listname ## __##clear(listname *self);                             \
 void listname ## __##fini(listname *self);                              \
@@ -50,8 +46,8 @@ int listname##__element_count(listname *self);                          \
 int listname##__last_element_index(listname *self);                     \
 int listname##__dequeue(listname *self, listdatatype *output_element);  \
 int listname##__find_element(listname *self, listdatatype *element);    \
-bool_t listname##__insertable(listname *self);
-
+bool_t listname##__insertable(listname *self);							\
+enum { listname##_NUM_ELEMENTS = (num_elements) };
 
 #define CREATE_LIST_IMPLEMENTATION(listname, listdatatype)              \
 void listname ## __##init(listname *self)                               \
@@ -82,7 +78,7 @@ void listname ## __##fini(listname *self)                               \
                                                                         \
 int listname##__add_element(listname *self, listdatatype *element)      \
 {                                                                       \
-	if (MAX_ELEMENTS == listname##__element_count(self)) {              \
+	if (listname##_NUM_ELEMENTS == listname##__element_count(self)) {              \
 		return -1;                                                      \
 	}                                                                   \
 	memcpy(&self->elements[self->element_count], element, sizeof(*element)); \
@@ -92,7 +88,7 @@ int listname##__add_element(listname *self, listdatatype *element)      \
                                                                         \
 int listname##__allocate_element(listname *self)                        \
 {                                                                       \
-	if (MAX_ELEMENTS == listname##__element_count(self)) {              \
+	if (listname##_NUM_ELEMENTS == listname##__element_count(self)) {              \
 		return -1;                                                      \
 	}                                                                   \
 	self->element_count++;                                              \
@@ -199,5 +195,5 @@ int listname##__find_element(listname *self, listdatatype *element)     \
 }                                                                       \
                                                                         \
 bool_t listname##__insertable(listname *self) {                         \
-	return (!(listname##__element_count(self) == MAX_ELEMENTS));        \
+	return (!(listname##__element_count(self) == listname##_NUM_ELEMENTS));        \
 }

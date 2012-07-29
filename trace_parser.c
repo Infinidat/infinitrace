@@ -267,11 +267,27 @@ static int free_buffer_context_by_pid(trace_parser_t *parser, unsigned short pid
     return -1;
 }
 
+static void free_all_metadata(trace_parser_t *parser)
+{
+    int i;
+    for (i = 0; i < BufferParseContextList__element_count(&parser->buffer_contexts); i++) {
+    	struct trace_parser_buffer_context *ptr = NULL;
+        if (BufferParseContextList__get_element_ptr(&parser->buffer_contexts, i, &ptr) < 0) {
+        	continue;
+        }
+
+        if ((NULL != ptr) && (NULL != ptr->metadata)) {
+        	free(ptr->metadata);
+        	ptr->metadata = NULL;
+        }
+    }
+}
+
 static int metadata_info_started(trace_parser_t *parser, struct trace_record *rec)
 {
     struct trace_parser_buffer_context *context = get_buffer_context_by_pid(parser, rec->pid);
 
-    if (context) {        
+    if (context) {
         free_buffer_context_by_pid(parser, rec->pid);
     }
 
@@ -288,7 +304,10 @@ static int metadata_info_started(trace_parser_t *parser, struct trace_record *re
     }
 
     new_context.current_metadata_offset = 0;
-    BufferParseContextList__add_element(&parser->buffer_contexts, &new_context);
+    if (BufferParseContextList__add_element(&parser->buffer_contexts, &new_context) < 0) {
+    	errno = ENOMEM;
+    	return -1;
+    }
 
     return 0;
 }
@@ -430,7 +449,7 @@ typedef struct log_stats {
 
 OBJECT_POOL(log_stats_pool, log_stats_t, 20);
 static log_stats_pool_t log_stats_pool;
-#define LOG_STATS_POOL_LENGTH sizeof(log_stats_pool_t) / sizeof(log_stats_t)
+#define LOG_STATS_POOL_LENGTH sizeof(log_stats_pool_t) / sizeof(log_stats_pool__element_t)
 
 int compare_log_occurrence_entries(const void *a, const void *b)
 {
@@ -981,7 +1000,7 @@ static int process_typed_record(trace_parser_t *parser, bool_t accumulate_forwar
 {
     struct trace_record *complete_record = accumulate_record(parser, rec, accumulate_forward);
     if (!complete_record) {
-        return -1;
+        return EINVAL;
     }
 
     *buffer = get_buffer_context_by_pid(parser, complete_record->pid);
@@ -989,7 +1008,7 @@ static int process_typed_record(trace_parser_t *parser, bool_t accumulate_forwar
     *out_record = complete_record;
 
     if (NULL == *buffer) {
-    	return -1;
+    	return ESRCH;
     }
 
     return 0;
@@ -1481,8 +1500,7 @@ static int process_single_record(trace_parser_t *parser, struct trace_record_mat
     struct parser_complete_typed_record complete_rec;
     switch (record->rec_type) {
     case TRACE_REC_TYPE_UNKNOWN:
-        handler(parser, TRACE_PARSER_UNKNOWN_RECORD_ENCOUNTERED, &record, arg);
-        rc = 0;
+        rc = handler(parser, TRACE_PARSER_UNKNOWN_RECORD_ENCOUNTERED, &record, arg);
         break;
     case TRACE_REC_TYPE_TYPED:
         if (discard_record_on_nonseekable_stream(parser)) {
@@ -1491,20 +1509,30 @@ static int process_single_record(trace_parser_t *parser, struct trace_record_mat
         }
 
         rc = process_typed_record(parser, accumulate_forward, record, &complete_record, &buffer);
-        if (0 == rc) {
+        switch (rc) {
+        case 0: /* We passed a complete record */
             complete_rec.buffer = buffer;
             complete_rec.record = complete_record;
             if (!should_filter_record(filter, buffer, complete_record)) {
-                if (handler(parser, TRACE_PARSER_COMPLETE_TYPED_RECORD_PROCESSED, &complete_rec, arg) < 0) {
-                    return -1;
+            	rc = handler(parser, TRACE_PARSER_COMPLETE_TYPED_RECORD_PROCESSED, &complete_rec, arg);
+                if (0 == rc) {
+                	*complete_typed_record_found = 1;
                 }
-                *complete_typed_record_found = 1;
             }
 
             free_accumulator(parser, complete_record);
+            break;
+
+        case EINVAL:  /* We passed a partial record, this is normal */
+        	rc = 0;
+        	break;
+
+        default:
+        	errno = rc;
+        	rc = -1;
+        	break;
         }
 
-        rc = 0;
         break;
     case TRACE_REC_TYPE_FILE_HEADER:
         strncpy(parser->file_info.machine_id, (char * ) record->u.file_header.machine_id, sizeof(parser->file_info.machine_id));
@@ -1522,10 +1550,11 @@ static int process_single_record(trace_parser_t *parser, struct trace_record_mat
         process_buffer_chunk_record(parser, record);
         break;
     case TRACE_REC_TYPE_END_OF_FILE:
-        rc = -1;
+        rc = ENODATA;
         break;
     default:
         rc = -1;
+        break;
     }
 
     return rc;
@@ -1718,7 +1747,7 @@ int TRACE_PARSER__dump(trace_parser_t *parser)
     while (1) {
         int rc = process_next_record_from_file(parser, &parser->record_filter, dumper_event_handler, &dump_context);
         if (0 != rc) {
-            return -1;
+            return rc;
         }
     }
 
@@ -1854,8 +1883,7 @@ static int dump_metadata(trace_parser_t *parser, enum trace_parser_event_e event
 
 int TRACE_PARSER__dump_all_metadata(trace_parser_t *parser)
 {
-    process_all_metadata(parser, dump_metadata);
-    return 0;
+    return process_all_metadata(parser, dump_metadata);
 }
 
 static int format_record_event_handler(trace_parser_t *parser, enum trace_parser_event_e event, void *event_data, void *arg)
@@ -1871,20 +1899,21 @@ static int format_record_event_handler(trace_parser_t *parser, enum trace_parser
     return 0;
 }
 
-int TRACE_PARSER__process_next_from_memory(trace_parser_t *parser, struct trace_record *rec, char *formatted_record, int formatted_record_size, unsigned int *record_formatted)
+int TRACE_PARSER__process_next_from_memory(trace_parser_t *parser, struct trace_record *rec, char *formatted_record, size_t formatted_record_size, size_t *formatted_record_len)
 {
     if (parser->stream_type != TRACE_INPUT_STREAM_TYPE_NONSEEKABLE) {
+    	errno = EINVAL;
         return -1;
     }
     struct dump_context_s dump_context;
     memset(&dump_context, 0, sizeof(dump_context));
     int complete_record_processed;
     int rc = process_single_record(parser, &parser->record_filter, rec, &complete_record_processed, TRUE, format_record_event_handler, &dump_context);
-    if (strlen(dump_context.formatted_record)) {
-        strncpy(formatted_record, dump_context.formatted_record, formatted_record_size);
-        *record_formatted = 1;
-    } else {
-        *record_formatted = 0;
+    *formatted_record_len = strlen(dump_context.formatted_record);
+    if (*formatted_record_len > 0) {
+    	size_t copy_len = MAX(*formatted_record_len, formatted_record_size - 1);
+        memcpy(formatted_record, dump_context.formatted_record, copy_len);
+        formatted_record[copy_len] = '\0';
     }
     
     return rc;
@@ -1963,7 +1992,7 @@ static int process_previous_record_from_file(trace_parser_t *parser, struct trac
             parser->buffer_dump_context.record_dump_contexts[chunk_index].current_offset--;
             break;
         } else if (0 != rc) {
-            rc = -1; goto Exit;;
+            goto Exit;
         }
 
         parser->buffer_dump_context.record_dump_contexts[chunk_index].current_offset--;
@@ -2072,6 +2101,7 @@ static void free_stats_pool(log_stats_pool_t stats_pool)
 int TRACE_PARSER__dump_statistics(trace_parser_t *parser)
 {
     if (parser->stream_type != TRACE_INPUT_STREAM_TYPE_SEEKABLE_FILE) {
+    	errno = EINVAL;
         return -1;
     }
 
@@ -2214,19 +2244,14 @@ void TRACE_PARSER__from_external_stream(trace_parser_t *parser, trace_parser_eve
     trace_parser_init(parser, event_handler, arg, TRACE_INPUT_STREAM_TYPE_NONSEEKABLE);
 }
 
+
 void TRACE_PARSER__fini(trace_parser_t *parser)
 {
     if (file_open(parser)) {
         unmap_file(parser);
     }
 
-    int i;
-    struct trace_parser_buffer_context *ptr;
-
-    for (i = 0; i < BufferParseContextList__element_count(&parser->buffer_contexts); i++) {
-        BufferParseContextList__get_element_ptr(&parser->buffer_contexts, i, &ptr);
-        free(ptr->metadata);
-    }
+    free_all_metadata(parser);
 }
 
 long long TRACE_PARSER__seek(trace_parser_t *parser, long long offset, int whence)
@@ -2400,22 +2425,17 @@ unsigned long long TRACE_PARSER__seek_to_time(trace_parser_t *parser, unsigned l
     long long new_offset = find_record_by_ts(parser, ts, 0, (trace_end_offset(parser) - 1) / sizeof(struct trace_record), &new_ts);
     if (-1 == new_offset) {
         TRACE_PARSER__seek(parser, orig_offset, SEEK_SET);
-        *error_occurred = 1;
+        *error_occurred = errno;
         return -1;
     }
 
     int rc = set_buffer_dump_context_from_ts(parser, &parser->record_filter, ts, new_offset);
     if (0 != rc) {
-        *error_occurred = 1;
+        *error_occurred = errno;
         return -1;
     }
 
-    if (0 != rc) {
-        *error_occurred = 1;
-    } else {
-        *error_occurred = 0;
-    }
-    
+    *error_occurred = 0;
     return new_ts;
 }
 

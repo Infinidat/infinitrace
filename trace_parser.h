@@ -50,8 +50,8 @@ struct trace_record_accumulator {
     unsigned log_id;
 };
 
-CREATE_LIST_PROTOTYPE(BufferParseContextList, struct trace_parser_buffer_context)
-CREATE_LIST_PROTOTYPE(RecordsAccumulatorList, struct trace_record_accumulator)
+CREATE_LIST_PROTOTYPE(BufferParseContextList, struct trace_parser_buffer_context, 100)
+CREATE_LIST_PROTOTYPE(RecordsAccumulatorList, struct trace_record_accumulator, BufferParseContextList_NUM_ELEMENTS)
 
 struct parser_complete_typed_record {
     struct trace_record *record;
@@ -213,7 +213,7 @@ void TRACE_PARSER__cancel_ongoing_operation(trace_parser_t *parser);
 
 int TRACE_PARSER__dump(trace_parser_t *parser);
 int TRACE_PARSER__dump_statistics(trace_parser_t *parser);
-int TRACE_PARSER__process_next_from_memory(trace_parser_t *parser, struct trace_record *rec, char *formatted_record, int formatted_record_size, unsigned int *record_formatted);
+int TRACE_PARSER__process_next_from_memory(trace_parser_t *parser, struct trace_record *rec, char *formatted_record, size_t formatted_record_size, size_t *formatted_record_len);
 long long TRACE_PARSER__seek(trace_parser_t *parser, long long offset, int whence);
 unsigned long long TRACE_PARSER__seek_to_time(trace_parser_t *parser, unsigned long long ts, int *error_occurred);
 int TRACE_PARSER__matcher_spec_from_severity_mask(unsigned int severity_mask, struct trace_record_matcher_spec_s filter[], unsigned int filter_count);

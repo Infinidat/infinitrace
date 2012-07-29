@@ -88,11 +88,11 @@ struct trace_mapped_buffer {
     unsigned long long process_time;
 };
 
-CREATE_LIST_PROTOTYPE(MappedBuffers, struct trace_mapped_buffer);
+CREATE_LIST_PROTOTYPE(MappedBuffers, struct trace_mapped_buffer, 100);
 CREATE_LIST_IMPLEMENTATION(MappedBuffers, struct trace_mapped_buffer);
 
 typedef char buffer_name_t[0x100];
-CREATE_LIST_PROTOTYPE(BufferFilter, buffer_name_t);
+CREATE_LIST_PROTOTYPE(BufferFilter, buffer_name_t, 20);
 CREATE_LIST_IMPLEMENTATION(BufferFilter, buffer_name_t);
 
 #define TRACE_FILE_PREFIX "trace."
@@ -225,18 +225,26 @@ static int dump_iovector_to_parser(struct trace_dumper_configuration_s *conf, st
             iovec_base_ptr += copy_len;
             if (tmp_ptr - accumulated_trace_record == sizeof(struct trace_record)) {
                 char formatted_record[10 * 1024];
-                unsigned int was_record_formatted = 0;
-                rc = TRACE_PARSER__process_next_from_memory(parser, (struct trace_record *) accumulated_trace_record, formatted_record, sizeof(formatted_record), &was_record_formatted);
-                tmp_ptr = accumulated_trace_record;
-                if (was_record_formatted) {
-                    if (!conf->syslog) {
-                        printf("%s\n", formatted_record);
-                    } else {
-                        syslog(LOG_DEBUG, "%s", formatted_record);
-                    }
-                }
-                if (0 != rc) {
-                	REPORT_AND_RETURN(-1);
+                size_t record_len = 0;
+                rc = TRACE_PARSER__process_next_from_memory(parser, (struct trace_record *) accumulated_trace_record, formatted_record, sizeof(formatted_record), &record_len);
+                switch (rc) {
+                case 0:
+					tmp_ptr = accumulated_trace_record;
+					if (record_len) {
+						if (!conf->syslog) {
+							puts(formatted_record);
+						} else {
+							syslog(LOG_DEBUG, "%s", formatted_record);
+						}
+					}
+					break;
+
+                case ENODATA:  /* End of file */
+                	return 0;
+
+                default:
+                	syslog(LOG_USER|LOG_ERR, "Trace dumper failed to format a message because of the following error: %s", strerror(errno));
+                	return rc;
                 }
             }
 
