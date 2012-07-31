@@ -17,10 +17,14 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 
 #include <stdio.h>
 #include <unistd.h>
+#include <assert.h>
 #include <sys/mman.h>
 #include "trace_defs.h"
 #include "trace_lib.h"
 #include "trace_metadata_util.h"
+
+
+/* Functions for relocating metadata, allocating space as needed and fixing-up pointers  */
 
 static int relocate_ptr(unsigned long long original_base_address, unsigned long long new_base_address, unsigned long long *ptr)
 {
@@ -30,7 +34,7 @@ static int relocate_ptr(unsigned long long original_base_address, unsigned long 
     return 0;
 }
 
-static void relocate_descriptor_parameters(void *old_base, void *new_base, struct trace_log_descriptor *descriptor)
+static void relocate_descriptor_parameters(const void *old_base, const void *new_base, struct trace_log_descriptor *descriptor)
 {
     struct trace_param_descriptor *param;
     param = descriptor->params;
@@ -49,7 +53,7 @@ static void relocate_descriptor_parameters(void *old_base, void *new_base, struc
     }
 }
 
-static void relocate_type_definition_params(void *old_base, void *new_base, struct trace_type_definition *type)
+static void relocate_type_definition_params(const void *old_base, const void *new_base, const struct trace_type_definition *type)
 {
     struct trace_enum_value *param;
     param = type->enum_values;
@@ -59,9 +63,11 @@ static void relocate_type_definition_params(void *old_base, void *new_base, stru
     }
 }
 
-void relocate_metadata(void *original_base_address, void *new_base_address, char *data, unsigned int descriptor_count, unsigned int type_count)
+void relocate_metadata(const void *original_base_address, const void *new_base_address, char *data, unsigned int descriptor_count, unsigned int type_count)
 {
     unsigned int i;
+
+    assert(sizeof(unsigned long long) >= sizeof(void *));
 
     struct trace_log_descriptor *log_descriptors = (struct trace_log_descriptor *) data;
     struct trace_type_definition *type_definitions = (struct trace_type_definition *) (data + (sizeof(struct trace_log_descriptor) * descriptor_count));
@@ -78,7 +84,7 @@ void relocate_metadata(void *original_base_address, void *new_base_address, char
     }
 }
 
-
+/* Functions for manipulating the shared-memory objects. */
 
 int delete_shm_files(pid_t pid)
 {

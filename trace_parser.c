@@ -312,19 +312,73 @@ static int metadata_info_started(trace_parser_t *parser, struct trace_record *re
     return 0;
 }
 
-static int append_metadata(struct trace_parser_buffer_context *context, struct trace_record *rec)
+static int append_metadata(struct trace_parser_buffer_context *context, const struct trace_record *rec)
 {
     unsigned int remaining = context->metadata_size - context->current_metadata_offset;
     if (remaining == 0) {
+    	errno = EINVAL;
         return -1;
     }
     memcpy(((char *)context->metadata) + context->current_metadata_offset, rec->u.payload, MIN(remaining, TRACE_RECORD_PAYLOAD_SIZE));
     context->current_metadata_offset += MIN(remaining, TRACE_RECORD_PAYLOAD_SIZE);
-    context->type_hash = 0;
     return 0;
 }
 
-static int accumulate_metadata(trace_parser_t *parser, struct trace_record *rec, trace_parser_event_handler_t handler, void *arg)
+
+/* Create the hash for looking up type definitions */
+
+struct trace_type_definition_mapped {
+    const struct trace_type_definition* def;
+    map_t map;
+};
+
+
+static struct trace_type_definition_mapped * new_trace_type_definition_mapped(const struct trace_type_definition* def) {
+    struct trace_type_definition_mapped* ptr =
+        (struct trace_type_definition_mapped*) malloc(sizeof(struct trace_type_definition_mapped));
+
+    if (NULL != ptr) {
+    	ptr->def = def;
+    	ptr->map = NULL;
+    }
+
+    return ptr;
+}
+
+
+static int init_types_hash(struct trace_parser_buffer_context *context) {
+
+	context->type_hash = hashmap_new();
+	if (NULL == context->type_hash) {
+		return -1;
+	}
+
+	for (unsigned int i = 0; i < context->metadata->type_definition_count; i++) {
+		int rc = MAP_OK;
+		struct trace_type_definition_mapped *trace_type_def = new_trace_type_definition_mapped(&context->types[i]);
+		if (NULL != trace_type_def) {
+			rc = hashmap_put(context->type_hash,
+							 context->types[i].type_name,
+							 trace_type_def);
+		}
+		else {
+			rc = MAP_OMEM;
+		}
+
+		if (MAP_OK != rc) {
+			if (MAP_OMEM == rc) {
+				errno = ENOMEM;
+			}
+			hashmap_free(context->type_hash);
+			context->type_hash = NULL;
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+static int accumulate_metadata(trace_parser_t *parser, const struct trace_record *rec, trace_parser_event_handler_t handler, void *arg)
 {
     struct trace_parser_buffer_context *context = get_buffer_context_by_pid(parser, rec->pid);
     if (NULL == context) {
@@ -334,15 +388,20 @@ static int accumulate_metadata(trace_parser_t *parser, struct trace_record *rec,
     if (rec->termination & TRACE_TERMINATION_LAST) {
         // Reached end of accumulation. The accumulated offset should be identical to the total size of the metadata
         if (context->metadata_size != context->current_metadata_offset) {
+        	errno = EINVAL;
             return -1;
         }
 
         relocate_metadata(context->metadata->base_address, context->metadata, context->metadata->data, context->metadata->log_descriptor_count, context->metadata->type_definition_count);
         context->descriptors = (struct trace_log_descriptor *) context->metadata->data;
         context->types = (struct trace_type_definition *) ((char *) context->metadata->data + (sizeof(struct trace_log_descriptor)) * context->metadata->log_descriptor_count);
-        strncpy(context->name, context->metadata->name, sizeof(context->name));
-        handler(parser, TRACE_PARSER_FOUND_METADATA, context, arg);
-        return 0;
+        strncpy(context->name, context->metadata->name, sizeof(context->name) - 1);
+        context->name[sizeof(context->name) - 1] = '\0';
+
+        if (0 != init_types_hash(context)) {
+        	return -1;
+        }
+        return handler(parser, TRACE_PARSER_FOUND_METADATA, context, arg);
     } else {
         return append_metadata(context, rec);
     }
@@ -398,7 +457,8 @@ static struct trace_record *accumulate_record(trace_parser_t *parser, struct tra
 
         int rc = RecordsAccumulatorList__allocate_element(&parser->records_accumulators);
         if (0 != rc) {
-            abort();
+            errno = ENOMEM;
+            return NULL;
         }
         
         RecordsAccumulatorList__get_element_ptr(&parser->records_accumulators, RecordsAccumulatorList__last_element_index(&parser->records_accumulators), &accumulator);
@@ -568,32 +628,13 @@ static int my_strncpy(char* formatted_record, const char* source, int max_size) 
     
 #define APPEND_COLORED_LITERAL_TEXT(color, source) if (COLOR_BOOL) { APPEND_LITERAL_TEXT(color(source)); } else if (source[0]) { APPEND_LITERAL_TEXT(source); }
 
-struct trace_type_definition_mapped {
-    struct trace_type_definition* def;
-    map_t map;
-};
 
-static struct trace_type_definition_mapped * new_trace_type_definition_mapped(struct trace_type_definition* def) {
-    struct trace_type_definition_mapped* ptr =
-        (struct trace_type_definition_mapped*) malloc(sizeof(struct trace_type_definition_mapped));
-    ptr->def = def;
-    ptr->map = NULL;
-    return ptr;
-}
 
-// static void get_type(struct trace_parser_buffer_context *context, const char *type_name, struct trace_type_definition **type)
-static char* get_type_name(struct trace_parser_buffer_context *context, const char *type_name, unsigned int value)
+static const char* get_type_name(const struct trace_parser_buffer_context *context, const char *type_name, unsigned int value)
 {
-    if (context->type_hash == 0) {
-        context->type_hash = hashmap_new();
-        for (unsigned int i = 0; i < context->metadata->type_definition_count; i++) {
-            hashmap_put(context->type_hash,
-                        context->types[i].type_name,
-                        new_trace_type_definition_mapped(&context->types[i]));
-        }
-    }
-    /* trace_type_definition_mapped* ttdm; */
     any_t ptr ;
+
+    /* Note: hashmap_get silently circumvents the const-ness of context, but we do this carefully  */
     int rc = hashmap_get(context->type_hash, type_name, &ptr);
     if (rc != MAP_OK)
         return NULL;
@@ -602,31 +643,34 @@ static char* get_type_name(struct trace_parser_buffer_context *context, const ch
 
     if (type->map == 0) {
         type->map = hashmap_new();
-        for (int i = 0; type->def->enum_values[i].name; i++) {
-            hashmap_put_int(type->map,
-                            type->def->enum_values[i].value,
-                            (any_t) type->def->enum_values[i].name);
+        if (NULL != type->map) {
+			for (int i = 0; NULL !=  type->def->enum_values[i].name; i++) {
+				rc = hashmap_put_int(type->map,
+								type->def->enum_values[i].value,
+								(any_t) type->def->enum_values[i].name);
+				if (MAP_OK != rc) {
+					break;
+				}
+			}
+        }
+        else {
+        	rc = MAP_OMEM;
+        }
+
+        if (MAP_OMEM == rc) {
+        	errno = ENOMEM;
+        	hashmap_free(type->map);
+        	type->map = 0;
         }
     }
-    rc = hashmap_get_int(type->map, value, &ptr);
+
+    if (rc == MAP_OK)
+    	rc = hashmap_get_int(type->map, value, &ptr);
+
     if (rc != MAP_OK)
         return NULL;
-    return (char*) ptr;
 
-    /*
-    struct trace_type_definition *tmp_type = context->types;
-    unsigned int i = 0;
-    for (i = 0; i < context->metadata->type_definition_count; i++) {
-        if (strcmp(tmp_type->type_name, type_name) == 0) {
-            *type = tmp_type;
-            return;
-        }
-
-        tmp_type++;
-    }
-
-    *type = NULL;
-    */
+    return (const char*) ptr;
 }
 
 
@@ -717,7 +761,7 @@ static unsigned int append_escape_string(const char *input, char *output, unsign
 
 static void get_enum_val_name(trace_parser_t *parser, struct trace_parser_buffer_context *context, struct trace_param_descriptor *param, unsigned int value, char *val_name, unsigned int val_name_size)
 {
-    char* name = get_type_name(context, param->type_name, value);
+    const char* name = get_type_name(context, param->type_name, value);
     if (name == NULL)
         snprintf(val_name, val_name_size, "%s", F_BLUE_BOLD("<? enum>"));
     else 

@@ -57,6 +57,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <assert.h>
 
 #define INITIAL_SIZE (256)
 #define MAX_CHAIN_LENGTH (8)
@@ -93,7 +94,6 @@ map_t hashmap_new() {
 	m->table_size = INITIAL_SIZE;
 	m->size = 0;
     m->first_int = NULL;
-    // bzero(m->first_int, sizeof(m->first_int));
 
 	return m;
 	err:
@@ -109,6 +109,8 @@ unsigned int hashmap_key_to_int(hashmap_map * m, const char* keystring){
    unsigned int key = 0;
     for (unsigned int i = 0 ; keystring[i] && i < 1024; i++)
         key += i * keystring[i] ;
+
+    assert(m->table_size >= INITIAL_SIZE);
 	return key % m->table_size;
 }
 
@@ -247,6 +249,7 @@ int hashmap_get(map_t in, const char* key, any_t *arg){
 /*  ====   USE INT_KEY   ==== */
 
 unsigned int hashmap_int_key_to_int(hashmap_map * m, unsigned int int_key) {
+	assert(m->table_size >= INITIAL_SIZE);
 	return int_key % m->table_size;
 }
 /*
@@ -389,6 +392,7 @@ int hashmap_get_int(map_t in, unsigned int int_key, any_t *arg){
 	return MAP_MISSING;
 }
 
+/* Currently we don't use the 2 functions below, we retain them here for completeness and in case we will need them in the future. */
 #if 0
 /*
  * Iterate the function parameter over each element in the hashmap.  The
@@ -448,6 +452,7 @@ int hashmap_remove(map_t in, char* key){
                 return MAP_OK;
             }
 		}
+        assert(m->table_size >= INITIAL_SIZE);
 		curr = (curr + 1) % m->table_size;
 	}
 
@@ -459,9 +464,13 @@ int hashmap_remove(map_t in, char* key){
 
 /* Deallocate the hashmap */
 void hashmap_free(map_t in){
-	hashmap_map* m = (hashmap_map*) in;
-	free(m->data);
-	free(m);
+	if (0 != in) {
+		hashmap_map* m = (hashmap_map*) in;
+		if (0 != m->data) {
+			free(m->data);
+		}
+		free(m);
+	}
 }
 
 /* Return the length of the hashmap */

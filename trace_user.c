@@ -63,10 +63,10 @@ void trace_runtime_control_set_default_min_sev(enum trace_severity sev)
 /* Routines for initializing the data structures that support tracing inside the traced process. */
 
 
-static void copy_log_params_to_allocated_buffer(struct trace_log_descriptor *log_desc, struct trace_param_descriptor **params,
+static void copy_log_params_to_allocated_buffer(const struct trace_log_descriptor *log_desc, struct trace_param_descriptor **params,
                                                 char **string_table)
 {
-    struct trace_param_descriptor *param = log_desc->params;
+    const struct trace_param_descriptor *param = log_desc->params;
     while (param->flags != 0) {
         __builtin_memcpy(*params, param, sizeof(struct trace_param_descriptor));
         if (param->str) {
@@ -101,7 +101,7 @@ static void copy_log_descriptors_to_allocated_buffer(unsigned int log_descriptor
     }
 }
 
-static void copy_enum_values_to_allocated_buffer(struct trace_type_definition *type_definition, struct trace_enum_value **enum_values,
+static void copy_enum_values_to_allocated_buffer(const struct trace_type_definition *type_definition, struct trace_enum_value **enum_values,
                                                  char **string_table)
 {
     struct trace_enum_value *enum_value = type_definition->enum_values;
@@ -120,7 +120,7 @@ static void copy_enum_values_to_allocated_buffer(struct trace_type_definition *t
 static void copy_type_definitions_to_allocated_buffer(struct trace_type_definition *type_definition, struct trace_enum_value *enum_values,
                                                       char **string_table)
 {
-    struct trace_type_definition *type = __type_information_start;
+    const struct trace_type_definition *type = __type_information_start;
     while (type) {
         memcpy(type_definition, type, sizeof(*type_definition));
         ALLOC_STRING(type_definition->type_name, type->type_name);

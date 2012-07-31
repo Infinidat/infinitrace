@@ -21,7 +21,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "trace_defs.h"
 
 /* Fix the base address of metadata to accomodate different shared-mem mappings in different processes */
-void relocate_metadata(void *original_base_address, void *new_base_address, char *data, unsigned int descriptor_count, unsigned int type_count);
+void relocate_metadata(const void *original_base_address, const void *new_base_address, char *data, unsigned int descriptor_count, unsigned int type_count);
 
 /* Functions for handling the shared-memory areas */
 int delete_shm_files(pid_t pid);

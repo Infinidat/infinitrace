@@ -34,7 +34,7 @@ typedef int (*PFany)(any_t, any_t);
 typedef any_t map_t;
 
 /*
- * Return an empty hashmap. Returns NULL if empty.
+ * Return an empty hashmap. Upon failure Return NULL and set errno to ENOMEM.
 */
 extern map_t hashmap_new();
 

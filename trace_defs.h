@@ -141,8 +141,10 @@ struct trace_type_definition {
     enum trace_type_id type_id;
     const char *type_name;
     union  {
-        // void * is used to allow static initlization of the union in C++, which does not support designated initializors
+        // void * is used to allow static initialization of the union in C++, which does not support designated initializers
         void *params;
+
+        /* An array of pointers to trace_enum_value structures (defined below). The last member of the array has its name field set to NULL */
         struct trace_enum_value *enum_values;
     };
 };
@@ -238,12 +240,18 @@ struct trace_log_descriptor {
     struct trace_param_descriptor *params;
 };
 
+
+/* The metadata region is laid out as follows:
+ * A header defined in trace_metadata_region
+ * An array of log_descriptor_count log descriptors (see trace_log_descriptor above)
+ * A sequence of type_definition_count type definitions of type trace_type_definition */
+
 struct trace_metadata_region {
     char name[0x100];
     void *base_address;
     unsigned long log_descriptor_count;
     unsigned long type_definition_count;
-    char data[0];
+    char data[0];  /* Placeholder for the actual metadata */
 };
      
      
