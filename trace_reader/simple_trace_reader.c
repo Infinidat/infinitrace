@@ -10,10 +10,6 @@
 #include "../list_template.h"
 #include "../array_length.h"
 
-typedef char trace_filename_t[0x100];
-CREATE_LIST_PROTOTYPE(FilenameList, trace_filename_t, 20)
-CREATE_LIST_IMPLEMENTATION(FilenameList, trace_filename_t)
-
 enum op_type_e {
     OP_TYPE_INVALID,
     OP_TYPE_DUMP_STATS,
@@ -32,7 +28,7 @@ struct trace_reader_conf {
     int relative_ts;
     int compact_trace;
     long long from_time;
-    FilenameList files_to_process;
+    const char **files_to_process; /* A NULL terminated array of const char* */
     struct trace_record_matcher_spec_s severity_filter[SEVERITY_FILTER_LEN];
     struct trace_record_matcher_spec_s grep_filter;
     struct trace_record_matcher_spec_s complete_filter;
@@ -75,9 +71,9 @@ static const struct option longopts[] = {
 	{ 0, 0, 0, 0}
 };
 
-static void print_usage(void)
+static void print_usage(const char *prog_name)
 {
-    printf(usage, "simple_trace_reader");
+    fprintf(stderr, usage, prog_name);
 }
 
 static const char shortopts[] = "xcig:moft:hdnesr";
@@ -122,16 +118,16 @@ static unsigned long long format_cmdline_time(const char *time_str)
     }
 }
 
-static int parse_command_line(struct trace_reader_conf *conf, int argc, char **argv)
+static int parse_command_line(struct trace_reader_conf *conf, int argc, const char **argv)
 {
     int o;
     int longindex;
     conf->severity_mask = ((1 << TRACE_SEV_INFO) | (1 << TRACE_SEV_INFO) | (1 << TRACE_SEV_WARN) | (1 << TRACE_SEV_ERR) | (1 << TRACE_SEV_FATAL));
-    while ((o = getopt_long(argc, argv, shortopts, longopts, &longindex)) != EOF) {
+    while ((o = getopt_long(argc, (char **)argv, shortopts, longopts, &longindex)) != EOF) {
 		switch (o) {
 		case 'h':
-			print_usage();
-			break;
+		case '?':
+			return 1;
 		case 'd':
             conf->op_type = OP_TYPE_DUMP_FILE;
             break;
@@ -160,7 +156,6 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, char **a
             conf->from_time = format_cmdline_time(optarg);
             if (conf->from_time == LLONG_MIN || conf->from_time == LLONG_MAX) {
                 fprintf(stderr, "Invalid time specification\n");
-                print_usage();
                 return -1;
             }
             break;
@@ -176,23 +171,18 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, char **a
         case 'x':
             conf->hex = TRUE;
             break;
-        case '?':
-            print_usage();
-            return -1;
-            break;
         default:
             break;
         }
     }
 
     unsigned long filename_index = optind;
-    while (filename_index < (unsigned int) argc) {
-        trace_filename_t filename;
-        strncpy(filename, argv[filename_index], sizeof(filename));
-        FilenameList__add_element(&conf->files_to_process, &filename);
-        filename_index++;
+    conf->files_to_process = argv + (int)filename_index;
+    if (NULL == *(conf->files_to_process)) {
+    	fprintf(stderr, "simple_trace_reader: Must specify input files\n");
+    	return -1;
     }
-    
+
     return 0;
 }
 
@@ -262,13 +252,12 @@ static void set_parser_params(struct trace_reader_conf *conf, trace_parser_t *pa
 
 static int dump_all_files(struct trace_reader_conf *conf)
 {
-    int i;
-    trace_filename_t filename;
     int error_occurred = 0;
+    const char **filenames;
     trace_parser_t parser;
     
-    for (i = 0; i < FilenameList__element_count(&conf->files_to_process); i++) {
-        FilenameList__get_element(&conf->files_to_process, i, &filename);
+    for (filenames = conf->files_to_process; *filenames; filenames++) {
+    	const char *filename = *filenames;
         int rc = TRACE_PARSER__from_file(&parser, conf->tail, filename, read_event_handler, NULL);
         if (0 != rc) {
             fprintf(stderr, "Error opening file %s (%s)\n", filename, strerror(errno));
@@ -308,14 +297,12 @@ static int dump_all_files(struct trace_reader_conf *conf)
 
 static int dump_statistics_for_all_files(struct trace_reader_conf *conf)
 {
-    int i;
-    trace_filename_t filename;
+    const char **filenames;
     trace_parser_t parser;
     int error_occurred = 0;
     
-    for (i = 0; i < FilenameList__element_count(&conf->files_to_process); i++) {
-        FilenameList__get_element(&conf->files_to_process, i, &filename);
-
+    for (filenames = conf->files_to_process; *filenames; filenames++) {
+     	const char *filename = *filenames;
         int rc = TRACE_PARSER__from_file(&parser, FALSE, filename, read_event_handler, NULL);
         if (0 != rc) {
             fprintf(stderr, "Error opening file %s: %s\n", filename, strerror(errno));
@@ -336,13 +323,12 @@ static int dump_statistics_for_all_files(struct trace_reader_conf *conf)
 
 static int dump_metadata_for_files(struct trace_reader_conf *conf)
 {
-    int i;
-    trace_filename_t filename;
     trace_parser_t parser;
     int error_occurred = 0;
+    const char **filenames;
     
-    for (i = 0; i < FilenameList__element_count(&conf->files_to_process); i++) {
-        FilenameList__get_element(&conf->files_to_process, i, &filename);
+    for (filenames = conf->files_to_process; *filenames; filenames++) {
+     	const char *filename = *filenames;
 
         int rc = TRACE_PARSER__from_file(&parser, FALSE, filename, read_event_handler, NULL);
         set_parser_params(conf, &parser);
@@ -364,19 +350,15 @@ static int dump_metadata_for_files(struct trace_reader_conf *conf)
     return error_occurred ? EX_IOERR : 0;
 }
 
-int main(int argc, char **argv)
+int main(int argc, const char **argv)
 {
     struct trace_reader_conf conf;
     memset(&conf, 0, sizeof(conf));
     conf.severity_mask = ((1 << TRACE_SEV_DEBUG) | (1 << TRACE_SEV_FUNC_TRACE));
     int rc = parse_command_line(&conf, argc, argv);
     if (0 != rc) {
-        return 1;
-    }
-
-    if (0 == FilenameList__element_count(&conf.files_to_process)) {
-        fprintf(stderr, "simple_trace_reader: Must specify input files\n");
-        return 1;
+    	print_usage(argv[0]);
+        return (rc < 0) ? EX_USAGE : 0;
     }
 
     switch (conf.op_type) {
@@ -392,7 +374,7 @@ int main(int argc, char **argv)
         break;
     case OP_TYPE_INVALID:
         fprintf(stderr, "simple_trace_reader: Must specify operation type (-s or -d)\n");
-        print_usage();
+        print_usage(argv[0]);
         return EX_USAGE;
     default:
         break;
