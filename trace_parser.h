@@ -183,7 +183,8 @@ typedef struct trace_parser {
     int inotify_fd;
     int inotify_descriptor;
     int show_field_names;
-    bool_t cancel_ongoing_operation;
+    bool_t cancellation_enabled;
+    volatile bool_t cancel_ongoing_operation;
     struct trace_record_matcher_spec_s record_filter;
     unsigned int ignored_records_count;
     enum trace_input_stream_type stream_type;
@@ -205,11 +206,21 @@ void TRACE_PARSER__set_verbose(trace_parser_t *parser, int verbose);
 void TRACE_PARSER__set_show_field_names(trace_parser_t *parser, int show_field_names);
 void TRACE_PARSER__set_relative_ts(trace_parser_t *parser, int relative_ts);
 int TRACE_PARSER__dump_all_metadata(trace_parser_t *parser);
-void TRACE_PARSER__set_filter(trace_parser_t *parser, struct trace_record_matcher_spec_s *filter);
+void TRACE_PARSER__set_filter(trace_parser_t *parser, const struct trace_record_matcher_spec_s *filter);
 int TRACE_PARSER__find_next_record_by_expression(trace_parser_t *parser, struct trace_record_matcher_spec_s *expression);
 int TRACE_PARSER__find_previous_record_by_expression(trace_parser_t *parser, struct trace_record_matcher_spec_s *expression);
-int TRACE_PARSER__format_typed_record(trace_parser_t *parser, struct trace_parser_buffer_context *context, struct trace_record *record, char *formatted_record, int formatted_record_size);
+
+/* Long trace-parser operations can be canceled. However, this has to be enabled explicitly before starting the operation be calling TRACE_PARSER__enable_cancellation().
+ * Canceling an operation will cause the function to return -1 and set errno to ECANCELED */
+void TRACE_PARSER__enable_cancellation(trace_parser_t *parser);
 void TRACE_PARSER__cancel_ongoing_operation(trace_parser_t *parser);
+
+int TRACE_PARSER__format_typed_record(
+		const trace_parser_t *parser,
+		const struct trace_parser_buffer_context *context,
+		const struct trace_record *record,
+		char *formatted_record,
+		int formatted_record_size);
 
 int TRACE_PARSER__dump(trace_parser_t *parser);
 int TRACE_PARSER__dump_statistics(trace_parser_t *parser);
