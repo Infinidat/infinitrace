@@ -190,6 +190,7 @@ typedef struct trace_parser {
     struct trace_record_matcher_spec_s record_filter;
     unsigned int ignored_records_count;
     enum trace_input_stream_type stream_type;
+    bool_t free_dead_buffer_contexts;
 } trace_parser_t;
 
 #define SEVERITY_FILTER_LEN (21)
@@ -207,10 +208,14 @@ void TRACE_PARSER__set_always_hex(trace_parser_t *parser, int always_hex);
 void TRACE_PARSER__set_verbose(trace_parser_t *parser, int verbose);
 void TRACE_PARSER__set_show_field_names(trace_parser_t *parser, int show_field_names);
 void TRACE_PARSER__set_relative_ts(trace_parser_t *parser, int relative_ts);
+void TRACE_PARSER__set_free_dead_buffer_contexts(trace_parser_t *parser, int free_dead_buffer_contexts);
 int TRACE_PARSER__dump_all_metadata(trace_parser_t *parser);
 void TRACE_PARSER__set_filter(trace_parser_t *parser, const struct trace_record_matcher_spec_s *filter);
 int TRACE_PARSER__find_next_record_by_expression(trace_parser_t *parser, struct trace_record_matcher_spec_s *expression);
 int TRACE_PARSER__find_previous_record_by_expression(trace_parser_t *parser, struct trace_record_matcher_spec_s *expression);
+
+/* Handling buffer contexts */
+int TRACE_PARSER__free_buffer_context_by_pid(trace_parser_t *parser, unsigned short pid);
 
 /* Long trace-parser operations can be canceled. However, this has to be enabled explicitly before starting the operation be calling TRACE_PARSER__enable_cancellation().
  * Canceling an operation will cause the function to return -1 and set errno to ECANCELED */

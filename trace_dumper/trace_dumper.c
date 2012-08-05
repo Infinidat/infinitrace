@@ -95,6 +95,9 @@ typedef char buffer_name_t[0x100];
 CREATE_LIST_PROTOTYPE(BufferFilter, buffer_name_t, 20);
 CREATE_LIST_IMPLEMENTATION(BufferFilter, buffer_name_t);
 
+CREATE_LIST_PROTOTYPE(PidList, trace_pid_t, 100);
+CREATE_LIST_IMPLEMENTATION(PidList, trace_pid_t);
+
 #define TRACE_FILE_PREFIX "trace."
 
 #define TRACE_METADATA_IOVEC_SIZE  (2*(MAX_METADATA_SIZE/TRACE_RECORD_PAYLOAD_SIZE+1))
@@ -154,6 +157,7 @@ struct trace_dumper_configuration_s {
     struct trace_parser parser;
     BufferFilter filtered_buffers;
     MappedBuffers mapped_buffers;
+    PidList dead_pids;
     struct iovec flush_iovec[1 + (3 * MAX_BUFFER_COUNT * TRACE_RECORD_BUFFER_RECS)];
 };
 
@@ -629,54 +633,64 @@ static void init_metadata_iovector(struct trace_mapped_metadata *metadata, unsig
     }
 }
 
-#define SIMPLE_WRITE(__conf__, __data__, __size__) do {                   \
-                                                                        \
-        struct iovec __iov__ = {__data__, __size__}; rc = trace_dumper_write(conf, &conf->record_file, &__iov__, 1, TRUE); } while (0);
+static void init_metadata_rec(struct trace_record *rec, const struct trace_mapped_buffer *mapped_buffer)
+{
+	memset(rec, 0, sizeof(*rec));
+    rec->pid = mapped_buffer->pid;
+    rec->ts = trace_get_nsec();
+    rec->u.metadata.metadata_magic = TRACE_MAGIC_METADATA;
+}
+
+static int write_single_record(struct trace_dumper_configuration_s *conf, const struct trace_record *rec)
+{
+	const size_t len = sizeof(*rec);
+	const struct iovec iov = {
+			(void *)rec,
+			len
+	};
+
+	int rc = trace_dumper_write(conf, &conf->record_file, &iov, 1, TRUE);
+    if ((int)len != rc) {
+    	if (rc >= 0) { /* Partial write */
+    		errno = ETIMEDOUT;
+    	}
+        return -1;
+    }
+    return 0;
+}
 
 static int write_metadata_header_start(struct trace_dumper_configuration_s *conf, const struct trace_mapped_buffer *mapped_buffer)
 {
     struct trace_record rec;
-    int rc;
+    init_metadata_rec(&rec, mapped_buffer);
     rec.rec_type = TRACE_REC_TYPE_METADATA_HEADER;
     rec.termination = TRACE_TERMINATION_FIRST;
-    rec.pid = mapped_buffer->pid;
-    rec.ts = trace_get_nsec();
     rec.u.metadata.metadata_size_bytes = mapped_buffer->metadata.size;
-    SIMPLE_WRITE(conf, &rec, sizeof(rec));
-    if (rc != sizeof(rec)) {
-        return -1;
-    }
-    
-    return 0;
-}
 
+    int num_dead_pids = MIN(PidList__element_count(&conf->dead_pids), (int)ARRAY_LENGTH(rec.u.metadata.dead_pids));
+    int i;
+    for (i = 0; i < num_dead_pids; i++) {
+    	PidList__dequeue(&conf->dead_pids, rec.u.metadata.dead_pids + i);
+    }
+
+    return write_single_record(conf, &rec);
+}
 
 static int write_metadata_end(struct trace_dumper_configuration_s *conf, const struct trace_mapped_buffer *mapped_buffer)
 {
     struct trace_record rec;
-    int rc;
-	memset(&rec, 0, sizeof(rec));
+    init_metadata_rec(&rec, mapped_buffer);
 	rec.rec_type = TRACE_REC_TYPE_METADATA_PAYLOAD;
 	rec.termination = TRACE_TERMINATION_LAST;
-    rec.pid = mapped_buffer->pid;
-    rec.ts = trace_get_nsec();
-    SIMPLE_WRITE(conf, &rec, sizeof(rec));
-    if (rc != sizeof(rec)) {
-        return -1;
-    }
-
-    return 0;
+	return write_single_record(conf, &rec);
 }
 
 static int trace_dump_metadata(struct trace_dumper_configuration_s *conf, struct trace_mapped_buffer *mapped_buffer)
 {
-    struct trace_record rec;
     unsigned int num_records;
     int rc;
 
     mapped_buffer->metadata.metadata_payload_record.ts = trace_get_nsec();
-
-    memset(&rec, 0, sizeof(rec));
     rc = write_metadata_header_start(conf, mapped_buffer);
     if (0 != rc) {
         return -1;
@@ -819,7 +833,7 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
     new_mapped_buffer->metadata.size = static_log_data_region_size;
     new_mapped_buffer->metadata.base_address = mapped_static_log_data_addr;
     new_mapped_buffer->metadata.metadata_fd = static_fd;
-    new_mapped_buffer->pid = (unsigned short) pid;
+    new_mapped_buffer->pid = (trace_pid_t) pid;
     new_mapped_buffer->metadata_dumped = FALSE;
     unsigned long long process_time;
     rc = get_process_time(pid, &process_time);
@@ -1038,14 +1052,36 @@ static void discard_buffer(struct trace_dumper_configuration_s *conf, struct tra
 		syslog(LOG_USER|LOG_WARNING, "Error closing records for buffer %s: %s", mapped_buffer->name, strerror(errno));
 	}
 
-    delete_shm_files(mapped_buffer->pid);
+    rc = delete_shm_files(mapped_buffer->pid);
+    if (0 != rc) {
+    	syslog(LOG_USER|LOG_WARNING, "Error deleting shm files for buffer %s, pid %u: %s", mapped_buffer->name, mapped_buffer->pid, strerror(errno));
+    }
+
+    if (TRACE_PARSER__free_buffer_context_by_pid(&(conf->parser), mapped_buffer->pid) < 0) {
+    	syslog(LOG_USER|LOG_WARNING, "Failed to free trace parser resources associated with the process %s, pid %u: %s", mapped_buffer->name, mapped_buffer->pid, strerror(errno));
+    }
+
+    if (! PidList__insertable(&conf->dead_pids)) {
+    	syslog(LOG_USER|LOG_WARNING, "Trace dumper has too many pids pending removal, exceeding the limit of %d. Not enough space to insert pid %u for process %s",
+    			PidList_NUM_ELEMENTS, mapped_buffer->pid, mapped_buffer->name);
+    }
+    else {
+    	PidList__add_element(&conf->dead_pids, &mapped_buffer->pid);
+    }
+
     struct trace_mapped_buffer *tmp_mapped_buffer;
     int i;
+    int removed_count = 0;
     for_each_mapped_buffer(i, tmp_mapped_buffer) {
         if (mapped_buffer == tmp_mapped_buffer) {
             MappedBuffers__remove_element(&conf->mapped_buffers, i);
+            removed_count++;
         }
     }
+
+
+    syslog(LOG_USER|LOG_INFO, "Discarded %d instances of the buffer for %s pid %u, %d mapped buffers remaining",
+    		removed_count,  mapped_buffer->name, mapped_buffer->pid, MappedBuffers__element_count(&conf->mapped_buffers));
 }
 
 static int unmap_discarded_buffers(struct trace_dumper_configuration_s *conf)
@@ -1066,7 +1102,7 @@ static unsigned long long trace_get_walltime(void)
     struct timeval tv;
     gettimeofday(&tv, NULL);
 
-    return (((unsigned long long)tv.tv_sec) * 100000) + tv.tv_usec;
+    return (((unsigned long long)tv.tv_sec) * 1000000) + tv.tv_usec;
 }
 
 static int trace_write_header(struct trace_dumper_configuration_s *conf)
@@ -1085,11 +1121,12 @@ static int trace_write_header(struct trace_dumper_configuration_s *conf)
 
 	snprintf((char *)file_header->machine_id, sizeof(file_header->machine_id), "%s", ubuf.nodename);
     file_header->format_version = TRACE_FORMAT_VERSION;
-	SIMPLE_WRITE(conf, &rec, sizeof(rec));
-	if (rc != sizeof(rec)) {
-		const char *err_str = (rc < 0) ? strerror(errno) : "only some bytes were written";
-		syslog(LOG_USER|LOG_ERR, "Failed to write to a data file %s due to error: %s", conf->record_file.filename, err_str);
-		return -1;
+    file_header->magic = TRACE_MAGIC_FILE_HEADER;
+
+    rc = write_single_record(conf, &rec);
+	if (rc < 0) {
+		syslog(LOG_USER|LOG_ERR, "Failed to write to a data file %s due to error: %s", conf->record_file.filename, strerror(errno));
+		return rc;
     }
 
 	syslog(LOG_USER|LOG_INFO, "Trace dumper starting to write to the file %s", conf->record_file.filename);
@@ -1296,7 +1333,7 @@ static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *co
 
 static enum trace_severity get_minimal_severity(int severity_type)
 {
-    unsigned int count = 1;
+    unsigned int count = TRACE_SEV__MIN;
     while (!(severity_type & 1)) {
         severity_type >>= 1;
         count++;
@@ -1706,6 +1743,7 @@ static const char shortopts[] = "vtdiaer:q:sw::p:hf:ob:n";
 static void clear_mapped_records(struct trace_dumper_configuration_s *conf)
 {
     MappedBuffers__init(&conf->mapped_buffers);
+    PidList__init(&conf->dead_pids);
 }
 
 static void add_buffer_filter(struct trace_dumper_configuration_s *conf, char *buffer_name)
@@ -1904,6 +1942,7 @@ static int init_dumper(struct trace_dumper_configuration_s *conf)
 
     TRACE_PARSER__matcher_spec_from_severity_mask(severity_mask, conf->severity_filter, ARRAY_LENGTH(conf->severity_filter));
     TRACE_PARSER__set_filter(&conf->parser, conf->severity_filter);
+    TRACE_PARSER__set_free_dead_buffer_contexts(&conf->parser, TRUE);
 
     if (set_quota(conf) != 0) {
         return EX_IOERR;

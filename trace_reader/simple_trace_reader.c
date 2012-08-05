@@ -27,6 +27,7 @@ struct trace_reader_conf {
     int show_field_names;
     int relative_ts;
     int compact_trace;
+    int free_dead_process_metadata;
     long long from_time;
     const char **files_to_process; /* A NULL terminated array of const char* */
     struct trace_record_matcher_spec_s severity_filter[SEVERITY_FILTER_LEN];
@@ -210,44 +211,14 @@ static void set_parser_filter(struct trace_reader_conf *conf, trace_parser_t *pa
 }
 static void set_parser_params(struct trace_reader_conf *conf, trace_parser_t *parser)
 {
-
     set_parser_filter(conf, parser);
-        
-    if (conf->no_color) {
-        TRACE_PARSER__set_color(parser, 0);
-    } else {
-        TRACE_PARSER__set_color(parser, 1);
-    }
-
-    if (conf->severity_mask & (1 << TRACE_SEV_FUNC_TRACE)) {
-        TRACE_PARSER__set_indent(parser, TRUE);
-    } else {
-        TRACE_PARSER__set_indent(parser, FALSE);
-    }
-
-    if (conf->relative_ts) {
-        TRACE_PARSER__set_relative_ts(parser, 1);
-    } else {
-        TRACE_PARSER__set_relative_ts(parser, 0);
-    }
-
-    if (conf->show_field_names) {
-        TRACE_PARSER__set_show_field_names(parser, 1);
-    } else {
-        TRACE_PARSER__set_show_field_names(parser, 0);
-    }
-
-    if (conf->compact_trace) {
-        TRACE_PARSER__set_compact_traces(parser, 1);
-    } else {
-        TRACE_PARSER__set_compact_traces(parser, 0);
-    }
-
-    if (conf->hex) {
-        TRACE_PARSER__set_always_hex(parser, 1);
-    } else {
-        TRACE_PARSER__set_always_hex(parser, 0);
-    }
+    TRACE_PARSER__set_color(parser, FALSE == conf->no_color);
+    TRACE_PARSER__set_indent(parser, 0 != (conf->severity_mask & (1 << TRACE_SEV_FUNC_TRACE)));
+    TRACE_PARSER__set_relative_ts(parser, FALSE != conf->relative_ts);
+    TRACE_PARSER__set_show_field_names(parser, FALSE != conf->show_field_names);
+    TRACE_PARSER__set_compact_traces(parser, FALSE != conf->compact_trace);
+    TRACE_PARSER__set_always_hex(parser, FALSE != conf->hex);
+    TRACE_PARSER__set_free_dead_buffer_contexts(parser, FALSE != conf->free_dead_process_metadata);
 }
 
 static int dump_all_files(struct trace_reader_conf *conf)
@@ -255,6 +226,7 @@ static int dump_all_files(struct trace_reader_conf *conf)
     int error_occurred = 0;
     const char **filenames;
     trace_parser_t parser;
+    conf->free_dead_process_metadata = TRUE;
     
     for (filenames = conf->files_to_process; *filenames; filenames++) {
     	const char *filename = *filenames;
@@ -300,6 +272,7 @@ static int dump_statistics_for_all_files(struct trace_reader_conf *conf)
     const char **filenames;
     trace_parser_t parser;
     int error_occurred = 0;
+    conf->free_dead_process_metadata = FALSE;
     
     for (filenames = conf->files_to_process; *filenames; filenames++) {
      	const char *filename = *filenames;
@@ -326,6 +299,7 @@ static int dump_metadata_for_files(struct trace_reader_conf *conf)
     trace_parser_t parser;
     int error_occurred = 0;
     const char **filenames;
+    conf->free_dead_process_metadata = FALSE;
     
     for (filenames = conf->files_to_process; *filenames; filenames++) {
      	const char *filename = *filenames;
@@ -364,7 +338,6 @@ int main(int argc, const char **argv)
     switch (conf.op_type) {
     case OP_TYPE_DUMP_STATS:
         return dump_statistics_for_all_files(&conf);
-        return TRACE_PARSER__dump_statistics(NULL);
         break;
     case OP_TYPE_DUMP_FILE:
         return dump_all_files(&conf);

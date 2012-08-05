@@ -143,6 +143,7 @@ enum trace_file_type {
 #endif
 
 #define TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA (0xA2)
+#define TRACE_FORMAT_VERSION_INTRODUCED_DEAD_PID_LIST (0xA2)
 
 struct trace_type_definition {
     enum trace_type_id type_id;
@@ -161,11 +162,13 @@ struct trace_type_definition {
     unsigned int value;
 };
 
+typedef unsigned short int trace_pid_t;
+
 struct trace_record {
 	/* 20 bytes header */
 	unsigned long long ts;
-	unsigned short int pid;
-	unsigned short int tid;
+	trace_pid_t pid;
+	trace_pid_t tid;
     short nesting;
 	unsigned termination:2;
 	unsigned reserved:6;
@@ -186,9 +189,16 @@ struct trace_record {
 		struct trace_record_file_header {
 			unsigned char machine_id[TRACE_MACHINE_ID_SIZE];
             unsigned short format_version;
+            unsigned char  reserved[6];
+            unsigned int magic;		/* Should contain TRACE_MAGIC_FILE_HEADER */
 		} file_header;
 		struct trace_record_metadata {
 			unsigned int metadata_size_bytes;
+			trace_pid_t  dead_pids[4];  /* PIDs of processes that have ended and whose resources should be reclaimed. */
+
+			/* Protect against early versions of the dumper that did not zero-out the metadata header before writing. */
+			unsigned char reserved[TRACE_RECORD_PAYLOAD_SIZE - 4*sizeof(trace_pid_t) - 2*sizeof(unsigned)];
+			unsigned int metadata_magic;  /* Should contain TRACE_MAGIC_METADATA_HEADER */
 		} metadata;
 		struct trace_record_dump_header {
 			unsigned int prev_dump_offset;
@@ -235,6 +245,11 @@ enum trace_param_desc_flags {
     TRACE_PARAM_FLAG_RECORD  = 0x20000,
 
     TRACE_PARAM_FLAG_CONST   = 0x40000,
+};
+
+enum trace_magic_numbers {
+	TRACE_MAGIC_FILE_HEADER  = 0xACEF42FA,
+	TRACE_MAGIC_METADATA	 = 0xDEADBAAF
 };
 
 /* Descriptor for an individual parameter being logged */

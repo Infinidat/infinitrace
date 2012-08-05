@@ -196,6 +196,10 @@ void TRACE_PARSER__set_show_field_names(trace_parser_t *parser, int show_field_n
     parser->show_field_names = show_field_names;
 }
 
+void TRACE_PARSER__set_free_dead_buffer_contexts(trace_parser_t *parser, int free_dead_buffer_contexts)
+{
+	parser->free_dead_buffer_contexts = free_dead_buffer_contexts;
+}
 
 static bool_t match_severity_with_match_expression(const struct trace_record_matcher_spec_s *matcher, enum trace_severity severity);
 
@@ -258,7 +262,7 @@ static struct trace_parser_buffer_context *get_buffer_context_by_pid(trace_parse
     return NULL;
 }
 
-static int free_buffer_context_by_pid(trace_parser_t *parser, unsigned short pid)
+int TRACE_PARSER__free_buffer_context_by_pid(trace_parser_t *parser, unsigned short pid)
 {
     int i;
     struct trace_parser_buffer_context *context;
@@ -271,6 +275,7 @@ static int free_buffer_context_by_pid(trace_parser_t *parser, unsigned short pid
         }
     }
 
+    errno = ESRCH;
     return -1;
 }
 
@@ -295,7 +300,19 @@ static int metadata_info_started(trace_parser_t *parser, const struct trace_reco
     struct trace_parser_buffer_context *context = get_buffer_context_by_pid(parser, rec->pid);
 
     if (context) {
-        free_buffer_context_by_pid(parser, rec->pid);
+        TRACE_PARSER__free_buffer_context_by_pid(parser, rec->pid);
+    }
+
+    if ((parser->file_info.format_version >= TRACE_FORMAT_VERSION_INTRODUCED_DEAD_PID_LIST) &&
+    	(parser->free_dead_buffer_contexts) &&
+        (TRACE_MAGIC_METADATA == rec->u.metadata.metadata_magic))    {
+    	size_t i;
+    	for (i = 0; i < ARRAY_LENGTH(rec->u.metadata.dead_pids); i++) {
+    		trace_pid_t pid = rec->u.metadata.dead_pids[i];
+    		if (pid > 0) {
+    			TRACE_PARSER__free_buffer_context_by_pid(parser, pid);
+    		}
+    	}
     }
 
     struct trace_parser_buffer_context new_context;
@@ -304,7 +321,7 @@ static int metadata_info_started(trace_parser_t *parser, const struct trace_reco
     if (new_context.metadata_size > MAX_METADATA_SIZE) {
         return -1;
     }
-    
+
     new_context.metadata = malloc(new_context.metadata_size);
     if (NULL == new_context.metadata) {
         return -1;
@@ -541,12 +558,12 @@ int compare_log_occurrence_entries(const void *a, const void *b)
     return 1;
 }
 
-static void dump_stats_pool(log_stats_pool_t stats_pool)
+static void dump_stats_pool(const log_stats_pool_t stats_pool)
 {
     unsigned int i, j;
     char header[512];
     char underline[512];
-    struct log_stats *stats;
+    const struct log_stats *stats;
     for (i = 0; i < LOG_STATS_POOL_LENGTH; i++) {
         if (!stats_pool[i].allocated) {
             continue;
