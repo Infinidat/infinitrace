@@ -1072,9 +1072,12 @@ static int trace_write_header(struct trace_dumper_configuration_s *conf)
     file_header->format_version = TRACE_FORMAT_VERSION;
 	SIMPLE_WRITE(conf, &rec, sizeof(rec));
 	if (rc != sizeof(rec)) {
-		REPORT_AND_RETURN(-1);
+		const char *err_str = (rc < 0) ? strerror(errno) : "only some bytes were written";
+		syslog(LOG_USER|LOG_ERR, "Failed to write to a data file %s due to error: %s", conf->record_file.filename, err_str);
+		return -1;
     }
 
+	syslog(LOG_USER|LOG_INFO, "Trace dumper starting to write to the file %s", conf->record_file.filename);
 	return 0;
 }
 
@@ -1102,15 +1105,17 @@ static int trace_create_dir_if_necessary(const char *base_dir)
 
 static int trace_open_file(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, const char *filename_base)
 {
-    unsigned long long now;
-    char filename[0x100];
-    int rc;
+    unsigned long long now = 0;
+    char filename[sizeof(record_file->filename)];
 
     record_file->records_written = 0;
     now = trace_get_walltime() / 1000;
 
     if (conf->fixed_output_filename) {
-        strncpy(filename, conf->fixed_output_filename, sizeof(filename));
+        if ((size_t)(stpncpy(filename, conf->fixed_output_filename, sizeof(filename)) - filename) >= sizeof(filename)) {
+        	errno = ENAMETOOLONG;
+        	return -1;
+        }
     } else {
     	if (trace_create_dir_if_necessary(filename_base) < 0) {
     		return -1;
@@ -1123,21 +1128,19 @@ static int trace_open_file(struct trace_dumper_configuration_s *conf, struct tra
     record_file->fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (record_file->fd < 0) {
     	syslog(LOG_ERR|LOG_USER, "Failed to open new trace file %s due to error %s", filename, strerror(errno));
-        fprintf(stderr, "Error opening %s for writing\n", filename);
         return -1;
     }
 
-    rc = trace_write_header(conf);
     strncpy(record_file->filename, filename, sizeof(record_file->filename));
-    REPORT_AND_RETURN(rc);
+    return trace_write_header(conf);
 }
 
-void calculate_delta(struct trace_mapped_records *mapped_records, unsigned int *delta, unsigned int *delta_a, unsigned int *delta_b, unsigned int *lost_records)
+void calculate_delta(const struct trace_mapped_records *mapped_records, unsigned int *delta, unsigned int *delta_a, unsigned int *delta_b, unsigned int *lost_records)
 {
     unsigned int last_written_record;
     
     last_written_record = mapped_records->mutab->current_record & mapped_records->imutab->max_records_mask;
-    struct trace_record *last_record = &mapped_records->records[last_written_record];
+    const struct trace_record *last_record = &mapped_records->records[last_written_record];
 
     if (last_written_record == mapped_records->current_read_record) {
         *lost_records = 0;
@@ -1199,9 +1202,10 @@ static int dump_metadata_if_necessary(struct trace_dumper_configuration_s *conf,
         mapped_buffer->last_metadata_offset = conf->record_file.records_written;
         int rc = trace_dump_metadata(conf, mapped_buffer);
         if (0 != rc) {
+        	syslog(LOG_USER|LOG_ERR, "Failed to dump metadata to the file %s due to error: %s", conf->record_file.filename, strerror(errno));
             ERR("Error dumping metadata");
             mapped_buffer->last_metadata_offset = -1;
-            REPORT_AND_RETURN(-1);
+            return rc;
         }
     }
     
@@ -1209,7 +1213,7 @@ static int dump_metadata_if_necessary(struct trace_dumper_configuration_s *conf,
     return 0;
 }
 
-static void init_buffer_chunk_record(struct trace_dumper_configuration_s *conf, struct trace_mapped_buffer *mapped_buffer,
+static void init_buffer_chunk_record(struct trace_dumper_configuration_s *conf, const struct trace_mapped_buffer *mapped_buffer,
                                      struct trace_mapped_records *mapped_records, struct trace_record_buffer_dump **bd,
                                      struct iovec **iovec, unsigned int *iovcnt, unsigned int delta, unsigned int delta_a,
                                      unsigned int lost_records,
@@ -1230,6 +1234,13 @@ static void init_buffer_chunk_record(struct trace_dumper_configuration_s *conf, 
     (*bd)->records = delta;
     (*bd)->severity_type = mapped_records->imutab->severity_type;
     
+    if (lost_records > 0) {
+    	time_t seconds = cur_ts / TRACE_SECOND;
+    	const char *loss_time = ctime(&seconds);
+    	syslog(LOG_USER|LOG_WARNING, "Trace dumper has lost of %u records while writing traces for %s (pid %d) to file %s, resumed writing at process ts=%llu (%s)",
+    			lost_records, mapped_buffer->name, mapped_buffer->pid, conf->record_file.filename, cur_ts, loss_time);
+    }
+
     mapped_records->next_flush_offset = conf->record_file.records_written + total_written_records;
     (*iovec) = &conf->flush_iovec[(*iovcnt)++];
     (*iovec)->iov_base = &mapped_records->buffer_dump_record;
@@ -1310,13 +1321,13 @@ static int reap_empty_dead_buffers(struct trace_dumper_configuration_s *conf)
     return 0;
 }
 
-unsigned int get_allowed_online_severity_mask(struct trace_dumper_configuration_s *conf)
+unsigned int get_allowed_online_severity_mask(const struct trace_dumper_configuration_s *conf)
 {
     return ((conf->trace_online << TRACE_SEV_FUNC_TRACE) | (conf->debug_online << TRACE_SEV_DEBUG) | (conf->info_online << TRACE_SEV_INFO) |
                                   (conf->warn_online << TRACE_SEV_WARN) | (conf->error_online << TRACE_SEV_ERR) | (conf->error_online << TRACE_SEV_FATAL));
 }
 
-static bool_t record_buffer_matches_online_severity(struct trace_dumper_configuration_s *conf, unsigned int severity_type)
+static bool_t record_buffer_matches_online_severity(const struct trace_dumper_configuration_s *conf, unsigned int severity_type)
 {
     return get_allowed_online_severity_mask(conf) & severity_type;
 }
@@ -1452,7 +1463,7 @@ static int open_trace_file_if_necessary(struct trace_dumper_configuration_s *con
         int rc = trace_open_file(conf, &conf->record_file, conf->logs_base);
         if (0 != rc) {
             ERR("Unable to open trace file");
-            return -1;
+            return rc;
         }
     }
 
@@ -1497,10 +1508,12 @@ static bool_t has_mapped_buffers(struct trace_dumper_configuration_s *conf)
 static int dump_records(struct trace_dumper_configuration_s *conf)
 {
     int rc;
+    bool_t file_creation_err = FALSE;
     while (1) {
         rc = rotate_trace_file_if_necessary(conf);
         if (0 != rc) {
         	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while rotating trace files.", strerror(errno));
+        	file_creation_err = TRUE;
             break;
         }
 
@@ -1511,6 +1524,7 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
         rc = open_trace_file_if_necessary(conf);
         if (rc != 0) {
         	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while opening the trace file.", strerror(errno));
+        	file_creation_err = TRUE;
         	break;
         }
         
@@ -1545,6 +1559,21 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
     rc = errno;
     syslog(LOG_USER|LOG_ERR, "trace_dumper: Error encountered while writing traces: %s.", strerror(rc));
     ERR("Unexpected failure writing trace file:", strerror(rc));
+    switch (rc) {
+    case ENOMEM:
+    	return EX_SOFTWARE;
+
+    case ENAMETOOLONG:
+    	return EX_USAGE;
+
+    default:
+    	break;
+    }
+
+    if (file_creation_err) {
+    	return EX_CANTCREAT;
+    }
+
     return EX_IOERR;
 }
 
@@ -1881,10 +1910,11 @@ void usr2_handler()
         close_record_file(&trace_dumper_configuration);
     }
 
-    char snapshot_filename[0x100];
     char dir[0x100];
     char base[0x100];
     char orig_filename[0x100];
+    char snapshot_filename[sizeof(dir) + sizeof(base) + 0x10];
+
     strncpy(orig_filename, trace_dumper_configuration.record_file.filename, sizeof(orig_filename));
     char *dirname_ptr = dirname(orig_filename);
     strncpy(dir, dirname_ptr, sizeof(dir));
@@ -1894,16 +1924,33 @@ void usr2_handler()
     snprintf(snapshot_filename, sizeof(snapshot_filename), "%s/snapshot.%s", dir, base);
     int rc = rename(trace_dumper_configuration.record_file.filename, snapshot_filename);
     if (0 != rc) {
+    	syslog(LOG_USER|LOG_ERR, "Trace dumper failed to create a snapshot of file %s to %s due to error: %s",
+    			trace_dumper_configuration.record_file.filename, snapshot_filename, strerror(errno));
         ERR("Error moving",  trace_dumper_configuration.record_file.filename, "to", snapshot_filename, "(", strerror(errno), ")");
     } else {
         INFO("Created snapshot file at", snapshot_filename);
     }
 }
 
-static void set_signal_handling(void)
+static int set_signal_handling(void)
 {
-    signal(SIGUSR1, usr1_handler);
-    signal(SIGUSR2, usr2_handler);
+	const struct {
+		int sig;
+		sig_t handler;
+	} sig_handlers[] = {
+		{ SIGUSR1, usr1_handler },
+		{ SIGUSR2, usr2_handler },
+	};
+
+	unsigned i;
+	for (i = 0; i < ARRAY_LENGTH(sig_handlers); i++) {
+		if (SIG_ERR == signal(sig_handlers[i].sig, sig_handlers[i].handler)) {
+			syslog(LOG_USER|LOG_ERR, "Failed to set the handler for signal %d due to error: %s", sig_handlers[i].sig, strerror(errno));
+			return -1;
+		}
+	}
+
+    return 0;
 }
 
 
@@ -1934,7 +1981,16 @@ int main(int argc, char **argv)
         return rc;
     }
     
-    set_signal_handling();
+    if (0 != set_signal_handling()) {
+    	fprintf(stderr, "Error encountered while trying to set signal handlers: %s\n", strerror(errno));
+    	return EX_OSERR;
+    }
 
-    return run_dumper(conf);
+    rc = run_dumper(conf);
+    if ((0 != rc) && (conf->online)) {
+    	fprintf(stderr,
+    		"Error encountered while writing traces: %s, please see the syslog for more details.\nExiting with error code %d (see sysexits.h for its meaning)\n",
+    		strerror(errno), rc);
+    }
+    return rc;
 }

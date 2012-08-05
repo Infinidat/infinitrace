@@ -90,7 +90,10 @@ enum trace_rec_type {
 	/* Appears at the beginning of every chunk of data written in a single writev() invocation */
 	TRACE_REC_TYPE_DUMP_HEADER = 5,
 	TRACE_REC_TYPE_BUFFER_CHUNK = 6,
-    TRACE_REC_TYPE_END_OF_FILE = 7
+    TRACE_REC_TYPE_END_OF_FILE = 7,
+
+    /* Inserted to indicate data loss */
+    TRACE_REC_TYPE_DATA_LOSS = 8,
 };
 
 enum trace_log_descriptor_kind {
@@ -197,6 +200,11 @@ struct trace_record {
 			unsigned int severity_type;
             unsigned int lost_records;
 		} buffer_chunk;
+		struct trace_record_data_loss {
+			unsigned long long ts_start;
+			unsigned long long ts_end;
+			unsigned int lost_records;
+		} data_loss;
 	} __attribute__((packed)) u;
 } __attribute__((packed));
 
