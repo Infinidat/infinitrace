@@ -1972,6 +1972,13 @@ static int log_id_to_log_template(trace_parser_t *parser, struct trace_parser_bu
         exact_indicator = "";
     }
     
+    const struct trace_log_descriptor *descriptor = NULL;
+    if (parser->file_info.format_version >= TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA) {
+    	descriptor = get_log_descriptor(context, log_id);
+    	const char *severity_str = severity_to_str(parser, descriptor->severity);
+    	APPEND_FORMATTED_TEXT("%s", severity_str);
+    }
+
     if (parser->color) {
         APPEND_FORMATTED_TEXT(_F_MAGENTA("%-20s") _ANSI_DEFAULTS(" [") _F_BLUE_BOLD("%5d") _ANSI_DEFAULTS("] <%03d%-1s> "),
                               context->name, context->id, minimal_log_size, exact_indicator);
@@ -1985,8 +1992,7 @@ static int log_id_to_log_template(trace_parser_t *parser, struct trace_parser_bu
     int bytes_processed = 0;
 
     if (parser->file_info.format_version >= TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA) {
-    	const struct trace_log_descriptor *descriptor = get_log_descriptor(context, log_id);
-    	APPEND_FORMATTED_TEXT("[%s:%d - %s()] ", descriptor->file, descriptor->line, descriptor->function);
+    	APPEND_FORMATTED_TEXT("[%s:%u - %s()] ", descriptor->file, descriptor->line, descriptor->function);
     }
 
     total_length = format_typed_params(parser, context, &record, formatted_record, formatted_record_size, total_length, &bytes_processed, TRUE);

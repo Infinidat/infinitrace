@@ -253,7 +253,8 @@ struct trace_param_descriptor {
 struct trace_log_descriptor {
     enum trace_log_descriptor_kind kind;
 #if (TRACE_FORMAT_VERSION >= TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA)
-    int line;
+    unsigned line : 20;
+    unsigned severity : 4;
 #endif
     const struct trace_param_descriptor *params;
 #if (TRACE_FORMAT_VERSION >= TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA)
