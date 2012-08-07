@@ -1,3 +1,5 @@
+#define _XOPEN_SOURCE
+
 #include "../trace_parser.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -104,7 +106,6 @@ static long long maybe_process_nanosec(const char *str)
     }
 }
 
-char *strptime(const char *s, const char *format, struct tm *tm);
 static unsigned long long format_cmdline_time(const char *time_str)
 {
     const char *format = "%a %b %d %T %Y";

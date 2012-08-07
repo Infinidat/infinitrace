@@ -632,14 +632,14 @@ void format_timestamp(const trace_parser_t *parser, unsigned long long ts, char 
         int _len_ = snprintf(&formatted_record[total_length],             \
                              formatted_record_size - total_length - 1,    \
                              __VA_ARGS__);                                \
-        if (_len_ < 0 || _len_ >= formatted_record_size - total_length - 1) return -1; \
+        if (_len_ < 0 || _len_ >= formatted_record_size - total_length - 1) { errno = ENOMEM; return -1; } \
         total_length += _len_;                                            \
     } while (0);
 
 
 #define SIMPLE_APPEND_FORMATTED_TEXT(source) {  \
         total_length += my_strncpy(formatted_record + total_length, source, formatted_record_size - total_length); \
-        if (total_length >= formatted_record_size -1 ) return -1;      \
+        if (total_length >= formatted_record_size -1 )  { errno = ENOMEM; return -1; }      \
     }
 
 static int my_strncpy(char* formatted_record, const char* source, int max_size) {
@@ -652,7 +652,7 @@ static int my_strncpy(char* formatted_record, const char* source, int max_size) 
 
 /* A macro for appending literal text strings */
 #define APPEND_LITERAL_TEXT(source) do {                            			\
-    if ((total_length + sizeof(source)) >= (unsigned int) formatted_record_size) return -1; \
+    if ((total_length + sizeof(source)) >= (unsigned int) formatted_record_size) { errno = ENOMEM; return -1; } \
       memcpy(formatted_record + total_length, source, sizeof(source)); 			\
       total_length += sizeof(source) - 1;                                       \
     } while (0);
@@ -814,7 +814,7 @@ static int format_typed_params(
 		char *formatted_record,
 		int formatted_record_size,
 		int total_length,
-		int *bytes_processed,
+		int *bytes_processed,	/* Output parameter. A negative value signals an error */
 		bool_t describe_params)
 {
     unsigned int metadata_index = typed_record->log_id;
@@ -823,7 +823,9 @@ static int format_typed_params(
     const struct trace_param_descriptor *param;
 
     if (metadata_index >= context->metadata->log_descriptor_count) {
-        APPEND_FORMATTED_TEXT("L? %d", metadata_index);
+        APPEND_FORMATTED_TEXT(_F_RED_BOLD("Invalid Metadata %d") _ANSI_DEFAULTS(""), metadata_index);
+        *bytes_processed = -1;
+        errno = EILSEQ;
         return total_length;
     }
 
@@ -857,9 +859,14 @@ static int format_typed_params(
                 APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "");
             } else {
             	APPEND_COLORED_LITERAL_TEXT(_F_WHITE_BOLD, "{ ");
-                int _bytes_processed;
+                int _bytes_processed = 0;
                 total_length = format_typed_params(parser, context, (const struct trace_record_typed *) pdata, formatted_record, formatted_record_size, total_length, &_bytes_processed, describe_params);
+                if (_bytes_processed <= 0) {
+                	*bytes_processed = -1;
+                	break;
+                }
                 pdata += _bytes_processed;
+
                 APPEND_COLORED_LITERAL_TEXT(_F_WHITE_BOLD, " }");
                 APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "");
             }
@@ -910,7 +917,7 @@ static int format_typed_params(
                         APPEND_COLORED_LITERAL_TEXT(_F_CYAN_BOLD, "");
 
                         total_length += append_escape_string((const char*)pdata, formatted_record + total_length, len, formatted_record_size - total_length);
-                        if (total_length >= (int)formatted_record_size -1 ) return -1;
+                        if (total_length >= (int)formatted_record_size -1 ) { errno = ENOMEM; return -1; }
 
                         APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "");
 
@@ -1065,8 +1072,10 @@ int TRACE_PARSER__format_typed_record(
     if (parser->indent) {
     	short nesting = MAX(record->nesting, 0);
         int num_spaces = 4*nesting;
-        if (total_length + num_spaces >= (int) formatted_record_size - 1)
+        if (total_length + num_spaces >= (int) formatted_record_size - 1) {
+        	errno = ENOMEM;
         	return -1;
+        }
         memset(formatted_record + total_length, ' ', num_spaces);
         total_length += num_spaces;
         formatted_record[total_length] = '\0';
@@ -1081,8 +1090,17 @@ int TRACE_PARSER__format_typed_record(
     total_length = format_typed_params(parser, context, (const struct trace_record_typed *) record->u.payload, formatted_record, formatted_record_size, total_length, &bytes_processed, FALSE);
     
 exit:
+    if (total_length < 0) {
+    	formatted_record[0] = '\0';
+    	return -1;
+    }
+
     SIMPLE_APPEND_FORMATTED_TEXT(ANSI_DEFAULTS(""));
     formatted_record[total_length] = '\0';
+
+    if (bytes_processed <= 0) {
+    	return -1;
+    }
     return total_length;
 }
 
@@ -1867,26 +1885,37 @@ static int dumper_event_handler(trace_parser_t *parser, enum trace_parser_event_
 
     char formatted_record[2048];
     struct parser_complete_typed_record *complete_typed_record = (struct parser_complete_typed_record *) event_data;
-    size_t formatted_len = TRACE_PARSER__format_typed_record(parser, complete_typed_record->buffer, complete_typed_record->record, formatted_record, sizeof(formatted_record));
-    if ((long)formatted_len < 0) {
+    int  formatted_len = TRACE_PARSER__format_typed_record(parser, complete_typed_record->buffer, complete_typed_record->record, formatted_record, sizeof(formatted_record));
+    if (formatted_len < 0) {
     	errno = ENOMEM;
     	fprintf(stderr, _F_RED_BOLD("Warning: Had to skip a record because it didn't fit in the buffer\n") _ANSI_DEFAULTS(""));
     	return -1;
     }
 
-    formatted_record[formatted_len] = '\n';
-    if (fwrite(formatted_record, 1, (size_t)formatted_len + 1, stdout) < formatted_len + 1) {
-        fprintf(stderr, "error writing log (%s)\n", strerror(errno));
-        return -1;
-    } else {
-        return 0;
+    if (formatted_len >= 0) {
+		formatted_record[formatted_len] = '\n';
+		if (fwrite(formatted_record, 1, (size_t)formatted_len + 1, stdout) < (size_t)formatted_len + 1) {
+			fprintf(stderr, "error writing log (%s)\n", strerror(errno));
+		}
+	    else {
+	        return 0;
+	    }
     }
+    else {
+    	fprintf(stderr, _F_RED_BOLD("Error while parsing a record with log_id %d:%s.\n") _ANSI_DEFAULTS("The partial record:\n%s"),
+    			complete_typed_record->record->u.typed.log_id, strerror(errno),
+    			*formatted_record ? formatted_record : "<Empty>");
+
+    }
+
+	return -1;
 }
 
 int TRACE_PARSER__dump(trace_parser_t *parser)
 {
     struct dump_context_s dump_context;
     if (parser->stream_type != TRACE_INPUT_STREAM_TYPE_SEEKABLE_FILE) {
+    	errno = EINVAL;
         return -1;
     }
     
@@ -2013,9 +2042,12 @@ static int log_id_to_log_template(trace_parser_t *parser, struct trace_parser_bu
     }
 
     total_length = format_typed_params(parser, context, &record, formatted_record, formatted_record_size, total_length, &bytes_processed, TRUE);
+    if (total_length < 0) {
+    	formatted_record[0] = '\0';
+    	return -1;
+    }
     formatted_record[total_length] = '\0';
-
-    return 0;
+    return (bytes_processed > 0) ? 0 : -1;
 }
 
 
@@ -2051,9 +2083,8 @@ static int format_record_event_handler(trace_parser_t *parser, enum trace_parser
 
     struct parser_complete_typed_record *complete_typed_record = (struct parser_complete_typed_record *) event_data;
     struct dump_context_s *dump_context = (struct dump_context_s *) arg;
-    TRACE_PARSER__format_typed_record(parser, complete_typed_record->buffer, complete_typed_record->record, dump_context->formatted_record, sizeof(dump_context->formatted_record));
-
-    return 0;
+    return TRACE_PARSER__format_typed_record(
+    		parser, complete_typed_record->buffer, complete_typed_record->record, dump_context->formatted_record, sizeof(dump_context->formatted_record));
 }
 
 int TRACE_PARSER__process_next_from_memory(trace_parser_t *parser, struct trace_record *rec, char *formatted_record, size_t formatted_record_size, size_t *formatted_record_len)
