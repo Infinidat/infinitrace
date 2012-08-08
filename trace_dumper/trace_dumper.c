@@ -1136,12 +1136,14 @@ static int trace_write_header(struct trace_dumper_configuration_s *conf)
 
 static int trace_create_dir_if_necessary(const char *base_dir)
 {
+	int saved_errno = errno;
 	int rc = mkdir(base_dir, 0755);
 	if (rc < 0)
 	{
 		switch (errno)
 		{
 		case EEXIST:
+			errno = saved_errno;
 			break;
 
 		default:
@@ -1432,7 +1434,9 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
         if (conf->online && record_buffer_matches_online_severity(conf, mapped_records->imutab->severity_type)) {
             rc = dump_iovector_to_parser(conf, &conf->parser, &conf->flush_iovec[iovec_base_index], num_iovecs - iovec_base_index);
             if (0 != rc) {
-                return -1;
+                syslog(LOG_USER|LOG_WARNING,
+                "Trace dumper encountered the following error while parsing and filtering %d records for syslog: %s",
+                num_iovecs - iovec_base_index, strerror(errno));
             }
         }
         
