@@ -1484,7 +1484,6 @@ static int rotate_trace_file_if_necessary(struct trace_dumper_configuration_s *c
         return 0;
     }
     
-#ifdef TRACE_DELETE_OLDEST_FILE
     while (TRUE) {
         if (total_records_in_logdir(conf->logs_base) > conf->max_records_per_logdir) {
             rc = delete_oldest_trace_file(conf);
@@ -1495,7 +1494,6 @@ static int rotate_trace_file_if_necessary(struct trace_dumper_configuration_s *c
             break;
         }
     }
-#endif
 
     if (conf->record_file.records_written < conf->max_records_per_file) {
         return 0;
