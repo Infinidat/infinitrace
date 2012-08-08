@@ -1,7 +1,7 @@
 Import('xn_env')
 Import('TracesDisabled')
 
-srcs = xn_env.AutoSplit('''filesystem.c trace_dumper.c''')
+srcs = xn_env.AutoSplit('''filesystem.c trace_dumper.c writer.c buffers.c init.c open_close.c metadata.c''')
 libs = ["tracereader", "rt"]
 with TracesDisabled(xn_env) as untraced_env:
     prog = untraced_env.XnProgram(target = "trace_dumper", source = srcs, LIBS = libs)
