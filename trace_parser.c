@@ -1081,7 +1081,7 @@ int TRACE_PARSER__format_typed_record(
         formatted_record[total_length] = '\0';
     }
 
-    int bytes_processed;
+    int bytes_processed = 0;
     if (!context) {
     	APPEND_LITERAL_TEXT(_F_RED_BOLD("<?>"));
         goto exit;
@@ -2083,8 +2083,14 @@ static int format_record_event_handler(trace_parser_t *parser, enum trace_parser
 
     struct parser_complete_typed_record *complete_typed_record = (struct parser_complete_typed_record *) event_data;
     struct dump_context_s *dump_context = (struct dump_context_s *) arg;
-    return TRACE_PARSER__format_typed_record(
+    int formatted_len = TRACE_PARSER__format_typed_record(
     		parser, complete_typed_record->buffer, complete_typed_record->record, dump_context->formatted_record, sizeof(dump_context->formatted_record));
+
+    if (formatted_len < 0) {
+    	return -1;
+    }
+
+    return  0;
 }
 
 int TRACE_PARSER__process_next_from_memory(trace_parser_t *parser, struct trace_record *rec, char *formatted_record, size_t formatted_record_size, size_t *formatted_record_len)
@@ -2099,7 +2105,7 @@ int TRACE_PARSER__process_next_from_memory(trace_parser_t *parser, struct trace_
     int rc = process_single_record(parser, &parser->record_filter, rec, &complete_record_processed, TRUE, format_record_event_handler, &dump_context);
     *formatted_record_len = strlen(dump_context.formatted_record);
     if (*formatted_record_len > 0) {
-    	size_t copy_len = MAX(*formatted_record_len, formatted_record_size - 1);
+    	size_t copy_len = MIN(*formatted_record_len, formatted_record_size - 1);
         memcpy(formatted_record, dump_context.formatted_record, copy_len);
         formatted_record[copy_len] = '\0';
     }
