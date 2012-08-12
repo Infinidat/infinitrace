@@ -319,6 +319,7 @@ static int metadata_info_started(trace_parser_t *parser, const struct trace_reco
     new_context.id = rec->pid;
     new_context.metadata_size = rec->u.metadata.metadata_size_bytes;
     if (new_context.metadata_size > MAX_METADATA_SIZE) {
+    	errno = EINVAL;
         return -1;
     }
 
@@ -329,6 +330,8 @@ static int metadata_info_started(trace_parser_t *parser, const struct trace_reco
 
     new_context.current_metadata_offset = 0;
     if (BufferParseContextList__add_element(&parser->buffer_contexts, &new_context) < 0) {
+    	free(new_context.metadata);
+    	new_context.metadata = NULL;
     	errno = ENOMEM;
     	return -1;
     }
@@ -544,8 +547,8 @@ static log_stats_pool_t log_stats_pool;
 
 int compare_log_occurrence_entries(const void *a, const void *b)
 {
-    struct log_occurrences *log_occurrence_a = (struct log_occurrences *) a;
-    struct log_occurrences *log_occurrence_b = (struct log_occurrences *) b;
+    const struct log_occurrences *log_occurrence_a = (const struct log_occurrences *) a;
+    const struct log_occurrences *log_occurrence_b = (const struct log_occurrences *) b;
 
     if (log_occurrence_a->occurrences < log_occurrence_b->occurrences) {
         return -1;

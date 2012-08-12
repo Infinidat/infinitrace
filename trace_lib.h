@@ -51,17 +51,23 @@ extern "C" {
 
 #define _O_RDONLY	00000000   
 
-/* Declarations of data structures which are defined in trace_user.c */
 extern struct trace_buffer *current_trace_buffer;
+
+/* Identifiers that are created by the liner script (see ldwrap.py) and mark the beginning and end of data-structure arrays inserted
+ * by the instrumentation mechanism */
 extern struct trace_log_descriptor __static_log_information_start;
 extern struct trace_log_descriptor __static_log_information_end;
 extern struct trace_type_definition *__type_information_start;
+
+/* Function call nesting level for function trace display */
 extern __thread unsigned short trace_current_nesting; 
 
+/* An interface that the traced process can use at runtime to limit the severity of trace messages that will
+ * be written to shared memory. */
 extern const struct trace_runtime_control *p_trace_runtime_control;    
 void trace_runtime_control_set_default_min_sev(enum trace_severity sev);
 
-/* Supporting inline functions used by the trace code that that ccwrap.py injects into the source files */
+/*** Supporting inline functions used by the trace code that that ccwrap.py injects into the source files ***/
 
 #ifdef __linux__
 
@@ -122,17 +128,32 @@ static inline int trace_strnlen(const char *c, int l)
 	return r;
 }
 
+/*** Data-structures used in the per traced process shared-memory area where traces are written at runtime. ***/
+
+/* Data that are modified as records are written and read */
 struct trace_records_mutable_metadata {
+	/* Whenever a thread in the traced process wants to write records, it atomically increments this value by the number of records it
+	 * wants to write, thus reserving them and guaranteeing that no other thread could reserve them. */
 	trace_atomic_t current_record;
+	/* padding to make sure that the data that is accessed atomically occupies a full cache line, thus not hindering anything else. */
 	trace_atomic_t reserved[14];
 
+	/* Last record time-stamp that was written by the dumper. */
 	unsigned long long latest_flushed_ts;
 };
 
+
+/* Data that are initialized by the traced process at its initialization and not modified afterwards  */
 struct trace_records_immutable_metadata {
-	unsigned int max_records;
+	unsigned int max_records;		/* The number of trace records in the  */
+
+	/* A mask where all the bits used to represent max_records above are set. */
 	unsigned int max_records_mask;
+
+	/* The smallest power of 2 that is greater than the number of records */
 	unsigned int max_records_shift;
+
+	/* A bit mask representing the severity levels that may be found in this set of records */
 	unsigned int severity_type;
 };
 
@@ -144,7 +165,7 @@ struct trace_records {
 
 
 struct trace_buffer {
-    unsigned int pid;
+    pid_t pid;
     union {
         struct trace_records _all_records[TRACE_BUFFER_NUM_RECORDS];
         struct {

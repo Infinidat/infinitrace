@@ -15,7 +15,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
    limitations under the License.
 ***/
 
-/* Trace dumper common formats, constants and inline functions */
+/* Trace dumper common formats and constants */
 
 #ifndef __TRACE_DEFS_H__
 #define __TRACE_DEFS_H__
@@ -24,8 +24,66 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
  extern "C" {
 #endif
 
-#define MAX_METADATA_SIZE (0x1000000)
-#define TRACE_BUFFER_NUM_RECORDS (3)
+ /*
+  * The traces library uses two related binary format:
+  	  * Data structures that reside in the shared-memory areas that are written by traced processes and read by the dumper.
+  	  * A binary file format that is written by the trace dumper and read by the various reader applications, including the dumper's built-in reader.
+
+
+ 	 The trace file format
+ 	 =====================
+
+  * The trace file is made out of 64 byte records. Each record contains a 20-byte header, which is identical for all record types and a 44 byte record body,
+  * which is specific to each record type. Its full definition is given in the struct trace_record.
+  *
+  * Each record belongs to one of 3 classes:
+  	  * Administrative records: A file header, an end-of-file record and special records indicating conditions like record loss.
+  	  * Those records have no corresponding data structures	in the shared memory area.
+  	  * Metadata records, which contain a "packetized" representation of the the metadata made available by the traced process in the static shared
+  	    memory area (for more information about it, see below in the shared-memory format). The content of the metadata are is broken into 44-byte fragments which are packaged in metadata records.
+  	    Every file starts with the metadata regions of all the processes that were being traced when the file was opened. Metadata regions can also appear
+  	    in the middle of the file if a new process was detected after the file had been opened. see below for more information about the structure of metadata
+  	    regions.
+  	  * Trace data regions, where each record represents an event encountered at runtime. Here the on-disk format is identical to the in-memory format.
+  	  	  The trace records belong to two classes:
+  	    * Function trace records, reflecting entry to and exit from functions.
+  	    * Typed records, reflecting explicit calls to the trace pseudo-functions (DEBUG, INFO, WARN etc.) in the traced process.
+	  	  A trace data region is made of multiple dumps, where each dump corresponds to a single invocation of the writev() system call (see man 2 writev)
+	  	  to write records from all the buffers that contain trace data. The first record in each dump is a dump header defined in
+	  	  struct trace_record_dump_header. It stores the offset of the first record in the shared-memory area as well as the offset in the
+	  	  file of the previous dump header. The subsequent records are copied verbatim from the shared-memory areas of the traced processes.
+
+
+  	  The shared-memory format
+  	  ========================
+
+	Every traced processes creates 2 shared-memory areas for communicating with the trace dumper.
+	* A static metadata area which includes the following, one after the other:
+	  * A header defined in struct trace_metadata_region
+	  * An array of log_descriptor_count log descriptors (see below struct trace_log_descriptor), each of which describes a spot in the code
+	    where logging takes place - either explicitly (i.e. a typed record) or implicitly (function traces, if enabled).
+	  * An array of type_definition_count type definitions (see below struct trace_type_definition). Each type definition can represent an enumeration,
+	    a record (i.e. struct) or a typedef. The possible values are defined in the enum trace_type_id.
+	  * An array of trace descriptor parameters (see below struct trace_param_descriptor) referenced by the log descriptors. The final element of
+	    this array has its name set to NULL.
+	  * An array of enum name and numeric value pairs (see below struct trace_enum_value). The final element of this array has its name set to NULL.
+	  * A string table, containing a sequence of all the constant strings used by the other structures for to designate constant strings in
+	    the user code, parameter names, enum value names etc.
+
+	  Many of these structures refer to each others by pointers. Whenever this data structure is created or relocated, its base address is stored in
+	  the base_address field of the header. Whenever the entire data structure is copied to a different base address, all the pointers need to be adjusted
+	  by the difference between the old address stored in the header and the new address where it has been placed.
+
+	* A dynamic trace data area which contains data that is modified as traces are written.
+	  Note: The structures for this shared-memory area are defined and documented in detail in trace_lib.h
+	  The overall structure of the dynamic data area is defined by the structure trace_buffer. It contains a header giving the process' pid
+	  and 3 trace buffers for each of the 3 trace classes: function traces, debug and everything else.
+  */
+
+
+
+#define MAX_METADATA_SIZE (0x1000000) /* An upper bound on the possible size of metadata */
+#define TRACE_BUFFER_NUM_RECORDS (3)  /* The number of trace buffers per traced process */
 #define TRACE_RECORD_BUFFER_RECS  0x100000
 
      
@@ -48,33 +106,6 @@ TRACE_SEVERITY_DEF
 #undef TRACE_SEV_X
 };
 
-static inline int trace_strcmp(const char *s1, const char *s2)
-{
-     /* Move s1 and s2 to the first differing characters 
-        in each string, or the ends of the strings if they
-        are identical.  */
-     while (*s1 != '\0' && *s1 == *s2) {
-         s1++;
-         s2++;
-     }
-     /* Compare the characters as unsigned char and
-        return the difference.  */
-     const unsigned char uc1 = (*(const unsigned char *) s1);
-     const unsigned char uc2 = (*(const unsigned char *) s2);
-     return ((uc1 < uc2) ? -1 : (uc1 > uc2));
- }
-     
-#define TRACE_SEV_X(num, name)                  \
-    if (trace_strcmp(function_name, #name) == 0) { \
-        return TRACE_SEV_##name;                \
-    }
-    
-static inline enum trace_severity trace_function_name_to_severity(const char *function_name) {
-    TRACE_SEVERITY_DEF;
-    #undef TRACE_SEV_X
-    return TRACE_SEV_INVALID;
-}
-
 /* The trace record type constants defined below are used in the rec_type field of the trace_record structure */
 
 enum trace_rec_type {
@@ -83,13 +114,16 @@ enum trace_rec_type {
 	TRACE_REC_TYPE_FILE_HEADER = 2,	/* Appears only at the start of a new file */
 	
 	/* For every process that is being traced the file contains a metadata block,
-	   comprising a metadata h header abd metadata payload records. */
+	   comprising a metadata header and metadata payload records. */
 	TRACE_REC_TYPE_METADATA_HEADER = 3,
 	TRACE_REC_TYPE_METADATA_PAYLOAD = 4,
 	
-	/* Appears at the beginning of every chunk of data written in a single writev() invocation */
+	/* Appears at the beginning of every sequence of data written in a single writev() invocation */
 	TRACE_REC_TYPE_DUMP_HEADER = 5,
+
+	/* Appears before the data records for every sequence of records written for an individual mapped buffer within a given dump */
 	TRACE_REC_TYPE_BUFFER_CHUNK = 6,
+
     TRACE_REC_TYPE_END_OF_FILE = 7,
 
     /* Inserted to indicate data loss */
@@ -97,8 +131,11 @@ enum trace_rec_type {
 };
 
 enum trace_log_descriptor_kind {
+	/* For function traces */
     TRACE_LOG_DESCRIPTOR_KIND_FUNC_ENTRY = 0,
     TRACE_LOG_DESCRIPTOR_KIND_FUNC_LEAVE = 1,
+
+    /* Explicit logging, (a.k.a typed records) */
     TRACE_LOG_DESCRIPTOR_KIND_EXPLICIT = 2,
 };
 
@@ -106,7 +143,7 @@ enum trace_log_descriptor_kind {
 #define TRACE_RECORD_PAYLOAD_SIZE   44
 #define TRACE_RECORD_HEADER_SIZE    (TRACE_RECORD_SIZE - TRACE_RECORD_PAYLOAD_SIZE)
 
-     
+  /* Indicate whether the current record is the first or last of a sequence. It's possible (and common) for both flags to be set */
 enum trace_termination_type {
 	TRACE_TERMINATION_LAST = 1,
 	TRACE_TERMINATION_FIRST = 2
@@ -114,17 +151,7 @@ enum trace_termination_type {
 
 #define TRACE_MACHINE_ID_SIZE    0x18
 
-static inline int trace_compare_generation(unsigned int a, unsigned int b)
-{
-	if (a >= 0xc0000000   &&  b < 0x40000000)
-		return 1;
-	if (b > a)
-		return 1;
-	if (b < a)
-		return -1;
-	return 0;
-}
-
+/* Currently unused */
 enum trace_file_type {
 	TRACE_FILE_TYPE_JOURNAL = 1,
 	TRACE_FILE_TYPE_SNAPSHOT = 2
@@ -145,6 +172,7 @@ enum trace_file_type {
 #define TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA (0xA2)
 #define TRACE_FORMAT_VERSION_INTRODUCED_DEAD_PID_LIST (0xA2)
 
+ /* Information about user defined types */
 struct trace_type_definition {
     enum trace_type_id type_id;
     const char *type_name;
@@ -162,89 +190,152 @@ struct trace_type_definition {
     unsigned int value;
 };
 
+ /* We are making a dubious assumption here the process and thread ids are 16-bit long.
+  * This is true in practice in current common POSIX systems but is deprecated. */
 typedef unsigned short int trace_pid_t;
 
 struct trace_record {
 	/* 20 bytes header */
 	unsigned long long ts;
-	trace_pid_t pid;
-	trace_pid_t tid;
-    short nesting;
-	unsigned termination:2;
+	trace_pid_t pid;		/* Process ID */
+	trace_pid_t tid;		/* Thread ID */
+    short nesting;			/* Call stack depth for the current thread, used for function traces. */
+	unsigned termination:2; /* The values of trace_termination_type, possible or-ed */
 	unsigned reserved:6;
-	unsigned severity:4;
-	unsigned rec_type:4;
+	unsigned severity:4;	/* One of the values of the trace_severity enum */
+	unsigned rec_type:4;	/* One of the values of the trace_rec_type enum */
+
+	/* A counter that is incremented every-time the writing of records from the traced process wraps around to the beginning
+	 * of the buffer */
 	unsigned int generation;
 
 	/* 44 bytes payload */
 	union trace_record_u {
+		/* Used for records without a predefined payload structure, of types TRACE_REC_TYPE_METADATA_PAYLOAD and TRACE_REC_TYPE_END_OF_FILE */
 		unsigned char payload[TRACE_RECORD_PAYLOAD_SIZE];
 		
-		/* For explanation of the role of each record type, see above the comments for the 
-           corresponding rec_type value */
+		/* Payload for TRACE_REC_TYPE_TYPED */
 		struct trace_record_typed {
-			unsigned int log_id;
-			unsigned char payload[0];
+			unsigned int log_id;	/* Index to the array of log descriptors in the metadata */
+			unsigned char payload[];
 		} typed;
+
+		/* Payload for TRACE_REC_TYPE_FILE_HEADER */
 		struct trace_record_file_header {
-			unsigned char machine_id[TRACE_MACHINE_ID_SIZE];
-            unsigned short format_version;
+			unsigned char machine_id[TRACE_MACHINE_ID_SIZE];	/* machine hostname, truncated to TRACE_MACHINE_ID_SIZE - 1 characters */
+            unsigned short format_version;						/* Revision of the file format */
             unsigned char  reserved[6];
             unsigned int magic;		/* Should contain TRACE_MAGIC_FILE_HEADER */
 		} file_header;
+
+		/* Payload for TRACE_REC_TYPE_METADATA_HEADER */
 		struct trace_record_metadata {
 			unsigned int metadata_size_bytes;
-			trace_pid_t  dead_pids[4];  /* PIDs of processes that have ended and whose resources should be reclaimed. */
+			trace_pid_t  dead_pids[4];  /* PIDs of processes that have ended and whose resources in the parser should be reclaimed. */
 
 			/* Protect against early versions of the dumper that did not zero-out the metadata header before writing. */
 			unsigned char reserved[TRACE_RECORD_PAYLOAD_SIZE - 4*sizeof(trace_pid_t) - 2*sizeof(unsigned)];
-			unsigned int metadata_magic;  /* Should contain TRACE_MAGIC_METADATA_HEADER */
+			unsigned int metadata_magic;  /* Should contain TRACE_MAGIC_METADATA */
 		} metadata;
+
+		/* Payload for TRACE_REC_TYPE_DUMP_HEADER */
 		struct trace_record_dump_header {
+			/* Offset in the file of the previous dump, allowing the file to be searched backwards. */
 			unsigned int prev_dump_offset;
+
+			/* Total number of trace records in the dump */
 			unsigned int total_dump_size;
+
+			/* Offset of the first chunk header in the dump */
             unsigned int first_chunk_offset;
 		} dump_header;
+
+		/* Payload for TRACE_REC_TYPE_BUFFER_CHUNK */
 		struct trace_record_buffer_dump {
+			/* Last offset containing metadata for the current traced process */
 			unsigned int last_metadata_offset;
+
+			/* Previous chunk for the current traced process. */
 			unsigned int prev_chunk_offset;
+
+			/* Offset of the dump to which this chunk belongs */
 			unsigned int dump_header_offset;
+
+			/* Traced process time-stamp at which the chunk starts */
 			unsigned long long ts;
+
+			/* Number of records in the chunk */
 			unsigned int records;
+
+			/* A bit mask representing the severity levels that may be found in this chunk */
 			unsigned int severity_type;
             unsigned int lost_records;
 		} buffer_chunk;
+
+		/* Payload for TRACE_REC_TYPE_DATA_LOSS */
+		/* Note: not implemented yet, will be revised and possibly merged with the chunk header */
 		struct trace_record_data_loss {
+			unsigned int lost_records;
 			unsigned long long ts_start;
 			unsigned long long ts_end;
-			unsigned int lost_records;
 		} data_loss;
 	} __attribute__((packed)) u;
 } __attribute__((packed));
 
+/* Flags used to indicate the type of trace parameters */
 enum trace_param_desc_flags {
+	/* Numerical types of 8 - 64 bits */
 	TRACE_PARAM_FLAG_NUM_8    = 0x001,
 	TRACE_PARAM_FLAG_NUM_16   = 0x002,
 	TRACE_PARAM_FLAG_NUM_32   = 0x004,
 	TRACE_PARAM_FLAG_NUM_64   = 0x008,
+
+	/* An array rather than a scalar. Arrays have size information stored in their first byte as follows:
+	 * Bits 0 - 6 give the length of the array.
+	 * Bit  7 is a flag indicating whether the array is continued in the next value (1) or not (0)
+	 * Subsequent bytes contain the array members */
 	TRACE_PARAM_FLAG_VARRAY   = 0x010,
+
+	/* Strings that are known at compile time, and hence are stored in the metadata string table. The string
+	 * is pointed to by the const_str field */
 	TRACE_PARAM_FLAG_CSTR     = 0x020,
 
+	/* C-style strings that are only known at runtime, and hence stored as part of the data.
+	 * The length of the string is given in the same way as for VARRAY above */
 	TRACE_PARAM_FLAG_STR      = 0x040,
-	TRACE_PARAM_FLAG_BLOB     = 0x080,
 
-	TRACE_PARAM_FLAG_UNSIGNED = 0x100,
-	TRACE_PARAM_FLAG_HEX      = 0x200,
-	TRACE_PARAM_FLAG_ZERO     = 0x400,
+	TRACE_PARAM_FLAG_BLOB     = 0x080,	/* Currently unused */
+
+	TRACE_PARAM_FLAG_UNSIGNED = 0x100,	/* Interpret the value as unsigned */
+	TRACE_PARAM_FLAG_HEX      = 0x200,	/* Display the value as hex */
+	TRACE_PARAM_FLAG_ZERO     = 0x400,	/* Display with a leading zero */
+
+	/* Specify an enumeration whose name is given in the type_name field. Instead of displaying the numeric value look-up the
+	 * corresponding vale name */
     TRACE_PARAM_FLAG_ENUM     = 0x800,
+
+    /* The fields of a composite object follow. This can be either a struct containing plain-old-data,
+     * or an object that implements the __repr__ method. */
     TRACE_PARAM_FLAG_NESTED_LOG   = 0x1000,
+
+    /* Flags for function traces */
     TRACE_PARAM_FLAG_ENTER    = 0x2000,
     TRACE_PARAM_FLAG_LEAVE    = 0x4000,
-    TRACE_PARAM_FLAG_TYPEDEF  = 0x8000,
+
+    TRACE_PARAM_FLAG_TYPEDEF  = 0x8000,	/* Currently unused */
+
+    /* Parameters that have specific names, e.g. function arguments */
     TRACE_PARAM_FLAG_NAMED_PARAM  = 0x10000,
+
+    /* structures with plain-old-data */
     TRACE_PARAM_FLAG_RECORD  = 0x20000,
 
+#if (TRACE_FORMAT_VERSION >= 0xA2)
+    /* The parameter is known at compile-time.
+     * A future version of the parser will display the value in describe_params mode (e.g. when displaying statistics)
+     * instead of the type name */
     TRACE_PARAM_FLAG_CONST   = 0x40000,
+#endif
 };
 
 enum trace_magic_numbers {
@@ -255,41 +346,38 @@ enum trace_magic_numbers {
 /* Descriptor for an individual parameter being logged */
 struct trace_param_descriptor {
 	unsigned long flags;
-    const char *param_name;
-    union {
+    const char *param_name;	/* Used for named parameters, e.gf function arguments */
+    union {		/* The field that is used is determined by the flags, see their descriptions above */
         const char *str;
-        const char *const_str;
-        const char *type_name;
+        const char *const_str;	/* Pointer to a string in the matadata string table. */
+        const char *type_name;	/* for records, enums etc. */
     };
 };
 
 /* Descriptor for an individual instance of logging in the code, e.g. an invocation of DEBUG(), etc.
  * NOTE: The size of this data structure should be kept no greater than 32 bytes. Otherwise the linker script created by ldwrap.py will have to be changed */
 struct trace_log_descriptor {
-    enum trace_log_descriptor_kind kind;
+    enum trace_log_descriptor_kind kind;	/* Function entry/exit or typed record */
 #if (TRACE_FORMAT_VERSION >= TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA)
-    unsigned line : 20;
-    unsigned severity : 4;
+    unsigned line : 20;		/* Line in the code where the trace appears */
+    unsigned severity : 4;	/* A value from the trace_severity enum */
 #endif
     const struct trace_param_descriptor *params;
 #if (TRACE_FORMAT_VERSION >= TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA)
-    const char *file;
-    const char *function;
+    const char *file;		/* File in the code where the trace appears */
+    const char *function;	/* Function where the trace appears */
 #endif
 };
 
 
-/* The metadata region is laid out as follows:
- * A header defined in trace_metadata_region
- * An array of log_descriptor_count log descriptors (see trace_log_descriptor above)
- * A sequence of type_definition_count type definitions of type trace_type_definition */
+/* Metadata region header. For a full description of its layout see above at the top of the file. */
 
 struct trace_metadata_region {
-    char name[0x100];
-    void *base_address;
+    char name[0x100];			/* The name of the process */
+    void *base_address;			/* Base address which was used at the time the various pointer fields in the data-structure were filled. */
     unsigned long log_descriptor_count;
     unsigned long type_definition_count;
-    char data[0];  /* Placeholder for the actual metadata */
+    char data[];  /* Place-holder for the actual metadata, when it is placed right after the header fields above (e.g. in the trace parser) */
 };
      
      

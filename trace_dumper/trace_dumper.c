@@ -211,6 +211,8 @@ static void init_buffer_chunk_record(struct trace_dumper_configuration_s *conf, 
     mapped_records->buffer_dump_record.termination = (TRACE_TERMINATION_LAST |
                                                       TRACE_TERMINATION_FIRST);
     mapped_records->buffer_dump_record.pid = mapped_buffer->pid;
+
+    /* Fill the buffer chunk header */
     (*bd) = &mapped_records->buffer_dump_record.u.buffer_chunk;
     (*bd)->last_metadata_offset = mapped_buffer->last_metadata_offset;
     (*bd)->prev_chunk_offset = mapped_records->last_flush_offset;
@@ -228,10 +230,13 @@ static void init_buffer_chunk_record(struct trace_dumper_configuration_s *conf, 
     }
 
     mapped_records->next_flush_offset = conf->record_file.records_written + total_written_records;
+
+    /* Place the buffer chunk header record in the iovec. */
     (*iovec) = &conf->flush_iovec[(*iovcnt)++];
     (*iovec)->iov_base = &mapped_records->buffer_dump_record;
     (*iovec)->iov_len = sizeof(mapped_records->buffer_dump_record);
 
+    /* Add the records in the chunk to the iovec. */
     (*iovec) = &conf->flush_iovec[(*iovcnt)++];
     (*iovec)->iov_base = &mapped_records->records[mapped_records->current_read_record];
     (*iovec)->iov_len = TRACE_RECORD_SIZE * delta_a;
