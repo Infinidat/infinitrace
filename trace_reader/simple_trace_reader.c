@@ -110,6 +110,8 @@ static unsigned long long format_cmdline_time(const char *time_str)
 {
     const char *format = "%a %b %d %T %Y";
     struct tm formatted_time;
+    memset(&formatted_time, 0, sizeof(formatted_time));
+    formatted_time.tm_isdst=-1;
     char *result = strptime(time_str, format, &formatted_time);
     if (NULL == result) {
         return LLONG_MIN;
@@ -124,7 +126,7 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
 {
     int o;
     int longindex;
-    conf->severity_mask = ((1 << TRACE_SEV_INFO) | (1 << TRACE_SEV_INFO) | (1 << TRACE_SEV_WARN) | (1 << TRACE_SEV_ERR) | (1 << TRACE_SEV_FATAL));
+    conf->severity_mask = ((1 << TRACE_SEV_INFO) | (1 << TRACE_SEV_WARN) | (1 << TRACE_SEV_ERR) | (1 << TRACE_SEV_FATAL));
     while ((o = getopt_long(argc, (char **)argv, shortopts, longopts, &longindex)) != EOF) {
 		switch (o) {
 		case 'h':
