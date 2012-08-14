@@ -89,7 +89,7 @@ static inline unsigned short int trace_get_tid(void)
 	return tid_cache;
 }
     
-static inline unsigned long long trace_get_nsec(void)
+static inline trace_ts_t trace_get_nsec(void)
 {
      struct timespec tv;
      clock_gettime(CLOCK_REALTIME, &tv);
@@ -134,10 +134,13 @@ static inline int trace_strnlen(const char *c, int l)
 struct trace_records_mutable_metadata {
 	/* Whenever a thread in the traced process wants to write records, it atomically increments this value by the number of records it
 	 * wants to write, thus reserving them and guaranteeing that no other thread could reserve them. */
-	trace_atomic_t current_record;
+	volatile trace_atomic_t current_record;
 	/* padding to make sure that the data that is accessed atomically occupies a full cache line, thus not hindering anything else. */
-	trace_atomic_t reserved[14];
+	trace_atomic_t reserved1[32 / sizeof(trace_atomic_t) - 1];
 
+	/* Once a record has been written next_committed_record is updated atomically. */
+	volatile trace_atomic_t last_committed_record;
+	trace_atomic_t reserved2[32 / sizeof(trace_atomic_t) - 1];
 	/* Last record time-stamp that was written by the dumper. */
 	unsigned long long latest_flushed_ts;
 };
@@ -145,7 +148,7 @@ struct trace_records_mutable_metadata {
 
 /* Data that are initialized by the traced process at its initialization and not modified afterwards  */
 struct trace_records_immutable_metadata {
-	unsigned int max_records;		/* The number of trace records in the  */
+	unsigned int max_records;		/* The number of trace records in the area */
 
 	/* A mask where all the bits used to represent max_records above are set. */
 	unsigned int max_records_mask;
@@ -159,7 +162,7 @@ struct trace_records_immutable_metadata {
 
 struct trace_records {
 	struct trace_records_immutable_metadata imutab;
-	struct trace_records_mutable_metadata mutab;
+	volatile struct trace_records_mutable_metadata mutab;
 	struct trace_record records[TRACE_RECORD_BUFFER_RECS];
 };
 
@@ -181,20 +184,40 @@ static inline void set_current_trace_buffer_ptr(struct trace_buffer *trace_buffe
     current_trace_buffer = trace_buffer_ptr;
 }
 
+static inline struct trace_records *trace_get_records(enum trace_severity severity)
+{
+	switch ((int)severity) {
+	case TRACE_SEV_FUNC_TRACE:
+		return &current_trace_buffer->u.records._funcs;
+
+	case TRACE_SEV_DEBUG:
+		return &current_trace_buffer->u.records._debug;
+
+	default:
+		return &current_trace_buffer->u.records._other;
+	}
+}
+
+
+static inline int trace_compare_generation(unsigned int a, unsigned int b)
+{
+	if (a >= 0xc0000000   &&  b < 0x40000000)
+		return 1;
+	if (b > a)
+		return 1;
+	if (b < a)
+		return -1;
+	return 0;
+}
+
+
 /* TODO: Consider allowing an option for lossless tracing. */
 static inline struct trace_record *trace_get_record(enum trace_severity severity, unsigned int *generation)
 {
-	struct trace_records *records;
+
 	struct trace_record *record;
 	unsigned int record_index;
-
-    if (severity == TRACE_SEV_FUNC_TRACE) {
-        records = &current_trace_buffer->u.records._funcs;
-    } else if (severity == TRACE_SEV_DEBUG) {
-		records = &current_trace_buffer->u.records._debug;
-    } else {
-		records = &current_trace_buffer->u.records._other;
-    }
+	struct trace_records *records = trace_get_records(severity);
 
 	/* To implement lossless mode: Make sure we don't overwrite data beyond 
 	   records->imutab.latest_flush_ts */
@@ -206,6 +229,27 @@ static inline struct trace_record *trace_get_record(enum trace_severity severity
 	record = &records->records[record_index % TRACE_RECORD_BUFFER_RECS];
 	return record;
 }
+
+static inline void trace_commit_record(struct trace_record *target_record, const struct trace_record *source_record)
+{
+	struct trace_records *records = trace_get_records((enum trace_severity)(source_record->severity));
+	trace_atomic_t new_index = (source_record->generation << records->imutab.max_records_shift) + (target_record - records->records);
+	__builtin_memcpy(target_record, source_record, sizeof(*source_record));
+	__sync_synchronize();
+	trace_atomic_t found_value = records->mutab.last_committed_record;
+
+	/* Update records->mutab.last_committed_record to the index of the current record, taking care not to overwrite a larger value.
+	 * It's possible that another thread has increased records->mutab.last_committed_record between the last statement and this point so
+	 * occasionally we might have to repeat this more than once.  */
+	do {
+		found_value = __sync_val_compare_and_swap(
+				&records->mutab.last_committed_record,
+				found_value,
+				new_index);
+
+	} while (trace_compare_generation(found_value, new_index) > 0);
+}
+
 #ifdef __cplusplus
 }
 #endif

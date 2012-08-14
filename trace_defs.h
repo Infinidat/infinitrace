@@ -84,6 +84,8 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 
 #define MAX_METADATA_SIZE (0x1000000) /* An upper bound on the possible size of metadata */
 #define TRACE_BUFFER_NUM_RECORDS (3)  /* The number of trace buffers per traced process */
+
+ /* TODO: Add compile-time checking that the number is a power of 2. Nothing else will likely work */
 #define TRACE_RECORD_BUFFER_RECS  0x100000
 
      
@@ -194,9 +196,12 @@ struct trace_type_definition {
   * This is true in practice in current common POSIX systems but is deprecated. */
 typedef unsigned short int trace_pid_t;
 
+/* Time-stamps and time intervals in nano-seconds */
+typedef unsigned long long trace_ts_t;
+
 struct trace_record {
 	/* 20 bytes header */
-	unsigned long long ts;
+	trace_ts_t  ts;
 	trace_pid_t pid;		/* Process ID */
 	trace_pid_t tid;		/* Thread ID */
     short nesting;			/* Call stack depth for the current thread, used for function traces. */
@@ -262,7 +267,7 @@ struct trace_record {
 			unsigned int dump_header_offset;
 
 			/* Traced process time-stamp at which the chunk starts */
-			unsigned long long ts;
+			trace_ts_t ts;
 
 			/* Number of records in the chunk */
 			unsigned int records;

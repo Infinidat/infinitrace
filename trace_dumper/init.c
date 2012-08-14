@@ -151,7 +151,7 @@ int parse_commandline(struct trace_dumper_configuration_s *conf, int argc, char 
 }
 
 #define ROTATION_COUNT 10
-#define FLUSH_DELTA 5000
+static const trace_ts_t FLUSH_DELTA = 5000;  /* In ns */
 
 static int parser_event_handler(trace_parser_t __attribute__((unused)) *parser, enum trace_parser_event_e __attribute__((unused))event, void __attribute__((unused))*event_data, void __attribute__((unused)) *arg)
 {
@@ -232,6 +232,7 @@ int init_dumper(struct trace_dumper_configuration_s *conf)
 
     conf->record_file.fd = -1;
     conf->ts_flush_delta = FLUSH_DELTA;
+    conf->flush_iovec_total_records = 0;
     TRACE_PARSER__from_external_stream(&conf->parser, parser_event_handler, NULL);
     TRACE_PARSER__set_indent(&conf->parser, TRUE);
     TRACE_PARSER__set_show_field_names(&conf->parser, TRUE);

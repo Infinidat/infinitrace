@@ -352,12 +352,12 @@ std::string TraceCall::getSeverity()
 
 std::string TraceCall::constlength_commitRecord()
 {
-    return "__builtin_memcpy(" + castTo(ast.getLangOptions(), "_record_ptr", "char *") + ", " + castTo(ast.getLangOptions(), "&_record", "char *") + ", sizeof(struct trace_record));";
+	return "trace_commit_record(_record_ptr, &_record);";
 }
 
 std::string TraceCall::varlength_commitRecord()
 {
-    return "__builtin_memcpy(" + castTo(ast.getLangOptions(), "(*__record_ptr)", "char *") + ", " + castTo(ast.getLangOptions(), "_record", "char *") + ", sizeof(struct trace_record));";
+	return "trace_commit_record((*__record_ptr), _record);";
 }
 
 std::string TraceCall::varlength_getRecord(enum trace_severity severity)

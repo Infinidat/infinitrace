@@ -354,10 +354,18 @@ static void init_records_immutable_data(struct trace_records *records, unsigned 
     records->imutab.severity_type = severity_type;
 }
 
+static void init_record_mutable_data(struct trace_records *recs)
+{
+	recs->mutab.current_record = 0;
+	recs->mutab.last_committed_record = 0;
+	memset(recs->records, TRACE_SEV_INVALID, sizeof(recs->records[0]));
+}
+
 static void init_records_metadata(void)
 {
-    current_trace_buffer->u.records._debug.mutab.current_record = 0;
-    current_trace_buffer->u.records._other.mutab.current_record = 0;
+	init_record_mutable_data(&(current_trace_buffer->u.records._debug));
+	init_record_mutable_data(&(current_trace_buffer->u.records._other));
+	init_record_mutable_data(&(current_trace_buffer->u.records._funcs));
 
     init_records_immutable_data(&current_trace_buffer->u.records._other, TRACE_RECORD_BUFFER_RECS, (1 << TRACE_SEV_FATAL) | (1 << TRACE_SEV_ERR) | (1 << TRACE_SEV_INFO) | (1 << TRACE_SEV_WARN));
     init_records_immutable_data(&current_trace_buffer->u.records._debug, TRACE_RECORD_BUFFER_RECS, (1 << TRACE_SEV_DEBUG));

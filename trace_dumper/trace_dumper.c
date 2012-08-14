@@ -38,6 +38,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "../array_length.h"
 #include <syslog.h>
 #include <time.h>
+#include <assert.h>
 #include "../trace_lib.h"
 #include "../trace_user.h"
 #include "trace_dumper.h"
@@ -123,10 +124,11 @@ static void dump_online_statistics(const struct trace_dumper_configuration_s *co
     }
 }
 
-#define STATS_DUMP_DELTA (TRACE_SECOND * 3)
 static void possibly_dump_online_statistics(struct trace_dumper_configuration_s *conf)
 {
-    unsigned long long current_time = trace_get_nsec();
+    static const unsigned long long STATS_DUMP_DELTA = TRACE_SECOND * 3;
+
+	unsigned long long current_time = trace_get_nsec();
     if (! (conf->dump_online_statistics && current_time > conf->next_stats_dump_ts)) {
         return;
     }
@@ -137,51 +139,97 @@ static void possibly_dump_online_statistics(struct trace_dumper_configuration_s 
     conf->next_stats_dump_ts = current_time + STATS_DUMP_DELTA;
 }
 
+struct records_pending_write {
+	int total;
+	int up_to_buf_end;
+	int from_buf_start;
+	int beyond_chunk_size;
+	int lost;
+	int remaining_before_loss;
+};
 
-void calculate_delta(const struct trace_mapped_records *mapped_records, unsigned int *delta, unsigned int *delta_a, unsigned int *delta_b, unsigned int *lost_records)
+static void adjust_for_overrun(struct trace_mapped_records *mapped_records)
 {
-    unsigned int last_written_record;
-    
-    last_written_record = mapped_records->mutab->current_record & mapped_records->imutab->max_records_mask;
-    const struct trace_record *last_record = &mapped_records->records[last_written_record];
+	mapped_records->current_read_record = (mapped_records->mutab->current_record + 1) & mapped_records->imutab->max_records_mask;;
+	/* TODO: There's a race condition here is that remains to be addressed. Until the records are
+	 * actually written to the disk, the writing process will continue to write records. This will result in
+	 * some records appearing twice.
+	 * A safer solution is required in the longer term */
+}
 
-    if (last_written_record == mapped_records->current_read_record) {
-        *lost_records = 0;
-        *delta = 0;
-        return;
-    }    
-        
+static void calculate_delta(
+		const struct trace_mapped_records *mapped_records,
+		struct records_pending_write *delta)
+{
+    /* Find which record was last written by the traced process to the shared-memory */
+	trace_atomic_t last_written_record = mapped_records->mutab->last_committed_record & mapped_records->imutab->max_records_mask;
+    volatile const struct trace_record *last_record = &mapped_records->records[last_written_record];
+    unsigned last_generation = last_record->generation;
+
+    memset(delta, 0, sizeof(*delta));
+    if(TRACE_SEV_INVALID == last_record->severity) {
+    	if (0 != last_written_record) {  /* Some traces have been written */
+    		syslog(LOG_USER|LOG_ERR,
+    				"Record %d was uninitialized but marked as committed while dumping from a buffer with for pid %d",
+    				last_written_record, last_record->pid);
+    	}
+    	delta->remaining_before_loss = mapped_records->imutab->max_records;
+    	return;
+    }
+
+    assert(last_generation >= mapped_records->old_generation);
+    assert((trace_atomic_t) -1 < 0);	/* Verify signedness of last_written_record */
+
+    /* Check whether the number of records written to the shared-memory buffers exceeds the number read by the dumper by more than the buffer size.
+      * If so - we have lost records. */
+    int generation_delta = last_generation - mapped_records->old_generation;
+    int overrun_records =
+    		last_written_record +
+    		(generation_delta - 1) * (int)(mapped_records->imutab->max_records) -
+    		(int)(mapped_records->current_read_record);
+
+    delta->lost = MAX(overrun_records, 0);
+    delta->remaining_before_loss = MAX(-overrun_records, 0);
+
+#ifdef TRACE_EXTRA_VERBOSE_DEBUG
+    if ((unsigned)(delta->remaining_before_loss) < mapped_records->imutab->max_records/100) {
+    	syslog(LOG_USER|LOG_DEBUG, "Records remaining before loss: %d, last_written: %d, last_read: %llu, generations: %d, %d",
+    		delta->remaining_before_loss, last_written_record, mapped_records->current_read_record, last_record->generation, mapped_records->old_generation);
+    }
+#endif
+
     /* Calculate delta with wraparound considered */
-    if (last_written_record > mapped_records->current_read_record) {
-        *delta_a = last_written_record - mapped_records->current_read_record;
-        *delta_b = 0;
-    } else if (last_written_record < mapped_records->current_read_record) {
-        *delta_a = mapped_records->imutab->max_records - mapped_records->current_read_record;
-        *delta_b = last_written_record;
+    if ((last_written_record < (trace_atomic_t)(mapped_records->current_read_record)) || delta->lost) {
+    	/* Note: If we are called the second time after adjustment for overrun had been performed, it's
+    	 * still possible that mapped_records->mutab->current_record has advanced in the meantime, so we still have
+    	 * to account for the possibility of finding lost records at this point. */
+
+    	 delta->up_to_buf_end = mapped_records->imutab->max_records - mapped_records->current_read_record;
+    	 delta->from_buf_start = last_written_record;
+    }
+    else if (last_written_record == (trace_atomic_t)(mapped_records->current_read_record)) {
+        return;
+    }
+    else {
+		assert(last_written_record > (trace_atomic_t)(mapped_records->current_read_record));
+		delta->up_to_buf_end = last_written_record - mapped_records->current_read_record;
+		delta->from_buf_start = 0;
     }
 
     
     /* Cap on TRACE_FILE_MAX_RECORDS_PER_CHUNK */
-    if (*delta_a + *delta_b > TRACE_FILE_MAX_RECORDS_PER_CHUNK) {
-        if (*delta_a > TRACE_FILE_MAX_RECORDS_PER_CHUNK) {
-            *delta_a = TRACE_FILE_MAX_RECORDS_PER_CHUNK;
-            *delta_b = 0;
+    delta->beyond_chunk_size = MAX(delta->up_to_buf_end + delta->from_buf_start - TRACE_FILE_MAX_RECORDS_PER_CHUNK, 0);
+    if (delta->beyond_chunk_size > 0) {
+        if (delta->up_to_buf_end > TRACE_FILE_MAX_RECORDS_PER_CHUNK) {
+            delta->up_to_buf_end = TRACE_FILE_MAX_RECORDS_PER_CHUNK;
+            delta->from_buf_start = 0;
         }
-        if (*delta_b > TRACE_FILE_MAX_RECORDS_PER_CHUNK - *delta_a) {
-            *delta_b = TRACE_FILE_MAX_RECORDS_PER_CHUNK - *delta_a;
+        else if (delta->from_buf_start > TRACE_FILE_MAX_RECORDS_PER_CHUNK - delta->up_to_buf_end) {
+            delta->from_buf_start = TRACE_FILE_MAX_RECORDS_PER_CHUNK - delta->up_to_buf_end;
         }
     }
 
-    *lost_records = (last_written_record + (last_record->generation * mapped_records->imutab->max_records)) -
-        (mapped_records->old_generation * mapped_records->imutab->max_records) + (mapped_records->current_read_record);
-
-    if ((*lost_records) > mapped_records->imutab->max_records && mapped_records->old_generation < last_record->generation) {
-        *lost_records -= mapped_records->imutab->max_records;
-    } else {
-        *lost_records = 0;
-    }
-        
-    *delta = *delta_a + *delta_b;
+    delta->total = delta->up_to_buf_end + delta->from_buf_start;
 }
 
 static void init_dump_header(struct trace_dumper_configuration_s *conf, struct trace_record *dump_header_rec,
@@ -201,8 +249,8 @@ static void init_dump_header(struct trace_dumper_configuration_s *conf, struct t
 
 static void init_buffer_chunk_record(struct trace_dumper_configuration_s *conf, const struct trace_mapped_buffer *mapped_buffer,
                                      struct trace_mapped_records *mapped_records, struct trace_record_buffer_dump **bd,
-                                     struct iovec **iovec, unsigned int *iovcnt, unsigned int delta, unsigned int delta_a,
-                                     unsigned int lost_records,
+                                     struct iovec **iovec, unsigned int *iovcnt,
+                                     const struct records_pending_write *deltas,
                                      unsigned long long cur_ts, unsigned int total_written_records)
 {
     memset(&mapped_records->buffer_dump_record, 0, sizeof(mapped_records->buffer_dump_record));
@@ -218,16 +266,9 @@ static void init_buffer_chunk_record(struct trace_dumper_configuration_s *conf, 
     (*bd)->prev_chunk_offset = mapped_records->last_flush_offset;
     (*bd)->dump_header_offset = conf->last_flush_offset;
     (*bd)->ts = cur_ts;
-    (*bd)->lost_records = lost_records;
-    (*bd)->records = delta;
+    (*bd)->lost_records = deltas->lost;
+    (*bd)->records = deltas->total;
     (*bd)->severity_type = mapped_records->imutab->severity_type;
-    
-    if (lost_records > 0) {
-    	time_t seconds = cur_ts / TRACE_SECOND;
-    	const char *loss_time = ctime(&seconds);
-    	syslog(LOG_USER|LOG_WARNING, "Trace dumper has lost of %u records while writing traces for %s (pid %d) to file %s, resumed writing at process ts=%llu (%s)",
-    			lost_records, mapped_buffer->name, mapped_buffer->pid, conf->record_file.filename, cur_ts, loss_time);
-    }
 
     mapped_records->next_flush_offset = conf->record_file.records_written + total_written_records;
 
@@ -238,8 +279,8 @@ static void init_buffer_chunk_record(struct trace_dumper_configuration_s *conf, 
 
     /* Add the records in the chunk to the iovec. */
     (*iovec) = &conf->flush_iovec[(*iovcnt)++];
-    (*iovec)->iov_base = &mapped_records->records[mapped_records->current_read_record];
-    (*iovec)->iov_len = TRACE_RECORD_SIZE * delta_a;
+    (*iovec)->iov_base = (void *)&mapped_records->records[mapped_records->current_read_record];
+    (*iovec)->iov_len = TRACE_RECORD_SIZE * deltas->up_to_buf_end;
 }
 
 
@@ -272,31 +313,29 @@ static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *co
 
 static int reap_empty_dead_buffers(struct trace_dumper_configuration_s *conf)
 {
-    struct trace_mapped_buffer *mapped_buffer;
-    struct trace_mapped_records *mapped_records;
-    unsigned int lost_records = 0;
+    struct trace_mapped_buffer *mapped_buffer = NULL;
+    const struct trace_mapped_records *mapped_records = NULL;
     int i, rid;
-    unsigned long long total_deltas[0x100];
-    unsigned int delta, delta_a, delta_b;
+    unsigned long long total_deltas[MappedBuffers_NUM_ELEMENTS];
+    struct records_pending_write deltas;
     memset(total_deltas, 0, sizeof(total_deltas));
 
     for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
-        if (i > (int) ARRAY_LENGTH(total_deltas)) {
-            continue;
-        }
-
         if (!mapped_buffer->dead) {
             continue;
         }
 
-        calculate_delta(mapped_records, &delta, &delta_a, &delta_b, &lost_records);
-        total_deltas[i] += delta;
+        calculate_delta(mapped_records, &deltas);
+
+        /* Add-up the total number of unwritten records in the buffer */
+        total_deltas[i] += deltas.total;
         INFO("total deltas", total_deltas[i], rid + 1, i, TRACE_BUFFER_NUM_RECORDS);
+
+        /* If after adding up all the records this buffer has nothing left to write discard it. */
         if ((rid + 1 == TRACE_BUFFER_NUM_RECORDS) && (total_deltas[i] == 0)) {
             discard_buffer(conf, mapped_buffer);
         }
     }
-
 
     return 0;
 }
@@ -319,25 +358,54 @@ static inline bool_t record_buffer_matches_online_severity(const struct trace_du
     return get_allowed_online_severity_mask(conf) & severity_type;
 }
 
+static const char *get_now_timestamp(void)
+{
+	time_t seconds = trace_get_nsec() / TRACE_SECOND;
+	return ctime(&seconds);
+}
+
+static void possibly_report_record_loss(
+		const struct trace_dumper_configuration_s *conf,
+		const struct trace_mapped_buffer *mapped_buffer,
+		const struct trace_mapped_records *mapped_records,
+		const struct records_pending_write *deltas)
+{
+	int records_pos = mapped_records - mapped_buffer->mapped_records;
+	if (deltas->lost > 0) {
+		syslog(LOG_USER|LOG_WARNING, "Trace dumper has lost %d records while writing traces to area %d of %s (pid %d) to file %s at %s",
+				deltas->lost, records_pos, mapped_buffer->name, mapped_buffer->pid, conf->record_file.filename, get_now_timestamp());
+	}
+	else {
+		const double remaining_percent_threshold = 5.0;
+		double remaining_percent = deltas->remaining_before_loss * 100.0 / mapped_records->imutab->max_records;
+		/* TODO: Introduce anti-flooding here */
+		if (remaining_percent < remaining_percent_threshold) {
+			syslog(LOG_USER|LOG_WARNING,
+					"Trace dumper's remaining space in buffer %d for %s (pid %d) has dropped to %.1f%% while writing to to file %s at %s",
+					records_pos, mapped_buffer->name, mapped_buffer->pid, remaining_percent, conf->record_file.filename, get_now_timestamp());
+		}
+	}
+}
+
 static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 {
-    struct trace_mapped_buffer *mapped_buffer;
-    struct trace_mapped_records *mapped_records;
+    struct trace_mapped_buffer *mapped_buffer = NULL;
+    struct trace_mapped_records *mapped_records = NULL;
     unsigned long long cur_ts;
     struct trace_record dump_header_rec;
     struct iovec *iovec;
     unsigned int num_iovecs = 0;
     int i = 0, rid = 0;
     unsigned int total_written_records = 0;
-    unsigned int delta, delta_a, delta_b;
     unsigned int lost_records = 0;
 
 	cur_ts = trace_get_nsec();
     init_dump_header(conf, &dump_header_rec, cur_ts, &iovec, &num_iovecs, &total_written_records);
 
 	for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
-		struct trace_record_buffer_dump *bd;
-		struct trace_record *last_rec;
+		struct trace_record_buffer_dump *bd = NULL;
+		const struct trace_record *last_rec = NULL;
+		struct records_pending_write deltas;
         lost_records = 0;
         int rc = dump_metadata_if_necessary(conf, mapped_buffer);
         if (0 != rc) {
@@ -349,20 +417,43 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
             continue;
         }
         
-        calculate_delta(mapped_records, &delta, &delta_a, &delta_b, &lost_records);
-		if (delta == 0) {
+        calculate_delta(mapped_records, &deltas);
+        lost_records = deltas.lost;
+        if (lost_records) {
+        	adjust_for_overrun(mapped_records);
+        	calculate_delta(mapped_records, &deltas);
+        	deltas.lost += lost_records;
+        }
+        else if (0 == deltas.total) {
             continue;
         }
         
-        unsigned int iovec_base_index = num_iovecs;
-        init_buffer_chunk_record(conf, mapped_buffer, mapped_records, &bd, &iovec, &num_iovecs, delta, delta_a, lost_records, cur_ts, total_written_records);
-		last_rec = (struct trace_record *) (&mapped_records->records[mapped_records->current_read_record + delta_a - 1]);
-		if (delta_b) {
+
+		if (deltas.from_buf_start) {
 			iovec = &conf->flush_iovec[num_iovecs++];
-			iovec->iov_base = &mapped_records->records[0];
-			iovec->iov_len = TRACE_RECORD_SIZE * delta_b;
-			last_rec = (struct trace_record *) &mapped_records->records[delta_b - 1];
+			iovec->iov_base = (void *)&mapped_records->records[0];
+			iovec->iov_len = TRACE_RECORD_SIZE * deltas.from_buf_start;
+			last_rec = (const struct trace_record *) &mapped_records->records[deltas.from_buf_start - 1];
 		}
+		else {
+			last_rec = (const struct trace_record *) (&mapped_records->records[mapped_records->current_read_record + deltas.up_to_buf_end - 1]);
+		}
+
+		/* Note: there's a possible race condition here that could lead to silent record loss
+		 * if *last_rec gets overwritten by incoming data before we retrieve the ts and generation from it. */
+		mapped_records->next_flush_ts     = last_rec->ts;
+		mapped_records->old_generation    = last_rec->generation;
+		mapped_records->next_flush_record =
+				(mapped_records->current_read_record + deltas.total) & mapped_records->imutab->max_records_mask;
+
+
+        unsigned int iovec_base_index = num_iovecs;
+        init_buffer_chunk_record(
+        		conf, mapped_buffer, mapped_records,
+        		&bd, &iovec, &num_iovecs,
+        		&deltas, cur_ts, total_written_records);
+
+        possibly_report_record_loss(conf, mapped_buffer, mapped_records, &deltas);
 
         if (conf->online && record_buffer_matches_online_severity(conf, mapped_records->imutab->severity_type)) {
             rc = dump_iovector_to_parser(conf, &conf->parser, &conf->flush_iovec[iovec_base_index], num_iovecs - iovec_base_index);
@@ -373,12 +464,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
             }
         }
         
-		mapped_records->next_flush_ts = last_rec->ts;
-
-		total_written_records += delta + 1;
-		mapped_records->next_flush_record = mapped_records->current_read_record + delta;
-		mapped_records->next_flush_record &= mapped_records->imutab->max_records_mask;
-        mapped_records->old_generation = last_rec->generation;
+		total_written_records += deltas.total + 1;
 	}
 
 	dump_header_rec.u.dump_header.total_dump_size = total_written_records - 1;

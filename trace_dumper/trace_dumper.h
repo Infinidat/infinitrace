@@ -54,8 +54,8 @@ struct trace_mapped_metadata {
 };
 
 struct trace_mapped_records {
-    struct trace_record *records;
-    struct trace_records_mutable_metadata *mutab;
+    volatile struct trace_record *records;
+    volatile struct trace_records_mutable_metadata *mutab;
     struct trace_records_immutable_metadata *imutab;
 
     unsigned long long current_read_record;
@@ -83,7 +83,7 @@ struct trace_mapped_buffer {
     struct trace_mapped_metadata metadata;
     trace_pid_t pid;
     bool_t dead;
-    unsigned long long process_time;
+    trace_ts_t process_time;
 };
 
 
@@ -109,6 +109,7 @@ enum operation_type {
 
 
 CREATE_LIST_PROTOTYPE(MappedBuffers, struct trace_mapped_buffer, 100);
+/* Note: The number of mapped buffers sets an upper limit to the number of processes from which we can simultaneously collect traces. */
 
 typedef char buffer_name_t[0x100];
 CREATE_LIST_PROTOTYPE(BufferFilter, buffer_name_t, 20);
@@ -148,15 +149,16 @@ struct trace_dumper_configuration_s {
 	struct trace_record_file record_file;
 	unsigned int last_flush_offset;
     enum operation_type op_type;
-	unsigned long long prev_flush_ts;
-	unsigned long long next_flush_ts;
-	unsigned long long ts_flush_delta;
-	unsigned long long next_stats_dump_ts;
+    trace_ts_t prev_flush_ts;
+    trace_ts_t next_flush_ts;
+    trace_ts_t ts_flush_delta;
+    trace_ts_t next_stats_dump_ts;
     struct trace_parser parser;
     BufferFilter filtered_buffers;
     MappedBuffers mapped_buffers;
     PidList dead_pids;
     struct iovec flush_iovec[1 + (3 * MAX_BUFFER_COUNT * TRACE_RECORD_BUFFER_RECS)];
+    unsigned int flush_iovec_total_records;
 };
 
 

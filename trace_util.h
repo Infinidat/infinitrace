@@ -60,17 +60,6 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
  }
 
 
- static inline int trace_compare_generation(unsigned int a, unsigned int b)
- {
- 	if (a >= 0xc0000000   &&  b < 0x40000000)
- 		return 1;
- 	if (b > a)
- 		return 1;
- 	if (b < a)
- 		return -1;
- 	return 0;
- }
-
 
 
 #ifdef __cplusplus
