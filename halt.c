@@ -17,6 +17,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 
 #include <time.h>
 #include <unistd.h>
+#include <syslog.h>
 
 #include "macros.h"
 #include "halt.h"
@@ -30,7 +31,8 @@ void halt(const char *filename, const char *function, int lineno)
 {
     fprintf(stderr, "HALT!!!!! In (%d) %s(%s:%d)", getpid(), filename, function, lineno);
     while (1) {
-        sleep(1000);
+    	syslog(LOG_USER|LOG_CRIT, "TRACE CRITICAL ERROR! Halted a thread in pid %d %s(%s:%d)", getpid(), filename, function, lineno);
+        sleep(300);
     }
 }
 

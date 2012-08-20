@@ -33,6 +33,7 @@ extern "C" {
 
 
 #include "trace_defs.h"
+#include "macros.h"
 #include <sys/syscall.h>
 #include <time.h>    
 
@@ -236,21 +237,31 @@ static inline void trace_commit_record(struct trace_record *target_record, const
 	trace_atomic_t new_index = (source_record->generation << records->imutab.max_records_shift) + (target_record - records->records);
 	__builtin_memcpy(target_record, source_record, sizeof(*source_record));
 	__sync_synchronize();
-	trace_atomic_t found_value = records->mutab.last_committed_record;
+	trace_atomic_t expected_value;
+	trace_atomic_t found_value;
 
 	/* Update records->mutab.last_committed_record to the index of the current record, taking care not to overwrite a larger value.
 	 * It's possible that another thread has increased records->mutab.last_committed_record between the last statement and this point so
 	 * occasionally we might have to repeat this more than once.  */
 	do {
+		expected_value = records->mutab.last_committed_record;
+
+		/* Forego the update if another thread has committed a later record */
+		if (trace_compare_generation(new_index, expected_value) > 0)
+			break;
+
 		found_value = __sync_val_compare_and_swap(
 				&records->mutab.last_committed_record,
-				found_value,
+				expected_value,
 				new_index);
 
-	} while (trace_compare_generation(found_value, new_index) > 0);
+		/* Make absolutely sure that no other thread has committed the same record that we were working on */
+		TRACE_ASSERT((new_index != found_value) || (0 == new_index));
+
+	} while (found_value != expected_value);
 }
 
 #ifdef __cplusplus
 }
 #endif
-#endif
+#endif /* __TRACE_LIB_H__ */

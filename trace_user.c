@@ -195,7 +195,7 @@ static void copy_log_section_shared_area(int shm_fd, const char *buffer_name,
                                          unsigned int alloc_size)
 {
     void *mapped_addr = mmap(NULL, alloc_size, PROT_WRITE, MAP_SHARED, shm_fd, 0);
-    ASSERT((MAP_FAILED != mapped_addr) && (NULL != mapped_addr));
+    TRACE_ASSERT((MAP_FAILED != mapped_addr) && (NULL != mapped_addr));
     struct trace_metadata_region *metadata_region = (struct trace_metadata_region *) mapped_addr;
     struct trace_log_descriptor *log_desc = (struct trace_log_descriptor *) metadata_region->data;
     struct trace_type_definition *type_definition = (struct trace_type_definition *)((char *) log_desc + (sizeof(struct trace_log_descriptor) * log_descriptor_count));
@@ -328,10 +328,10 @@ static void map_static_log_data(const char *buffer_name)
         return;
     }
     
-    ASSERT(shm_fd >= 0);
+    TRACE_ASSERT(shm_fd >= 0);
     alloc_size = (alloc_size + 63) & ~63;
     int rc = ftruncate(shm_fd, sizeof(struct trace_metadata_region) + alloc_size);
-    ASSERT(0 == rc);
+    TRACE_ASSERT(0 == rc);
     copy_log_section_shared_area(shm_fd, buffer_name, log_descriptor_count, total_log_descriptor_params,
                                  type_definition_count, enum_value_count,
                                  sizeof(struct trace_metadata_region) + alloc_size);
@@ -380,11 +380,11 @@ static void map_dynamic_log_buffers()
     if (shm_fd < 0) {
         return;
     }
-    ASSERT(shm_fd >= 0);
+    TRACE_ASSERT(shm_fd >= 0);
     int rc = ftruncate(shm_fd, sizeof(struct trace_buffer));
-    ASSERT (0 == rc);
+    TRACE_ASSERT (0 == rc);
     void *mapped_addr = mmap(NULL, sizeof(struct trace_buffer), PROT_WRITE, MAP_SHARED, shm_fd, 0);
-    ASSERT((MAP_FAILED != mapped_addr) && (NULL != mapped_addr));
+    TRACE_ASSERT((MAP_FAILED != mapped_addr) && (NULL != mapped_addr));
     set_current_trace_buffer_ptr((struct trace_buffer *)mapped_addr);
     init_records_metadata();
 }
@@ -406,7 +406,7 @@ static void get_exec_name(char *exec_name, unsigned int exec_name_size)
     char exec_path[512];
     int rc = readlink("/proc/self/exe", exec_path, sizeof(exec_path) - 1);
     if (rc < 0) {
-        ASSERT(0);
+        TRACE_ASSERT(0);
     }
 
     exec_path[rc] = '\0';
