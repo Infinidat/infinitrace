@@ -247,6 +247,7 @@ static void init_dump_header(struct trace_dumper_configuration_s *conf, struct t
     dump_header_rec->ts = cur_ts;
 }
 
+/* Initialize the buffer chunk header and set-up the iovec for the no wrap-around case. */
 static void init_buffer_chunk_record(struct trace_dumper_configuration_s *conf, const struct trace_mapped_buffer *mapped_buffer,
                                      struct trace_mapped_records *mapped_records, struct trace_record_buffer_dump **bd,
                                      struct iovec **iovec, unsigned int *iovcnt,
@@ -421,6 +422,11 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
             continue;
         }
         
+        unsigned int iovec_base_index = num_iovecs;
+        init_buffer_chunk_record(
+        		conf, mapped_buffer, mapped_records,
+        		&bd, &iovec, &num_iovecs,
+        		&deltas, cur_ts, total_written_records);
 
 		if (deltas.from_buf_start) {
 			iovec = &conf->flush_iovec[num_iovecs++];
@@ -438,13 +444,6 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 		mapped_records->old_generation    = last_rec->generation;
 		mapped_records->next_flush_record =
 				(mapped_records->current_read_record + deltas.total) & mapped_records->imutab->max_records_mask;
-
-
-        unsigned int iovec_base_index = num_iovecs;
-        init_buffer_chunk_record(
-        		conf, mapped_buffer, mapped_records,
-        		&bd, &iovec, &num_iovecs,
-        		&deltas, cur_ts, total_written_records);
 
         possibly_report_record_loss(conf, mapped_buffer, mapped_records, &deltas);
 
