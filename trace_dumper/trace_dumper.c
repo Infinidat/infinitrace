@@ -358,12 +358,6 @@ static inline bool_t record_buffer_matches_online_severity(const struct trace_du
     return get_allowed_online_severity_mask(conf) & severity_type;
 }
 
-static const char *get_now_timestamp(void)
-{
-	time_t seconds = trace_get_nsec() / TRACE_SECOND;
-	return ctime(&seconds);
-}
-
 static void possibly_report_record_loss(
 		const struct trace_dumper_configuration_s *conf,
 		const struct trace_mapped_buffer *mapped_buffer,
@@ -372,17 +366,16 @@ static void possibly_report_record_loss(
 {
 	int records_pos = mapped_records - mapped_buffer->mapped_records;
 	if (deltas->lost > 0) {
-		syslog(LOG_USER|LOG_WARNING, "Trace dumper has lost %d records while writing traces to area %d of %s (pid %d) to file %s at %s",
-				deltas->lost, records_pos, mapped_buffer->name, mapped_buffer->pid, conf->record_file.filename, get_now_timestamp());
+		syslog(LOG_USER|LOG_WARNING, "Trace dumper has lost %d records while writing traces from area %d of %s (pid %d) to file %s.",
+				deltas->lost, records_pos, mapped_buffer->name, mapped_buffer->pid, conf->record_file.filename);
 	}
 	else {
 		const double remaining_percent_threshold = 5.0;
 		double remaining_percent = deltas->remaining_before_loss * 100.0 / mapped_records->imutab->max_records;
-		/* TODO: Introduce anti-flooding here */
 		if (remaining_percent < remaining_percent_threshold) {
 			syslog(LOG_USER|LOG_WARNING,
-					"Trace dumper's remaining space in buffer %d for %s (pid %d) has dropped to %.1f%% while writing to to file %s at %s",
-					records_pos, mapped_buffer->name, mapped_buffer->pid, remaining_percent, conf->record_file.filename, get_now_timestamp());
+					"Trace dumper's remaining space in buffer %d for %s (pid %d) has dropped to %.1f%% while writing to to file %s.",
+					records_pos, mapped_buffer->name, mapped_buffer->pid, remaining_percent, conf->record_file.filename);
 		}
 	}
 }
