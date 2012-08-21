@@ -95,6 +95,7 @@ struct trace_mapped_buffer {
 #define PREFERRED_NUMBER_OF_TRACE_HISTORY_FILES (7)
 #define TRACE_PREFERRED_MAX_RECORDS_PER_LOGDIR        (TRACE_PREFERRED_FILE_MAX_RECORDS_PER_FILE) * PREFERRED_NUMBER_OF_TRACE_HISTORY_FILES;
 #define TRACE_FILE_MAX_RECORDS_PER_CHUNK       0x10000
+#define TRACE_FILE_IMMEDIATE_FLUSH_THRESHOLD	(TRACE_FILE_MAX_RECORDS_PER_CHUNK / 2)
 
 struct trace_record_file {
     unsigned long records_written;
@@ -153,6 +154,7 @@ struct trace_dumper_configuration_s {
     trace_ts_t next_flush_ts;
     trace_ts_t ts_flush_delta;
     trace_ts_t next_stats_dump_ts;
+    trace_ts_t next_housekeeping_ts;
     struct trace_parser parser;
     BufferFilter filtered_buffers;
     MappedBuffers mapped_buffers;
