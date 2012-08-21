@@ -191,6 +191,9 @@ static inline struct trace_records *trace_get_records(enum trace_severity severi
 	case TRACE_SEV_FUNC_TRACE:
 		return &current_trace_buffer->u.records._funcs;
 
+		/* TODO: Check why we are sometimes passed TRACE_SEV_INVALID when the instrumentor processes called to REPR, see ticket IBOX15-133
+		 * For the time being we arbitrarily place them in the debug buffer. */
+	case TRACE_SEV_INVALID:
 	case TRACE_SEV_DEBUG:
 		return &current_trace_buffer->u.records._debug;
 
@@ -233,10 +236,28 @@ static inline struct trace_record *trace_get_record(enum trace_severity severity
 
 static inline void trace_commit_record(struct trace_record *target_record, const struct trace_record *source_record)
 {
-	struct trace_records *records = trace_get_records((enum trace_severity)(source_record->severity));
-	trace_atomic_t new_index = (source_record->generation << records->imutab.max_records_shift) + (target_record - records->records);
 	__builtin_memcpy(target_record, source_record, sizeof(*source_record));
+
+	/* Normally we should never get TRACE_SEV_INVALID as severity, but this does happen. See the comment above in trace_get_records()
+	 * for additional details. When this does happen we emulate the behavior that existed prior to the INFINIBOX-2506 fix, i.e. don't go
+	 * beyond this point. */
+	if (TRACE_SEV_INVALID == source_record->severity) {
+		return;
+	}
+
+	struct trace_records *records = trace_get_records((enum trace_severity)(source_record->severity));
+	unsigned record_pos = target_record - records->records;
+
+	/* Sometimes records are misplaced. This shouldn't happen but does.
+	 * TODO: Write an algorithm that finds the right memory buffer in this case. */
+	if (record_pos >= records->imutab.max_records) {
+		return;
+	}
+
+	trace_atomic_t new_index = (source_record->generation << records->imutab.max_records_shift) + record_pos;
+
 	__sync_synchronize();
+
 	trace_atomic_t expected_value;
 	trace_atomic_t found_value;
 
