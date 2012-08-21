@@ -992,24 +992,6 @@ static int format_typed_params(
     return total_length;
 }
 
-#define FORMAT_SEVERITY(str, __severity)                              \
-    if (TRACE_SEV__MIN <= __severity &&  TRACE_SEV__MAX >= __severity)          \
-		str = sev_to_str[__severity];                                           \
-	else                                                                        \
-		str = "???";                                                            \
-                                                                                \
-                                                                                \
-    switch (__severity) {                                                        \
-    case TRACE_SEV_FUNC_TRACE: severity_str = F_GREY("-----"); break;           \
-    case TRACE_SEV_DEBUG: severity_str = F_WHITE("DEBUG"); break;               \
-    case TRACE_SEV_INFO: severity_str = F_GREEN_BOLD("INFO "); break;           \
-    case TRACE_SEV_WARN: severity_str = F_YELLOW_BOLD("WARN "); break;          \
-    case TRACE_SEV_ERR: severity_str = F_RED_BOLD("ERR  "); break;              \
-    case TRACE_SEV_FATAL: severity_str = F_RED_BOLD("FATAL"); break;            \
-    default: break;                                                             \
-    }
-
-
 static inline const char * severity_to_str(const trace_parser_t *parser, unsigned int severity) {
 
 	struct s_sev_display_info {
@@ -1020,11 +1002,11 @@ static inline const char * severity_to_str(const trace_parser_t *parser, unsigne
 #define COLOR_TEXT_ENTRY(color, text) {text, color(text) }
 
 	static const struct s_sev_display_info sev_display_info[] = {
-			COLOR_TEXT_ENTRY(_F_GREY, 		 "-----"),
-			COLOR_TEXT_ENTRY(_F_WHITE,		 "DEBUG"),
-			COLOR_TEXT_ENTRY(_F_GREEN_BOLD,	 "INFO "),
-			COLOR_TEXT_ENTRY(_F_YELLOW_BOLD, "WARN "),
-			COLOR_TEXT_ENTRY(_F_RED_BOLD, 	 "ERR  "),
+			COLOR_TEXT_ENTRY(_F_GREY, 		 "----"),
+			COLOR_TEXT_ENTRY(_F_WHITE,		 "DBG "),
+			COLOR_TEXT_ENTRY(_F_GREEN_BOLD,	 "INFO"),
+			COLOR_TEXT_ENTRY(_F_YELLOW_BOLD, "WARN"),
+			COLOR_TEXT_ENTRY(_F_RED_BOLD, 	 "ERR "),
 			COLOR_TEXT_ENTRY(_F_RED_BOLD, 	 "FATAL")
 	};
 
@@ -2025,7 +2007,7 @@ static int log_id_to_log_template(trace_parser_t *parser, struct trace_parser_bu
     if (parser->file_info.format_version >= TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA) {
     	descriptor = get_log_descriptor(context, log_id);
     	const char *severity_str = severity_to_str(parser, descriptor->severity);
-    	APPEND_FORMATTED_TEXT("%s", severity_str);
+    	APPEND_FORMATTED_TEXT("%s ", severity_str);
     }
 
     if (parser->color) {
