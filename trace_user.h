@@ -66,6 +66,9 @@ void ERR() CALL_INVALID;
 void FATAL() CALL_INVALID;
 
 #endif /* __cplusplus */
+
+#include "trace_lib.h"
+
 #else /* __TRACE_INSTRUMENTATION */
 #ifdef __cplusplus
 void REPR(...);
