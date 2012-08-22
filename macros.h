@@ -18,9 +18,24 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #ifndef __MACROS_H__
 #define __MACROS_H__
 
-#include "halt.h"
 
+/* A custom ASSERT macro. If Infinidat's custom assert is present use it. Otherwise hang the offending thread and write to syslog every 5 minutes. */
+#ifdef XN_ASSERT
+
+#define TRACE_ASSERT(x) XN_ASSERT(x)
+
+#elif defined(TRACE_HALT_ON_ASSERT)
+
+#include "halt.h"
 #define TRACE_ASSERT(x) {if (__builtin_expect((!(x)),0)) { HALT();}}
+
+#else
+
+#include <assert.h>
+#define TRACE_ASSERT(x) assert(x)
+
+#endif
+
 #define REPORT_ERROR_RETURN(ret_val) ERR(__func__, "() (in", __FILE__, ":", __LINE__,") returned", (ret_val));
 #define REPORT_AND_RETURN(ret_val) if (0 != (ret_val)) { REPORT_ERROR_RETURN(ret_val); } return ret_val;
 #endif

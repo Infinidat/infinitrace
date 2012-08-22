@@ -177,7 +177,9 @@ static void calculate_delta(
     	return;
     }
 
-    assert(last_generation >= mapped_records->old_generation);
+    assert(trace_compare_generation(
+    		mapped_records->old_generation << mapped_records->imutab->max_records_shift,
+    		last_generation 			   << mapped_records->imutab->max_records_shift) >= 0);
     assert((trace_atomic_t) -1 < 0);	/* Verify signedness of last_written_record */
 
     /* Check whether the number of records written to the shared-memory buffers exceeds the number read by the dumper by more than the buffer size.
