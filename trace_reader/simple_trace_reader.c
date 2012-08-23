@@ -1,6 +1,7 @@
 #define _XOPEN_SOURCE
 
 #include "../trace_parser.h"
+#include <sys/mman.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -19,9 +20,15 @@ enum op_type_e {
     OP_TYPE_DUMP_METADATA
 };
 
+typedef struct trace_record_matcher_spec_s filter_t;
+
 struct trace_reader_conf {
     enum op_type_e op_type;
     const char *grep_expression;
+    const char *grep_function;
+    unsigned long long grep_value;
+    int grep_value_is_valid;
+    const char *grep_field;
     unsigned int severity_mask;
     int tail;
     int no_color;
@@ -32,28 +39,35 @@ struct trace_reader_conf {
     int free_dead_process_metadata;
     long long from_time;
     const char **files_to_process; /* A NULL terminated array of const char* */
-    struct trace_record_matcher_spec_s severity_filter[SEVERITY_FILTER_LEN];
-    struct trace_record_matcher_spec_s grep_filter;
-    struct trace_record_matcher_spec_s complete_filter;
+    filter_t severity_filter[SEVERITY_FILTER_LEN];
+    // filter_t grep_filter;
+    // filter_t function_filter;
+    // filter_t value_filter;
+    filter_t complete_filter;
 };
 
 static const char *usage = 
-    "Usage: %s [params] [files]                                                                 \n"
-    "                                                                                           \n"
-    " -h, --help                 Display this help message                                      \n"
-    " -d  --dump                 Dump contents of trace file                                    \n"
-    " -n  --no-color             Disable colored output                                         \n"
-    " -e  --dump-debug           Dump all debug entries                                         \n"
-    " -f  --dump-functions       Dump all debug entries and function calls                      \n"
-    " -t  --time                 Dump all records beginning at timestamp, formatted according to trace output timestamps      \n"
-    " -o  --show-field-names     Show field names for all trace records                         \n"
-    " -r  --relative-timestamp   Print timestamps relative to boot time                         \n"
-    " -i  --tail                 Display last records and wait for more data                    \n"
-    " -g  --grep [expression]    Display records whose constant string matches the expression   \n"
-    " -s  --print-stats          Print per-log occurrence count                                 \n"
-    " -m  --dump-metadata        Dump metadata                                                  \n"
-    " -x  --hex                  Display all numeric values in hexadecimal                      \n"
-    " -c  --compact-traces       Compact trace output                                           \n"
+    "Usage: %s [params] [files]\n"
+    "Actions:\n"
+    " -h, --help                 Display this help message                               \n"
+    " -i  --tail                 Display last records and wait for more data             \n"
+    " -s  --print-stats          Print per-log occurrence count                          \n"
+    " -d  --dump                 Dump contents of trace file (default)                   \n"
+    " -e  --dump-debug           Dump all debug entries                                  \n"
+    " -f  --dump-functions       Dump all debug entries and function calls               \n"
+    " -m  --dump-metadata        Dump metadata                                           \n"
+    "Displays:\n"
+    " -n  --no-color             Disable colored output                                  \n"
+    " -o  --show-field-names     Show field names for all trace records                  \n"
+    " -r  --relative-timestamp   Print timestamps relative to boot time                  \n"
+    " -x  --hex                  Display all numeric values in hexadecimal               \n"
+    " -c  --compact-traces       Compact trace output                                    \n"
+    "Filters: \n"
+    " -g  --grep   [expr] : Show only records whose constant string matches [expr]  \n"
+    " -v  --value  [val ] : Show only records with int value equal to [val]         \n"
+    " -V  --field  [name] : (With '-v [val]') Filter [val] for specific field name (as they apear with -o)  \n"
+    " -t  --time   [time] : Show only records begin with [time], formatted according to trace output timestamps \n"
+    //    " -u  --function  [func]     Show only records generated from function [func]               \n"
 
     "\n";
 
@@ -68,6 +82,9 @@ static const struct option longopts[] = {
     { "show-field-name", 0, 0, 'o'},
     { "relative-timestamp", required_argument, 0, 't'},
     { "grep", required_argument, 0, 'g'},
+    { "function", required_argument, 0, 'u'},
+    { "value", required_argument, 0, 'v'},
+    { "field", required_argument, 0, 'V'},
     { "hex", 0, 0, 'x'},
     { "tail", 0, 0, 'i'},
     { "compact-trace", 0, 0, 'c'},
@@ -79,7 +96,7 @@ static void print_usage(const char *prog_name)
     fprintf(stderr, usage, prog_name);
 }
 
-static const char shortopts[] = "xcig:moft:hdnesr";
+static const char shortopts[] = "hisdefmnorxcg:v:V:t:z:"; // " xcig:u:v:V:moft:hdnesr";
 
 #define SECOND (1000000000LL)
 #define MINUTE (SECOND * 60LL)
@@ -169,6 +186,16 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
         case 'g':
             conf->grep_expression = optarg;
             break;
+            // case 'u':
+            // conf->grep_function = optarg;
+            // break;
+        case 'v':
+            conf->grep_value = atoll(optarg);
+            conf->grep_value_is_valid = 1;
+            break;
+        case 'V':
+            conf->grep_field = optarg;
+            break;
         case 'o':
             conf->show_field_names = TRUE;
             break;
@@ -179,6 +206,9 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
             break;
         }
     }
+
+    if (conf->op_type == OP_TYPE_INVALID) // make it the default
+        conf->op_type = OP_TYPE_DUMP_FILE;
 
     unsigned long filename_index = optind;
     conf->files_to_process = argv + (int)filename_index;
@@ -195,18 +225,55 @@ int read_event_handler(struct trace_parser  __attribute__((unused)) *parser, enu
     return 0;
 }
 
+static filter_t *new_filter_t() {
+    filter_t* ret = malloc(sizeof(filter_t));
+    memset(ret, 0, sizeof(*ret));
+    return ret;
+}
+
+static void add_filter(filter_t *filter_a,
+                       filter_t *filter_b) {
+
+    filter_t * filter_dup_a = new_filter_t();
+    memcpy(filter_dup_a, filter_a, sizeof(*filter_a));
+    filter_a->type = TRACE_MATCHER_AND;
+    filter_a->u.binary_operator_parameters.a = filter_dup_a;
+    filter_a->u.binary_operator_parameters.b = filter_b;
+}
+
 static void set_parser_filter(struct trace_reader_conf *conf, trace_parser_t *parser)
 {
     TRACE_PARSER__matcher_spec_from_severity_mask(conf->severity_mask, conf->severity_filter, ARRAY_LENGTH(conf->severity_filter));
-    struct trace_record_matcher_spec_s *filter = conf->severity_filter;
+    filter_t *filter = conf->severity_filter;
     if (conf->grep_expression) {
-        conf->grep_filter.type = TRACE_MATCHER_CONST_SUBSTRING;
-        strncpy(conf->grep_filter.u.const_string, conf->grep_expression, sizeof(conf->grep_filter.u.const_string));
+        filter_t * f = new_filter_t();
+        f->type = TRACE_MATCHER_CONST_SUBSTRING;
+        strncpy(f->u.const_string, conf->grep_expression, sizeof(f->u.const_string));
 
-        conf->complete_filter.type = TRACE_MATCHER_AND;
-        conf->complete_filter.u.binary_operator_parameters.a = &conf->grep_filter;
-        conf->complete_filter.u.binary_operator_parameters.b = conf->severity_filter;
-        filter = &conf->complete_filter;
+        add_filter(filter, f);
+    }
+
+    if (conf->grep_function) {
+        filter_t * f = new_filter_t();
+        f->type = TRACE_MATCHER_FUNCTION;
+        strncpy(f->u.function_name, conf->grep_function, sizeof(f->u.function_name));
+
+        add_filter(filter, f);
+    }
+
+    if (conf->grep_value_is_valid) {
+        filter_t * f = new_filter_t();
+        if (conf->grep_field) {
+            f->type = TRACE_MATCHER_LOG_NAMED_PARAM_VALUE;
+            f->u.named_param_value.param_value = conf->grep_value;
+            strncpy(f->u.named_param_value.param_name, conf->grep_field, sizeof(f->u.named_param_value.param_name));
+        }
+        else {
+            f->type = TRACE_MATCHER_LOG_PARAM_VALUE;
+            f->u.param_value = conf->grep_value ;
+        }
+
+        add_filter(filter, f);
     }
     
     TRACE_PARSER__set_filter(parser, filter);
