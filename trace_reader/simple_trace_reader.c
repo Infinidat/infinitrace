@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <string.h>
+#include <strings.h>
 #include <errno.h>
 #include <limits.h>
 #include <getopt.h>
@@ -24,11 +25,6 @@ typedef struct trace_record_matcher_spec_s filter_t;
 
 struct trace_reader_conf {
     enum op_type_e op_type;
-    const char *grep_expression;
-    const char *grep_function;
-    unsigned long long grep_value;
-    int grep_value_is_valid;
-    const char *grep_field;
     unsigned int severity_mask;
     int tail;
     int no_color;
@@ -40,10 +36,11 @@ struct trace_reader_conf {
     long long from_time;
     const char **files_to_process; /* A NULL terminated array of const char* */
     filter_t severity_filter[SEVERITY_FILTER_LEN];
-    // filter_t grep_filter;
-    // filter_t function_filter;
-    // filter_t value_filter;
-    filter_t complete_filter;
+
+    filter_t * filter_function; // TODO - not supported by parser yet
+    filter_t * filter_grep;
+    filter_t * filter_value;
+    filter_t * filter_fuzzy;
 };
 
 static const char *usage = 
@@ -63,10 +60,17 @@ static const char *usage =
     " -x  --hex                  Display all numeric values in hexadecimal               \n"
     " -c  --compact-traces       Compact trace output                                    \n"
     "Filters: \n"
-    " -g  --grep   [expr] : Show only records whose constant string matches [expr]  \n"
-    " -v  --value  [val ] : Show only records with int value equal to [val]         \n"
-    " -V  --field  [name] : (With '-v [val]') Filter [val] for specific field name (as they apear with -o)  \n"
-    " -t  --time   [time] : Show only records begin with [time], formatted according to trace output timestamps \n"
+    " -t  --time   [time]     : Show records beginning with [time], format follows trace output timestamps \n"
+    " -g  --grep   [str]      : Show records whose constant string matches [str]  \n"
+    " -v  --value  [num ]     : Show records with int value equal to [num]         \n"
+    " -v  --value  [name=num] : Show records with specific name field [name] equal to [num] (as name apears with -o)\n"
+    " -z  --fuzzy  [??? ]     : - If [???] looks like a number, similar to -v [num], else similar to -g [str]\n"
+    "Filters Rules & Examples:\n"
+    "  Differnt options are bound with AND\n"
+    "  Filter options can be repeated, repetitions are bound with OR (exceptioned by -t)\n"
+    "  Enums can be filtered as literal numbers (parsing not implemented yet)\n"
+    " '-g snap -v a_vu=0 -v 333 -g remove' means 'str(snap) && (named_val(a_vu, 0) || val(333)) && str(remove)\n"
+    " '-g str1 -v 111 -z 222 -z 333 -z str2' means 'str(str1) && val(111) && (val(222) || val(333) || str(str2))'\n"
     //    " -u  --function  [func]     Show only records generated from function [func]               \n"
 
     "\n";
@@ -82,9 +86,9 @@ static const struct option longopts[] = {
     { "show-field-name", 0, 0, 'o'},
     { "relative-timestamp", required_argument, 0, 't'},
     { "grep", required_argument, 0, 'g'},
-    { "function", required_argument, 0, 'u'},
+    // { "function", required_argument, 0, 'u'},
     { "value", required_argument, 0, 'v'},
-    { "field", required_argument, 0, 'V'},
+    { "fuzzy", required_argument, 0, 'z'},
     { "hex", 0, 0, 'x'},
     { "tail", 0, 0, 'i'},
     { "compact-trace", 0, 0, 'c'},
@@ -139,6 +143,43 @@ static unsigned long long format_cmdline_time(const char *time_str)
     }
 }
 
+static filter_t *new_filter_t() {
+    filter_t* ret = malloc(sizeof(filter_t));
+    memset(ret, 0, sizeof(*ret));
+    return ret;
+}
+
+static void and_filter(filter_t *filter_a,
+                       filter_t *filter_b) {
+
+    filter_t * filter_dup_a = new_filter_t();
+    memcpy(filter_dup_a, filter_a, sizeof(*filter_a));
+    filter_a->type = TRACE_MATCHER_AND;
+    filter_a->u.binary_operator_parameters.a = filter_dup_a;
+    filter_a->u.binary_operator_parameters.b = filter_b;
+}
+
+static void or_filter(filter_t *filter_a,
+                      filter_t *filter_b) {
+
+    filter_t * filter_dup_a = new_filter_t();
+    memcpy(filter_dup_a, filter_a, sizeof(*filter_a));
+    filter_a->type = TRACE_MATCHER_OR;
+    filter_a->u.binary_operator_parameters.a = filter_dup_a;
+    filter_a->u.binary_operator_parameters.b = filter_b;
+}
+
+static int is_number(char* str) {
+    if (! (str && *str))
+        return 0;
+    while  (*str) {
+        if (*str < '0' || *str > '9')
+            return 0;
+        str++;
+    }
+    return 1;
+}
+
 static int parse_command_line(struct trace_reader_conf *conf, int argc, const char **argv)
 {
     int o;
@@ -184,17 +225,55 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
             conf->op_type = OP_TYPE_DUMP_METADATA;
             break;
         case 'g':
-            conf->grep_expression = optarg;
+            {
+                filter_t * f = new_filter_t();
+                f->type = TRACE_MATCHER_CONST_SUBSTRING;
+                strncpy(f->u.const_string, optarg, sizeof(f->u.const_string));
+                if (conf->filter_grep == NULL )
+                    conf->filter_grep = f;
+                else
+                    or_filter(conf->filter_grep, f);
+            }
             break;
-            // case 'u':
-            // conf->grep_function = optarg;
-            // break;
         case 'v':
-            conf->grep_value = atoll(optarg);
-            conf->grep_value_is_valid = 1;
+            {
+                filter_t * f = new_filter_t();
+                char* equal = rindex(optarg, '=');
+                if (equal) {
+                    if (equal > sizeof(f->u.named_param_value.param_name) + optarg) {
+                        fprintf(stderr, "'%s': Too long.", optarg);
+                        return -1;
+                    }
+                    f->type = TRACE_MATCHER_LOG_NAMED_PARAM_VALUE;
+                    f->u.named_param_value.param_value = atoll(equal+1);
+                    strncpy(f->u.named_param_value.param_name, optarg, equal-optarg);
+                }
+                else {
+                    f->type = TRACE_MATCHER_LOG_PARAM_VALUE;
+                    f->u.param_value = atoll(optarg);
+                }
+                if (conf->filter_value == NULL)
+                    conf->filter_value = f;
+                else
+                    or_filter(conf->filter_value, f);
+            }
             break;
-        case 'V':
-            conf->grep_field = optarg;
+        case 'z':
+            {
+                filter_t * f = new_filter_t();
+                if (is_number(optarg)) {
+                    f->type = TRACE_MATCHER_LOG_PARAM_VALUE;
+                    f->u.param_value = atoll(optarg);
+                }
+                else {
+                    f->type = TRACE_MATCHER_CONST_SUBSTRING;
+                    strncpy(f->u.const_string, optarg, sizeof(f->u.const_string));
+                }
+                if (conf->filter_fuzzy == NULL )
+                    conf->filter_fuzzy = f;
+                else
+                    or_filter(conf->filter_fuzzy, f);
+            }
             break;
         case 'o':
             conf->show_field_names = TRUE;
@@ -225,60 +304,23 @@ int read_event_handler(struct trace_parser  __attribute__((unused)) *parser, enu
     return 0;
 }
 
-static filter_t *new_filter_t() {
-    filter_t* ret = malloc(sizeof(filter_t));
-    memset(ret, 0, sizeof(*ret));
-    return ret;
-}
-
-static void add_filter(filter_t *filter_a,
-                       filter_t *filter_b) {
-
-    filter_t * filter_dup_a = new_filter_t();
-    memcpy(filter_dup_a, filter_a, sizeof(*filter_a));
-    filter_a->type = TRACE_MATCHER_AND;
-    filter_a->u.binary_operator_parameters.a = filter_dup_a;
-    filter_a->u.binary_operator_parameters.b = filter_b;
-}
-
 static void set_parser_filter(struct trace_reader_conf *conf, trace_parser_t *parser)
 {
     TRACE_PARSER__matcher_spec_from_severity_mask(conf->severity_mask, conf->severity_filter, ARRAY_LENGTH(conf->severity_filter));
     filter_t *filter = conf->severity_filter;
-    if (conf->grep_expression) {
-        filter_t * f = new_filter_t();
-        f->type = TRACE_MATCHER_CONST_SUBSTRING;
-        strncpy(f->u.const_string, conf->grep_expression, sizeof(f->u.const_string));
+    if (conf->filter_grep)
+        and_filter(filter, conf->filter_grep);
 
-        add_filter(filter, f);
-    }
+    if (conf->filter_value)
+        and_filter(filter, conf->filter_value);
 
-    if (conf->grep_function) {
-        filter_t * f = new_filter_t();
-        f->type = TRACE_MATCHER_FUNCTION;
-        strncpy(f->u.function_name, conf->grep_function, sizeof(f->u.function_name));
+    if (conf->filter_fuzzy)
+        and_filter(filter, conf->filter_fuzzy);
 
-        add_filter(filter, f);
-    }
-
-    if (conf->grep_value_is_valid) {
-        filter_t * f = new_filter_t();
-        if (conf->grep_field) {
-            f->type = TRACE_MATCHER_LOG_NAMED_PARAM_VALUE;
-            f->u.named_param_value.param_value = conf->grep_value;
-            strncpy(f->u.named_param_value.param_name, conf->grep_field, sizeof(f->u.named_param_value.param_name));
-        }
-        else {
-            f->type = TRACE_MATCHER_LOG_PARAM_VALUE;
-            f->u.param_value = conf->grep_value ;
-        }
-
-        add_filter(filter, f);
-    }
-    
     TRACE_PARSER__set_filter(parser, filter);
     
 }
+
 static void set_parser_params(struct trace_reader_conf *conf, trace_parser_t *parser)
 {
     set_parser_filter(conf, parser);
