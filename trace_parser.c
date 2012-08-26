@@ -63,6 +63,17 @@ CREATE_LIST_IMPLEMENTATION(RecordsAccumulatorList, struct trace_record_accumulat
 #define TRACE_DAY    (TRACE_HOUR * 24)
 #define TRACE_YEAR   (TRACE_DAY * 365)
 
+static int my_strncpy(char* formatted_record, const char* source, int max_size) {
+    // Heaven knows why, but this is much faster than strncpy
+    int i;
+    if (0 >= max_size)
+        return 0;
+    for (i = 0; source[i] && i < max_size; i++)
+        formatted_record[i] = source[i]; 
+    return i;
+
+}
+
 static int wait_for_data(trace_parser_t *parser)
 {
 #ifdef _USE_INOTIFY_
@@ -429,7 +440,7 @@ static int accumulate_metadata(trace_parser_t *parser, const struct trace_record
         context->metadata_log_desciptor_size = get_log_descriptor_size(parser->file_info.format_version);
         context->descriptors = (struct trace_log_descriptor *) context->metadata->data;
         context->types = (struct trace_type_definition *) ((char *) context->metadata->data + context->metadata_log_desciptor_size * context->metadata->log_descriptor_count);
-        strncpy(context->name, context->metadata->name, sizeof(context->name) - 1);
+        my_strncpy(context->name, context->metadata->name, sizeof(context->name) - 1);
         context->name[sizeof(context->name) - 1] = '\0';
 
         if (0 != init_types_hash(context)) {
@@ -606,7 +617,9 @@ struct dump_context_s {
     char formatted_record[1024 * 20];
 };
 
-void format_timestamp(const trace_parser_t *parser, unsigned long long ts, char *timestamp, unsigned int timestamp_size)
+static char cached_sec_str[100] ;
+static int cached_sec_int = 0;
+static void format_timestamp(const trace_parser_t *parser, unsigned long long ts, char *timestamp, unsigned int timestamp_size)
 {
     if (!parser->show_timestamp) {
         *timestamp = '\0';
@@ -620,14 +633,34 @@ void format_timestamp(const trace_parser_t *parser, unsigned long long ts, char 
     }
     
     time_t seconds = ts / TRACE_SECOND;
-    struct tm *_time = localtime(&seconds);
-
     if (!parser->compact_traces) {
-        char *_full_time = ctime(&seconds);
-        _full_time[strlen(_full_time) - 1] = '\0';
-        snprintf(timestamp, timestamp_size, "%s:%-10llu", _full_time, ts % TRACE_SECOND);
-    } else {
-        strftime(timestamp, timestamp_size, "%d/%m %H:%M:%S", _time); 
+        if (cached_sec_int != seconds) {
+            cached_sec_int  = seconds;
+            // Homemade asctime
+            static const char	wday_name[7][3] = {
+                "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
+            };
+            static const char	mon_name[12][3] = {
+                "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+            };
+
+            const struct tm *_time = gmtime(&seconds);
+            sprintf(cached_sec_str, "%.3s %.3s %2d %02d:%02d:%02d %d:",
+                    wday_name[_time->tm_wday], mon_name[_time->tm_mon],
+                    _time->tm_mday, _time->tm_hour, _time->tm_min ,
+                    _time->tm_sec, 1900 + _time->tm_year);
+        }
+
+        snprintf(timestamp, timestamp_size, "%s%-10llu",
+                 cached_sec_str, ts % TRACE_SECOND);
+    }
+    else {
+        if (cached_sec_int != seconds) {
+            cached_sec_int  = seconds;
+            strftime(cached_sec_str, sizeof(cached_sec_str), "%d/%m %T", gmtime(&seconds)); 
+        }
+        my_strncpy(timestamp, cached_sec_str, timestamp_size);
     }
 }
 
@@ -644,14 +677,6 @@ void format_timestamp(const trace_parser_t *parser, unsigned long long ts, char 
         total_length += my_strncpy(formatted_record + total_length, source, formatted_record_size - total_length); \
         if (total_length >= formatted_record_size -1 )  { errno = ENOMEM; return -1; }      \
     }
-
-static int my_strncpy(char* formatted_record, const char* source, int max_size) {
-    // Heaven knows why, but this is much faster than strncpy
-    int i;
-    for (i = 0; source[i] && i < max_size && 0 < max_size; i++)
-        formatted_record[i] = source[i]; 
-    return i;
-}
 
 /* A macro for appending literal text strings */
 #define APPEND_LITERAL_TEXT(source) do {                            			\
@@ -786,13 +811,6 @@ static unsigned int append_escape_string(const char *input, char *output, unsign
     return used;
 }
 
-#define WRITE_ENUM_FROM_PDATA()                                                                                              \
-            char enum_val_name[100];                                                                                         \
-            get_enum_val_name(parser, context, param, (*(const unsigned int *)pdata), enum_val_name, sizeof(enum_val_name));       \
-            SIMPLE_APPEND_FORMATTED_TEXT(enum_val_name);                                                                     \
-            APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "");                                                                 \
-            pdata += sizeof(int);                                                                                           
-
 static void get_enum_val_name(
 		const trace_parser_t *parser,
 		const struct trace_parser_buffer_context *context,
@@ -826,7 +844,12 @@ static int format_typed_params(
     const struct trace_param_descriptor *param;
 
     if (metadata_index >= context->metadata->log_descriptor_count) {
-        APPEND_FORMATTED_TEXT(_F_RED_BOLD("Invalid Metadata %d") _ANSI_DEFAULTS(""), metadata_index);
+        if (COLOR_BOOL) {
+            APPEND_FORMATTED_TEXT(_F_RED_BOLD("Invalid Metadata %d") _ANSI_DEFAULTS(""), metadata_index);
+        }
+        else {
+            APPEND_FORMATTED_TEXT("<<< Invalid Metadata %d >>>", metadata_index);
+        }
         *bytes_processed = -1;
         errno = EILSEQ;
         return total_length;
@@ -944,7 +967,11 @@ static int format_typed_params(
                 APPEND_FORMATTED_TEXT(F_CYAN_BOLD("<%s>"), param->type_name);
                 APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "");
             } else {
-                WRITE_ENUM_FROM_PDATA();
+                char enum_val_name[100];                                                                                         \
+                get_enum_val_name(parser, context, param, (*(const unsigned int *)pdata), enum_val_name, sizeof(enum_val_name));       \
+                SIMPLE_APPEND_FORMATTED_TEXT(enum_val_name);                                                                     \
+                APPEND_COLORED_LITERAL_TEXT(_ANSI_DEFAULTS, "");                                                                 \
+                pdata += sizeof(int);                                                                                           
             }
         }
         
@@ -1230,82 +1257,69 @@ static bool_t match_record_dump_with_match_expression(
 {
     const struct trace_record_buffer_dump *buffer_dump = &record->u.buffer_chunk;
 
-    /* TODO: Consider changing this to a switch statement, which is much easier for the compiler to optimize */
-    if (matcher->type == TRACE_MATCHER_TRUE) {
-        return TRUE;
-    }
-
-    if (matcher->type == TRACE_MATCHER_FALSE) {
-        return FALSE;
-    }
-
-    
-    if (matcher->type == TRACE_MATCHER_NOT) {
-        return !match_record_dump_with_match_expression(matcher->u.unary_operator_parameters.param, record, buffer_context);
-    }
-
-    if (matcher->type == TRACE_MATCHER_OR) {
-        return (match_record_dump_with_match_expression(matcher->u.binary_operator_parameters.a, record, buffer_context) ||
-                match_record_dump_with_match_expression(matcher->u.binary_operator_parameters.b, record, buffer_context));
-    }
-
-    if (matcher->type == TRACE_MATCHER_AND) {
-        return (match_record_dump_with_match_expression(matcher->u.binary_operator_parameters.a, record, buffer_context) &&
-                match_record_dump_with_match_expression(matcher->u.binary_operator_parameters.b, record, buffer_context));
-    }
-
-    // TODO: Make this more accurate: Consider end range
-    if (matcher->type == TRACE_MATCHER_TIMERANGE) {
-        return (buffer_dump->ts > matcher->u.time_range.start);
-    }
-
-    if (matcher->type == TRACE_MATCHER_PID) {
-        return record->pid == matcher->u.pid;
-    }
-    
-    if (matcher->type == TRACE_MATCHER_SEVERITY) {
-        return (buffer_dump->severity_type) & (1 << matcher->u.severity);
-    }
-    if (matcher->type == TRACE_MATCHER_PROCESS_NAME && buffer_context) {
-        if (strcmp(matcher->u.process_name, buffer_context->name) == 0) {
+    switch ((int) matcher->type) {
+        case TRACE_MATCHER_TRUE:
             return TRUE;
-        } else {
-            return FALSE;
-        }
-    }
 
+        case TRACE_MATCHER_FALSE:
+            return FALSE;
+    
+        case TRACE_MATCHER_NOT:
+            return !match_record_dump_with_match_expression(matcher->u.unary_operator_parameters.param, record, buffer_context);
+
+        case TRACE_MATCHER_OR:
+            return (match_record_dump_with_match_expression(matcher->u.binary_operator_parameters.a, record, buffer_context) ||
+                    match_record_dump_with_match_expression(matcher->u.binary_operator_parameters.b, record, buffer_context));
+
+        case TRACE_MATCHER_AND:
+            return (match_record_dump_with_match_expression(matcher->u.binary_operator_parameters.a, record, buffer_context) &&
+                    match_record_dump_with_match_expression(matcher->u.binary_operator_parameters.b, record, buffer_context));
+
+            // TODO: Make this more accurate: Consider end range
+        case TRACE_MATCHER_TIMERANGE:
+            return (buffer_dump->ts > matcher->u.time_range.start);
+
+        case TRACE_MATCHER_PID:
+            return record->pid == matcher->u.pid;
+    
+        case TRACE_MATCHER_SEVERITY:
+            return (buffer_dump->severity_type) & (1 << matcher->u.severity);
+
+        case TRACE_MATCHER_PROCESS_NAME:
+            return (buffer_context && strcmp(matcher->u.process_name, buffer_context->name) == 0);
+
+        default:
+            return TRUE;
+    }
     return TRUE;
 }
 
 static bool_t match_severity_with_match_expression(const struct trace_record_matcher_spec_s *matcher, enum trace_severity severity)
 {
-    if (matcher->type == TRACE_MATCHER_TRUE) {
-        return TRUE;
-    }
+    switch((int) matcher->type) {
+        case TRACE_MATCHER_TRUE:
+            return TRUE;
 
-    if (matcher->type == TRACE_MATCHER_FALSE) {
-        return FALSE;
-    }
-
+        case TRACE_MATCHER_FALSE:
+            return FALSE;
     
-    if (matcher->type == TRACE_MATCHER_NOT) {
-        return !match_severity_with_match_expression(matcher->u.unary_operator_parameters.param, severity);
-    }
+        case TRACE_MATCHER_NOT:
+            return !match_severity_with_match_expression(matcher->u.unary_operator_parameters.param, severity);
 
-    if (matcher->type == TRACE_MATCHER_OR) {
-        return (match_severity_with_match_expression(matcher->u.binary_operator_parameters.a, severity) ||
-                match_severity_with_match_expression(matcher->u.binary_operator_parameters.b, severity));
-    }
+        case TRACE_MATCHER_OR:
+            return (match_severity_with_match_expression(matcher->u.binary_operator_parameters.a, severity) ||
+                    match_severity_with_match_expression(matcher->u.binary_operator_parameters.b, severity));
 
-    if (matcher->type == TRACE_MATCHER_AND) {
-        return (match_severity_with_match_expression(matcher->u.binary_operator_parameters.a, severity) &&
-                match_severity_with_match_expression(matcher->u.binary_operator_parameters.b, severity));
-    }
+        case TRACE_MATCHER_AND:
+            return (match_severity_with_match_expression(matcher->u.binary_operator_parameters.a, severity) &&
+                    match_severity_with_match_expression(matcher->u.binary_operator_parameters.b, severity));
 
-    if (matcher->type == TRACE_MATCHER_SEVERITY) {
-        return severity == matcher->u.severity;
+        case TRACE_MATCHER_SEVERITY:
+            return severity == matcher->u.severity;
+
+        default:
+            return TRUE;
     }
-    
     return TRUE;
 }
 
@@ -1672,7 +1686,7 @@ static int process_single_record(
 
         break;
     case TRACE_REC_TYPE_FILE_HEADER:
-        strncpy(parser->file_info.machine_id, (const char * ) record->u.file_header.machine_id, sizeof(parser->file_info.machine_id));
+        my_strncpy(parser->file_info.machine_id, (const char * ) record->u.file_header.machine_id, sizeof(parser->file_info.machine_id));
         parser->file_info.format_version = record->u.file_header.format_version;
         break;
     case TRACE_REC_TYPE_METADATA_HEADER:
@@ -2429,8 +2443,8 @@ int TRACE_PARSER__from_file(trace_parser_t *parser, bool_t wait_for_input, const
     	return -1;
     }
     
-    strncpy(parser->file_info.filename, filename, sizeof(parser->file_info.filename));    
-    strncpy(parser->file_info.machine_id, (char * ) file_header.u.file_header.machine_id, sizeof(parser->file_info.machine_id));
+    my_strncpy(parser->file_info.filename, filename, sizeof(parser->file_info.filename));    
+    my_strncpy(parser->file_info.machine_id, (char * ) file_header.u.file_header.machine_id, sizeof(parser->file_info.machine_id));
     return 0;
 }
 
