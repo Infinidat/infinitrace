@@ -19,7 +19,9 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #define __MACROS_H__
 
 
-/* A custom ASSERT macro. If Infinidat's custom assert is present use it. Otherwise hang the offending thread and write to syslog every 5 minutes. */
+/* A custom ASSERT macro. If Infinidat's custom assert is present use it.
+ * Otherwise if TRACE_HALT_ON_ASSERT is defined hang the offending thread and write to syslog every 5 minutes.
+ * If no special behavior is defined, use the standard library's assert macro. */
 #ifdef XN_ASSERT
 
 #define TRACE_ASSERT(x) XN_ASSERT(x)

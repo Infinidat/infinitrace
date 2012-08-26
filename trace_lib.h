@@ -114,8 +114,6 @@ static inline unsigned short trace_get_nesting_level(void)
 {
     return trace_current_nesting;
 }
-    
-#define trace_atomic_t int
 
 static inline int trace_strnlen(const char *c, int l)
 {
@@ -136,22 +134,18 @@ static inline int trace_strnlen(const char *c, int l)
 struct trace_records_mutable_metadata {
 	/* Whenever a thread in the traced process wants to write records, it atomically increments this value by the number of records it
 	 * wants to write, thus reserving them and guaranteeing that no other thread could reserve them. */
-	volatile trace_atomic_t current_record;
-	/* padding to make sure that the data that is accessed atomically occupies a full cache line, thus not hindering anything else. */
-	trace_atomic_t pad1;
+	trace_atomic_t current_record;
 
 	volatile unsigned int records_silently_discarded;
 	volatile unsigned int records_with_invalid_sev;
 
 	/* Once a record has been written next_committed_record is updated atomically. */
-	volatile trace_atomic_t last_committed_record;
-	trace_atomic_t pad2;
+	trace_atomic_t last_committed_record;
 
 	volatile unsigned int records_misplaced;
-	trace_atomic_t pad3;
 
 	/* Last record time-stamp that was written by the dumper. */
-	unsigned long long latest_flushed_ts;
+	trace_ts_t latest_flushed_ts;
 };
 
 
@@ -211,9 +205,18 @@ static inline struct trace_records *trace_get_records(enum trace_severity severi
 }
 
 
-static inline int trace_compare_generation(unsigned int a, unsigned int b)
+static inline int trace_compare_generation(trace_generation_t a, trace_generation_t b)
 {
-	if (a >= 0xc0000000   &&  b < 0x40000000)
+#ifndef _LP64
+#warning "This function was tested with sizeof(trace_generation_t)=4, sizeof(trace_atomic_t)=8, if this is not true please test it!"
+#endif
+
+	enum thresholds {
+		GEN_LOW  = 0x4U << (8 * sizeof(trace_generation_t) - 4),
+		GEN_HIGH = 0xcU << (8 * sizeof(trace_generation_t) - 4),
+	};
+
+	if (a >= GEN_HIGH   &&  b < GEN_LOW)
 		return 1;
 	if (b > a)
 		return 1;
@@ -223,22 +226,27 @@ static inline int trace_compare_generation(unsigned int a, unsigned int b)
 }
 
 
+static inline trace_generation_t trace_get_generation(trace_record_counter_t record_num, const struct trace_records_immutable_metadata *imutab)
+{
+	return (trace_generation_t)(record_num >> imutab->max_records_shift);
+}
+
 /* TODO: Consider allowing an option for lossless tracing. */
-static inline struct trace_record *trace_get_record(enum trace_severity severity, unsigned int *generation)
+static inline struct trace_record *trace_get_record(enum trace_severity severity, trace_generation_t *generation)
 {
 
 	struct trace_record *record;
-	unsigned int record_index;
+	trace_record_counter_t record_index;
 	struct trace_records *records = trace_get_records(severity);
 
 	/* To implement lossless mode: Make sure we don't overwrite data beyond 
 	   records->imutab.latest_flush_ts */
 
     record_index = __sync_fetch_and_add(&records->mutab.current_record, 1);
-    *generation = record_index >> records->imutab.max_records_shift;
+    *generation = (trace_generation_t) (record_index >> records->imutab.max_records_shift);
     record_index &= records->imutab.max_records_mask;
 
-	record = &records->records[record_index % TRACE_RECORD_BUFFER_RECS];
+	record = &records->records[record_index % records->imutab.max_records];
 	return record;
 }
 
@@ -252,8 +260,8 @@ static inline void trace_commit_record(struct trace_record *target_record, const
 
 	/* If the target record already contains a newer record by another thread, silently discard the trace data. */
 	if (trace_compare_generation(
-			source_record->generation << records->imutab.max_records_shift,
-			target_record->generation << records->imutab.max_records_shift) > 0) {
+			source_record->generation,
+			target_record->generation) > 0) {
 		__sync_fetch_and_add(&records->mutab.records_silently_discarded, 1);
 		return;
 	}
@@ -265,6 +273,11 @@ static inline void trace_commit_record(struct trace_record *target_record, const
 		TRACE_ASSERT(0);
 	}
 	__builtin_memcpy(target_record, source_record, sizeof(*source_record));
+
+	/* Only records that terminate a sequence should be marked as committed. */
+	if ((TRACE_TERMINATION_LAST & source_record->termination) == 0) {
+		return;
+	}
 
 	/* Normally we should never get TRACE_SEV_INVALID as severity, but this does happen. See the comment above in trace_get_records()
 	 * for additional details. When this does happen we emulate the behavior that existed prior to the INFINIBOX-2506 fix, i.e. don't go
@@ -283,12 +296,12 @@ static inline void trace_commit_record(struct trace_record *target_record, const
 		return;
 	}
 
-	trace_atomic_t new_index = (source_record->generation << records->imutab.max_records_shift) + record_pos;
+	trace_record_counter_t new_index = ((trace_record_counter_t)(source_record->generation) << records->imutab.max_records_shift) + record_pos;
 
 	__sync_synchronize();
 
-	trace_atomic_t expected_value;
-	trace_atomic_t found_value;
+	trace_record_counter_t expected_value;
+	trace_record_counter_t found_value;
 
 	/* Update records->mutab.last_committed_record to the index of the current record, taking care not to overwrite a larger value.
 	 * It's possible that another thread has increased records->mutab.last_committed_record between the last statement and this point so
@@ -297,8 +310,12 @@ static inline void trace_commit_record(struct trace_record *target_record, const
 		expected_value = records->mutab.last_committed_record;
 
 		/* Forego the update if another thread has committed a later record */
-		if (trace_compare_generation(new_index, expected_value) > 0)
+#ifndef _LP64
+#warning "The code below might cause anomalous behavior due to counter wrap-around, please verify and test."
+#endif
+		if (expected_value > new_index) {
 			break;
+		}
 
 		found_value = __sync_val_compare_and_swap(
 				&records->mutab.last_committed_record,

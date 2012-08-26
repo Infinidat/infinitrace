@@ -28,7 +28,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "../min_max.h"
 #include "../bool.h"
 #include "../array_length.h"
-
+#include "../trace_lib.h"
 
 #define COLOR_BOOL conf->color
 #include "../colors.h"
@@ -58,14 +58,12 @@ struct trace_mapped_records {
     volatile struct trace_records_mutable_metadata *mutab;
     struct trace_records_immutable_metadata *imutab;
 
-    unsigned long long current_read_record;
+    trace_record_counter_t current_read_record;
     unsigned int last_flush_offset;
 
-    unsigned long long next_flush_ts;
-    unsigned int next_flush_record;
+    trace_ts_t 	 next_flush_ts;
+    trace_record_counter_t next_flush_record;
     unsigned int next_flush_offset;
-	unsigned int old_generation;
-
     struct trace_record buffer_dump_record;
 };
 
@@ -76,8 +74,8 @@ struct trace_mapped_buffer {
     char name[TRACE_BUFNAME_LEN];
     void *records_buffer_base_address;
     int  record_buffer_fd;
-    unsigned long records_buffer_size;
-    unsigned long last_metadata_offset;
+    trace_record_counter_t records_buffer_size;
+    trace_record_counter_t last_metadata_offset;
     bool_t metadata_dumped;
     struct trace_mapped_records mapped_records[TRACE_BUFFER_NUM_RECORDS];
     struct trace_mapped_metadata metadata;
@@ -134,13 +132,13 @@ struct trace_dumper_configuration_s {
     unsigned int warn_online;
     unsigned int error_online;
     unsigned int syslog;
-    unsigned long long start_time;
+    trace_ts_t 	 start_time;
     unsigned int no_color_specified;
     unsigned int color;
     enum trace_severity minimal_allowed_severity;
-    unsigned long long next_possible_overwrite_relaxation;
-    unsigned long long last_overwrite_test_time;
-    unsigned long long last_overwrite_test_record_count;
+    trace_ts_t next_possible_overwrite_relaxation;
+    trace_ts_t last_overwrite_test_time;
+    trace_record_counter_t last_overwrite_test_record_count;
 
     const char *quota_specification;
     long long max_records_per_logdir;

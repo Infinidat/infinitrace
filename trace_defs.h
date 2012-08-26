@@ -81,14 +81,23 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
   */
 
 
+typedef unsigned long trace_record_counter_t;
+typedef volatile trace_record_counter_t trace_atomic_t;
+typedef unsigned trace_generation_t;
 
 #define MAX_METADATA_SIZE (0x1000000) /* An upper bound on the possible size of metadata */
 #define TRACE_BUFFER_NUM_RECORDS (3)  /* The number of trace buffers per traced process */
 
- /* TODO: Add compile-time checking that the number is a power of 2. Nothing else will likely work */
+#define IS_PWR_OF_2(x) (0 == ((x) & ((x) - 1)))
+
 #define TRACE_RECORD_BUFFER_RECS  0x100000
 
+#if (!IS_PWR_OF_2(TRACE_RECORD_BUFFER_RECS))
+#error "TRACE_RECORD_BUFFER_RECS is not a power of 2"
+#endif
      
+#undef IS_PWR_OF_2
+
 #define TRACE_SEVERITY_DEF       \
      TRACE_SEV_X(0, INVALID)     \
      TRACE_SEV_X(1, FUNC_TRACE)  \
@@ -212,7 +221,7 @@ struct trace_record {
 
 	/* A counter that is incremented every-time the writing of records from the traced process wraps around to the beginning
 	 * of the buffer */
-	unsigned int generation;
+	trace_generation_t generation;
 
 	/* 44 bytes payload */
 	union trace_record_u {
