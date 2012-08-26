@@ -140,10 +140,10 @@ static void possibly_dump_online_statistics(struct trace_dumper_configuration_s 
 }
 
 struct records_pending_write {
-	int total;
-	int up_to_buf_end;
-	int from_buf_start;
-	int beyond_chunk_size;
+	unsigned total;
+	unsigned up_to_buf_end;
+	unsigned from_buf_start;
+	unsigned beyond_chunk_size;
 	long lost;
 	long remaining_before_loss;
 };
@@ -159,81 +159,56 @@ static void adjust_for_overrun(struct trace_mapped_records *mapped_records)
 	 * A safer solution is required in the longer term */
 }
 
+static inline unsigned current_read_index(const struct trace_mapped_records *mapped_records)
+{
+	return mapped_records->current_read_record & mapped_records->imutab->max_records_mask;
+}
+
 static void calculate_delta(
 		const struct trace_mapped_records *mapped_records,
 		struct records_pending_write *delta)
 {
 
 #ifndef _LP64
-#warning "Use of this implementation is not recommended on platforms where sizeof(long) < 8, problems with wrap-around are likely"
+#warning "Use of this implementation is not recommended on platforms where sizeof(long) < 8, problems with wrap-around are likely."
 #endif
-    /* Find which record was last written by the traced process to the shared-memory */
+
+
 	trace_record_counter_t last_written_record = mapped_records->mutab->last_committed_record;
-    volatile const struct trace_record *last_record = &mapped_records->records[last_written_record & mapped_records->imutab->max_records_mask];
+	unsigned last_written_idx = last_written_record & mapped_records->imutab->max_records_mask;
+    volatile const struct trace_record *last_record = &mapped_records->records[last_written_idx];
 
     memset(delta, 0, sizeof(*delta));
     if(TRACE_SEV_INVALID == last_record->severity) {
     	if (0 != last_written_record) {  /* Some traces have been written */
     		syslog(LOG_USER|LOG_ERR,
-    				"Record %ld was uninitialized but marked as committed while dumping from a buffer with for pid %d",
+    				"Record %lu was uninitialized but marked as committed while dumping from a buffer with for pid %d",
     				last_written_record, last_record->pid);
     	}
     	delta->remaining_before_loss = mapped_records->imutab->max_records;
     	return;
     }
 
+    /* Verify the record counters haven't wrapped around. On 64-bit platforms this should never happen. */
+    assert(last_written_record >= mapped_records->current_read_record);
+    long backlog_len = last_written_record - mapped_records->current_read_record;
+
     /* Check whether the number of records written to the shared-memory buffers exceeds the number read by the dumper by more than the buffer size.
-      * If so - we have lost records. */
+           * If so - we have lost records. */
     long overrun_records =
-    		(long)(last_written_record - mapped_records->current_read_record - mapped_records->imutab->max_records);
+    		(long)(backlog_len - mapped_records->imutab->max_records);
 
     delta->lost = MAX(overrun_records, 0L);
     delta->remaining_before_loss = MAX(-overrun_records, 0L);
+    delta->total = MIN(backlog_len, TRACE_FILE_MAX_RECORDS_PER_CHUNK);
+    delta->beyond_chunk_size = backlog_len - delta->total;
 
-#ifdef TRACE_EXTRA_VERBOSE_DEBUG
-    if ((trace_record_counter_t)(delta->remaining_before_loss) < mapped_records->imutab->max_records/100) {
-    	syslog(LOG_USER|LOG_DEBUG, "Records remaining before loss: %ld, last_written: %d, last_read: %llu, generations: %d, %d",
-    		delta->remaining_before_loss, last_written_record, mapped_records->current_read_record, last_record->generation, mapped_records->old_generation);
-    }
-#endif
+    unsigned current_read_idx = current_read_index(mapped_records);
+    delta->up_to_buf_end  = MIN(delta->total, mapped_records->imutab->max_records - current_read_idx);
+    delta->from_buf_start = MIN(delta->total - delta->up_to_buf_end, last_written_idx);
 
-    /* Calculate delta with wraparound considered */
-    if ((last_written_record < mapped_records->current_read_record) || delta->lost) {
-    	/* Note: If we are called the second time after adjustment for overrun had been performed, it's
-    	 * still possible that mapped_records->mutab->current_record has advanced in the meantime, so we still have
-    	 * to account for the possibility of finding lost records at this point. */
-
-    	 delta->up_to_buf_end = mapped_records->imutab->max_records - mapped_records->current_read_record;
-    	 delta->from_buf_start = last_written_record;
-    }
-    else if (last_written_record == mapped_records->current_read_record) {
-        return;
-    }
-    else {
-		assert(last_written_record > mapped_records->current_read_record);
-		delta->up_to_buf_end = last_written_record - mapped_records->current_read_record;
-		delta->from_buf_start = 0;
-    }
-
-    
-    /* Cap on TRACE_FILE_MAX_RECORDS_PER_CHUNK */
-    delta->beyond_chunk_size = MAX(delta->up_to_buf_end + delta->from_buf_start - TRACE_FILE_MAX_RECORDS_PER_CHUNK, 0);
-    if (delta->beyond_chunk_size > 0) {
-        if (delta->up_to_buf_end > TRACE_FILE_MAX_RECORDS_PER_CHUNK) {
-            delta->up_to_buf_end = TRACE_FILE_MAX_RECORDS_PER_CHUNK;
-            delta->from_buf_start = 0;
-        }
-        else if (delta->from_buf_start > TRACE_FILE_MAX_RECORDS_PER_CHUNK - delta->up_to_buf_end) {
-            delta->from_buf_start = TRACE_FILE_MAX_RECORDS_PER_CHUNK - delta->up_to_buf_end;
-        }
-    }
-
-    delta->total = delta->up_to_buf_end + delta->from_buf_start;
-}
-
-static inline unsigned current_read_index(const struct trace_mapped_records *mapped_records)
-{
-	return mapped_records->current_read_record & mapped_records->imutab->max_records_mask;
+    assert(delta->total <= TRACE_FILE_MAX_RECORDS_PER_CHUNK);
+    assert(delta->from_buf_start + delta->up_to_buf_end == delta->total);
 }
 
 static void init_dump_header(struct trace_dumper_configuration_s *conf, struct trace_record *dump_header_rec,
@@ -390,10 +365,6 @@ static void possibly_report_record_loss(
 	}
 }
 
-/* Iterate over all the mapped buffers and flush them. The result will be a new dump added to the file, with the
- * records flushed from every buffer that has data pending constituting a chunk.
- * A negative return value indicates an error. A non-negative return value indicates the total number of records still pending
- * writing after the buffer flush */
 static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 {
     struct trace_mapped_buffer *mapped_buffer = NULL;
@@ -404,9 +375,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
     unsigned int num_iovecs = 0;
     int i = 0, rid = 0;
     unsigned int total_written_records = 0;
-    int total_unflushed_records = 0;
     long lost_records = 0L;
-    int rc = 0;
 
 	cur_ts = trace_get_nsec();
     init_dump_header(conf, &dump_header_rec, cur_ts, &iovec, &num_iovecs, &total_written_records);
@@ -416,7 +385,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 		const struct trace_record *last_rec = NULL;
 		struct records_pending_write deltas;
         lost_records = 0;
-        rc = dump_metadata_if_necessary(conf, mapped_buffer);
+        int rc = dump_metadata_if_necessary(conf, mapped_buffer);
         if (0 != rc) {
             return rc;
         }
@@ -427,7 +396,6 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
         }
         
         calculate_delta(mapped_records, &deltas);
-        total_unflushed_records += deltas.beyond_chunk_size;
         lost_records = deltas.lost;
         if (lost_records) {
         	adjust_for_overrun(mapped_records);
@@ -477,13 +445,11 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 	dump_header_rec.u.dump_header.total_dump_size = total_written_records - 1;
     dump_header_rec.u.dump_header.first_chunk_offset = conf->record_file.records_written + 1;
 
-	if (cur_ts >= conf->next_flush_ts) {
-		rc = possibly_write_iovecs_to_disk(conf, num_iovecs, total_written_records, cur_ts);
-		if (rc < 0) {
-			return rc;
-		}
+	if (cur_ts < conf->next_flush_ts) {
+		return 0;
 	}
-    return total_unflushed_records;
+
+    return possibly_write_iovecs_to_disk(conf, num_iovecs, total_written_records, cur_ts);
 }
 
 
@@ -517,46 +483,6 @@ static void handle_overwrite(struct trace_dumper_configuration_s *conf)
     conf->last_overwrite_test_record_count = conf->record_file.records_written;
 }
 
-/* Periodic housekeeping functions: Look for any processes that have started and need to have their traces collected, or that have ended, allowing any resouces
- * allocating for serving them to be freed.
- * Return value:
- * 0 		- If housekeeping was performed successfully
- * EAGAIN 	- If the function was called prematurely and no housekeeping was done
- * < 0		- If an error occurred.
- *  */
-static int do_housekeeping_if_necessary(struct trace_dumper_configuration_s *conf)
-{
-	static const trace_ts_t HOUSEKEEPING_INTERVAL = 20000;
-
-	if (trace_get_nsec() < conf->next_housekeeping_ts) {
-		return EAGAIN;
-	}
-	conf->next_housekeeping_ts = trace_get_nsec() + HOUSEKEEPING_INTERVAL;
-
-	int rc = reap_empty_dead_buffers(conf);
-    if (0 != rc) {
-    	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while emptying dead buffers.", strerror(errno));
-    	return rc;
-    }
-
-    handle_overwrite(conf);
-
-    if (!conf->attach_to_pid && !conf->stopping) {
-        rc = map_new_buffers(conf);
-        if (0 != rc) {
-        	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while mapping new buffers.", strerror(errno));
-        	return rc;
-        }
-    }
-
-    rc = unmap_discarded_buffers(conf);
-    if (0 != rc) {
-    	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while unmapping discarded buffers.", strerror(errno));
-    }
-
-    return rc;
-}
-
 static int dump_records(struct trace_dumper_configuration_s *conf)
 {
     int rc;
@@ -583,24 +509,29 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
         possibly_dump_online_statistics(conf);
         
         rc = trace_flush_buffers(conf);
-        if (rc > TRACE_FILE_IMMEDIATE_FLUSH_THRESHOLD) {
-        	struct timespec ts = { 0, conf->ts_flush_delta };
-        	nanosleep(&ts, NULL);
-        	continue;
-        }
-        else if (rc < 0) {
+        if (0 != rc) {
         	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while flushing trace buffers.", strerror(errno));
         	break;
         }
 
-        rc = do_housekeeping_if_necessary(conf);
-        if (EAGAIN == rc) { /* No housekeeping performed */
-			usleep(1000);
-		}
-        else if (rc < 0) {
+        rc = reap_empty_dead_buffers(conf);
+        if (0 != rc) {
+        	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while emptying dead buffers.", strerror(errno));
         	break;
         }
-        else assert(0 == rc);
+
+        usleep(20000);
+        handle_overwrite(conf);
+
+        if (!conf->attach_to_pid && !conf->stopping) {
+            map_new_buffers(conf);
+        }
+
+        rc = unmap_discarded_buffers(conf);
+        if (0 != rc) {
+        	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while unmapping discarded buffers.", strerror(errno));
+            break;
+        }
     }
 
     rc = errno;
