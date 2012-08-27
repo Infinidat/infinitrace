@@ -267,6 +267,8 @@ private:
     std::string getTypeDefinitionExternDeclratations();
     std::string genMIN(std::string &a, std::string &b);
     
+    std::string initializeIntermediateTypedRecord();
+
     std::string constlength_writeSimpleValue(std::string &expression, std::string &type_name, bool is_pointer, bool is_reference, unsigned int size, unsigned int *buf_left);
     std::string constlength_commitAndAllocateRecord(enum trace_severity severity, unsigned int *buf_left);
     std::string constlength_getRecord(enum trace_severity severity);

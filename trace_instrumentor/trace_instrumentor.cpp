@@ -352,19 +352,19 @@ std::string TraceCall::getSeverity()
 
 std::string TraceCall::constlength_commitRecord()
 {
-	return "trace_commit_record(_record_ptr, &_record);";
+	return "trace_commit_record(_record_ptr, &_record," + getSeverity() + ");";
 }
 
 std::string TraceCall::varlength_commitRecord()
 {
-	return "trace_commit_record((*__record_ptr), _record);";
+	return "trace_commit_record((*__record_ptr), _record," + getSeverity() + ");";
 }
 
 std::string TraceCall::varlength_getRecord(enum trace_severity severity)
 {
     std::stringstream code;
     
-    code << "(*__record_ptr) = trace_get_record(TRACE_SEV_"  << sev_to_str[severity] << ", &_record->generation);";
+    code << "(*__record_ptr) = trace_get_record(" << getSeverity() << ", &_record->generation);";
     return code.str();
 }
 
@@ -372,7 +372,7 @@ std::string TraceCall::constlength_getRecord(enum trace_severity severity)
 {
     std::stringstream code;
     
-    code << "_record_ptr = trace_get_record(TRACE_SEV_"  << sev_to_str[severity] << ", &_record.generation);";
+    code << "_record_ptr = trace_get_record(" << getSeverity() << ", &_record.generation);";
     return code.str();
 }
 
@@ -407,11 +407,21 @@ std::string TraceCall::constlength_initializeTypedRecord(enum trace_severity sev
     return code.str();
 }
 
+std::string TraceCall::initializeIntermediateTypedRecord()
+{
+	std::stringstream code;
+	code << "_record->rec_type  = TRACE_REC_TYPE_TYPED;";
+	code << "_record->severity = " << getSeverity() << ";";
+    code << "_record->termination = 0;";
+    code << "_record->u.typed.log_id = -1U;";
+	return code.str();
+}
+
 std::string TraceCall::constlength_commitAndAllocateRecord(enum trace_severity severity, unsigned int *buf_left) {
     std::stringstream code;
     code << constlength_commitRecord();
     code << constlength_getRecord(severity);
-    code << "_record.termination = 0;";
+    code << initializeIntermediateTypedRecord();
     (*buf_left) = TRACE_RECORD_PAYLOAD_SIZE;
     return code.str();
 }
@@ -420,7 +430,7 @@ std::string TraceCall::varlength_commitAndAllocateRecord(enum trace_severity sev
     std::stringstream code;
     code << varlength_commitRecord();
     code << varlength_getRecord(severity);
-    code << "_record->termination = 0;";
+    code << initializeIntermediateTypedRecord();
     code << "(*typed_buf) = &_record->u.payload[0];";
     code << "(*buf_left) = " << TRACE_RECORD_PAYLOAD_SIZE << ";";
     return code.str();
@@ -497,6 +507,7 @@ std::string TraceCall::varlength_getFullTraceWriteExpression()
     get_record << varlength_getRecord(severity);
     start_record << varlength_initializeTypedRecord(severity);
     start_record << varlength_getTraceWriteExpression();
+    start_record << "_record->severity = " << getSeverity() << ";";
     start_record << "_record->termination |= TRACE_TERMINATION_LAST;";
     start_record << varlength_commitRecord();
 
@@ -514,6 +525,7 @@ std::string TraceCall::constlength_getFullTraceWriteExpression()
     get_record << constlength_getRecord(severity);
     start_record << constlength_initializeTypedRecord(severity, &buf_left);
     start_record << constlength_getTraceWriteExpression(&buf_left);
+    start_record << "_record.severity = " << getSeverity() << ";";
     start_record << "_record.termination |= TRACE_TERMINATION_LAST;";
     start_record << constlength_commitRecord();
 

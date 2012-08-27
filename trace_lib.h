@@ -193,12 +193,13 @@ static inline struct trace_records *trace_get_records(enum trace_severity severi
 	case TRACE_SEV_FUNC_TRACE:
 		return &current_trace_buffer->u.records._funcs;
 
-		/* TODO: Check why we are sometimes passed TRACE_SEV_INVALID when the instrumentor processes called to REPR, see ticket IBOX15-133
-		 * For the time being we arbitrarily place them in the debug buffer. */
-	case TRACE_SEV_INVALID:
+
 	case TRACE_SEV_DEBUG:
 		return &current_trace_buffer->u.records._debug;
 
+	/* TODO: Check why we are sometimes passed TRACE_SEV_INVALID when the instrumentor processes called to REPR, see ticket IBOX15-133
+		 * For the time being we arbitrarily place them in the 'other' buffer. */
+	case TRACE_SEV_INVALID:
 	default:
 		return &current_trace_buffer->u.records._other;
 	}
@@ -250,27 +251,26 @@ static inline struct trace_record *trace_get_record(enum trace_severity severity
 	return record;
 }
 
-#define TRACE_COPY_ADJACENT_RECORDS() struct trace_record adjacent[15]; memcpy((void *)adjacent, (const void *)(target_record - 7), sizeof(adjacent));
-
-
 /* TODO: In this function we silently ignore many anomalous conditions. We should at the very least set-up conters for them. */
-static inline void trace_commit_record(struct trace_record *target_record, const struct trace_record *source_record)
+static inline void trace_commit_record(struct trace_record *target_record, const struct trace_record *source_record, enum trace_severity severity)
 {
-	struct trace_records *records = trace_get_records((enum trace_severity)(source_record->severity));
+	/* Check for malformed records. */
+	TRACE_ASSERT((0 == (source_record->termination & TRACE_TERMINATION_FIRST)) || (source_record->u.typed.log_id != -1U));
 
-	/* If the target record already contains a newer record by another thread, silently discard the trace data. */
-	if (trace_compare_generation(
-			source_record->generation,
-			target_record->generation) > 0) {
-		__sync_fetch_and_add(&records->mutab.records_silently_discarded, 1);
-		return;
-	}
-	/* Check if another thread had already committed the exact same record. */
-	else if ((source_record->generation == target_record->generation) && (source_record->generation > 0)) {
-		struct trace_records_mutable_metadata mu;
-		memcpy(&mu, (const void *)&records->mutab, sizeof(mu));
-		TRACE_COPY_ADJACENT_RECORDS();
-		TRACE_ASSERT(0);
+	/* One would expect to be able to extract the severity value from the source record. Unfortunately for some records the severity value
+	 * written inside the record differs from the one used to place it. See IBOX15-133 for further details. */
+	struct trace_records *records = trace_get_records(severity);
+
+	/* If generation > 0 we assume the buffer should contain valid data, so perform some validity checks */
+	if (source_record->generation > 0) {
+		/* If the target record already contains a newer record by another thread, silently discard the trace data. */
+		if (trace_compare_generation(source_record->generation, target_record->generation) > 0) {
+			__sync_fetch_and_add(&records->mutab.records_silently_discarded, 1);
+			return;
+		}
+
+		/* Check if another thread had already committed the exact same record. */
+		else TRACE_ASSERT(source_record->generation != target_record->generation);
 	}
 	__builtin_memcpy(target_record, source_record, sizeof(*source_record));
 
@@ -279,22 +279,8 @@ static inline void trace_commit_record(struct trace_record *target_record, const
 		return;
 	}
 
-	/* Normally we should never get TRACE_SEV_INVALID as severity, but this does happen. See the comment above in trace_get_records()
-	 * for additional details. When this does happen we emulate the behavior that existed prior to the INFINIBOX-2506 fix, i.e. don't go
-	 * beyond this point. */
-	if (TRACE_SEV_INVALID == source_record->severity) {
-		__sync_fetch_and_add(&records->mutab.records_with_invalid_sev, 1);
-		return;
-	}
-
 	unsigned record_pos = target_record - records->records;
-
-	/* Sometimes records are misplaced. This shouldn't happen but does.
-	 * TODO: Write an algorithm that finds the right memory buffer in this case. */
-	if (record_pos >= records->imutab.max_records) {
-		__sync_fetch_and_add(&records->mutab.records_misplaced, 1);
-		return;
-	}
+	TRACE_ASSERT(record_pos < records->imutab.max_records);
 
 	trace_record_counter_t new_index = ((trace_record_counter_t)(source_record->generation) << records->imutab.max_records_shift) + record_pos;
 
@@ -311,7 +297,7 @@ static inline void trace_commit_record(struct trace_record *target_record, const
 
 		/* Forego the update if another thread has committed a later record */
 #ifndef _LP64
-#warning "The code below might cause anomalous behavior due to counter wrap-around, please verify and test."
+#warning "The comparison below might cause anomalous behavior due to counter wrap-around on 32-bit platforms, please verify and test."
 #endif
 		if (expected_value > new_index) {
 			break;
@@ -323,16 +309,9 @@ static inline void trace_commit_record(struct trace_record *target_record, const
 				new_index);
 
 		/* Make absolutely sure that no other thread has committed the same record that we were working on */
-		if ((new_index == found_value) && (0 != new_index)) {
-			struct trace_records_mutable_metadata mu;
-			memcpy(&mu, (const void *)&records->mutab, sizeof(mu));
-			TRACE_COPY_ADJACENT_RECORDS();
-			TRACE_ASSERT(0);
-		}
+		TRACE_ASSERT((new_index != found_value) || (0 == new_index));
 	} while (found_value != expected_value);
 }
-
-#undef TRACE_COPY_ADJACENT_RECORDS
 
 #ifdef __cplusplus
 }
