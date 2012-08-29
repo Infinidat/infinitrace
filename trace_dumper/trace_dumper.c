@@ -205,7 +205,7 @@ static void calculate_delta(
 
     unsigned current_read_idx = current_read_index(mapped_records);
     delta->up_to_buf_end  = MIN(delta->total, mapped_records->imutab->max_records - current_read_idx);
-    delta->from_buf_start = MIN(delta->total - delta->up_to_buf_end, last_written_idx);
+    delta->from_buf_start = delta->total - delta->up_to_buf_end;
 
     assert(delta->total <= TRACE_FILE_MAX_RECORDS_PER_CHUNK);
     assert(delta->from_buf_start + delta->up_to_buf_end == delta->total);
