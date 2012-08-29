@@ -227,9 +227,11 @@ public:
 TraceCall(llvm::raw_ostream &out, DiagnosticsEngine &_Diags, ASTContext &_ast, Rewriter *rewriter, std::set<const Type *> &referenced_types, std::set<TraceCall *> &global_traces) : method_generated(false), trace_call_name("tracelog"), ast(_ast), Diags(_Diags), Out(out), Rewrite(rewriter), referencedTypes(referenced_types), globalTraces(global_traces){
         UnknownTraceParamDiag = Diags.getCustomDiagID(DiagnosticsEngine::Error,
                                                       "Unsupported trace parameter type");
+        is_repr = false;
     }
 
     bool fromCallExpr(CallExpr *exp);
+    bool isRepr() const { return is_repr; }
     void addTraceParam(TraceParam &param) { args.push_back(param); }
     void setSeverity(enum trace_severity _severity) { severity = _severity; }
     void setKind(const char *_kind) { kind = _kind; }
@@ -248,6 +250,7 @@ private:
     const CallExpr *call_expr;
     std::vector<TraceParam> args;
     enum trace_severity severity;
+    bool is_repr;
     const char *kind;
     Rewriter *Rewrite;
 
@@ -264,21 +267,23 @@ private:
     void replaceExpr(const Expr *expr, std::string replacement);
 
     std::string getSeverity();
+    std::string getSeverityExpr();
     std::string getTypeDefinitionExternDeclratations();
     std::string genMIN(std::string &a, std::string &b);
     
-    std::string initializeIntermediateTypedRecord();
+    std::string initializeIntermediateTypedRecord(const std::string& deref_operator);
+    std::string initializeOpeningTypedRecord(const std::string& deref_operator);
 
     std::string constlength_writeSimpleValue(std::string &expression, std::string &type_name, bool is_pointer, bool is_reference, unsigned int size, unsigned int *buf_left);
-    std::string constlength_commitAndAllocateRecord(enum trace_severity severity, unsigned int *buf_left);
-    std::string constlength_getRecord(enum trace_severity severity);
-    std::string constlength_initializeTypedRecord(enum trace_severity severity, unsigned int *buf_left);
+    std::string constlength_commitAndAllocateRecord(unsigned int *buf_left);
+    std::string constlength_getRecord();
+    std::string constlength_initializeTypedRecord(unsigned int *buf_left);
     std::string constlength_commitRecord();
 
     std::string varlength_writeSimpleValue(std::string &expression, std::string &type_name, bool is_pointer, bool is_reference);
-    std::string varlength_commitAndAllocateRecord(enum trace_severity severity);
-    std::string varlength_getRecord(enum trace_severity severity);
-    std::string varlength_initializeTypedRecord(enum trace_severity severity);
+    std::string varlength_commitAndAllocateRecord();
+    std::string varlength_getRecord();
+    std::string varlength_initializeTypedRecord();
     std::string varlength_commitRecord();
     bool constantSizeTrace();
     void unknownTraceParam(const Expr *trace_param);

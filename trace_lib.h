@@ -42,7 +42,7 @@ extern "C" {
 #undef __repr__
 #endif
     
-#define __repr__ _trace_represent(unsigned int *buf_left, struct trace_record *_record, struct trace_record **__record_ptr, unsigned char **typed_buf)
+#define __repr__ _trace_represent(unsigned int *buf_left, struct trace_record *_record, struct trace_record **__record_ptr, unsigned char **typed_buf, enum trace_severity __severity)
 #if !defined(_UNISTD_H) && defined(__linux__)
 #ifdef __cplusplus     
     extern long int syscall (long int __sysno, ...) throw ();
@@ -189,17 +189,15 @@ static inline void set_current_trace_buffer_ptr(struct trace_buffer *trace_buffe
 
 static inline struct trace_records *trace_get_records(enum trace_severity severity)
 {
+	TRACE_ASSERT(TRACE_SEV_INVALID != severity);
+
 	switch ((int)severity) {
 	case TRACE_SEV_FUNC_TRACE:
 		return &current_trace_buffer->u.records._funcs;
 
-
 	case TRACE_SEV_DEBUG:
 		return &current_trace_buffer->u.records._debug;
 
-	/* TODO: Check why we are sometimes passed TRACE_SEV_INVALID when the instrumentor processes called to REPR, see ticket IBOX15-133
-		 * For the time being we arbitrarily place them in the 'other' buffer. */
-	case TRACE_SEV_INVALID:
 	default:
 		return &current_trace_buffer->u.records._other;
 	}
