@@ -90,12 +90,24 @@ typedef unsigned trace_generation_t;
 
 #define IS_PWR_OF_2(x) (0 == ((x) & ((x) - 1)))
 
-#define TRACE_RECORD_BUFFER_RECS  0x100000
+#define TRACE_DEFAULT_RECORD_BUFFER_RECS 0x100000
+
+#ifndef TRACE_RECORD_BUFFER_RECS
+#define TRACE_RECORD_BUFFER_RECS  TRACE_DEFAULT_RECORD_BUFFER_RECS
+#endif
 
 #if (!IS_PWR_OF_2(TRACE_RECORD_BUFFER_RECS))
 #error "TRACE_RECORD_BUFFER_RECS is not a power of 2"
 #endif
      
+#ifndef TRACE_RECORD_BUFFER_FUNCS_RECS
+#define TRACE_RECORD_BUFFER_FUNCS_RECS TRACE_RECORD_BUFFER_RECS
+#elif (!IS_PWR_OF_2(TRACE_RECORD_BUFFER_FUNCS_RECS))
+#error "TRACE_RECORD_BUFFER_FUNCS_RECS is not a power of 2"
+#endif
+
+
+
 #undef IS_PWR_OF_2
 
 #define TRACE_SEVERITY_DEF       \

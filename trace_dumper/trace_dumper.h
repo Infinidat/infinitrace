@@ -163,8 +163,9 @@ struct trace_dumper_configuration_s {
     BufferFilter filtered_buffers;
     MappedBuffers mapped_buffers;
     PidList dead_pids;
-    struct iovec flush_iovec[1 + (3 * MAX_BUFFER_COUNT * TRACE_RECORD_BUFFER_RECS)];
-    unsigned int flush_iovec_total_records;
+    struct iovec flush_iovec[1 + MAX_BUFFER_COUNT *
+                             (2 * MIN(TRACE_RECORD_BUFFER_RECS, TRACE_DEFAULT_RECORD_BUFFER_RECS) / 2 +
+                            	  MIN(TRACE_RECORD_BUFFER_FUNCS_RECS, TRACE_DEFAULT_RECORD_BUFFER_RECS) / 2)];
 };
 
 

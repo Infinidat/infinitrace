@@ -194,9 +194,9 @@ struct trace_buffer {
     union {
         struct trace_records _all_records[TRACE_BUFFER_NUM_RECORDS];
         struct {
-            struct trace_records _funcs;
             struct trace_records _debug;
             struct trace_records _other;
+            struct trace_records _funcs;
         } records;
     } u;
 };
@@ -264,7 +264,8 @@ static inline struct trace_record *trace_get_record(enum trace_severity severity
     *generation = (trace_generation_t) (record_index >> records->imutab.max_records_shift);
     record_index &= records->imutab.max_records_mask;
 
-	record = &records->records[record_index % records->imutab.max_records];
+    struct trace_records_immutable_metadata mu = records->imutab;
+	record = &records->records[record_index % mu.max_records];
 	return record;
 }
 

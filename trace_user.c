@@ -378,17 +378,26 @@ static void map_static_log_data(const char *buffer_name)
     }
 }
 
+static unsigned get_nearest_power_of_2(unsigned long n)
+{
+	unsigned p;
+	for (p = 0; n > 1; n >>=1, p++)
+		;
+
+	return p;
+}
 
 static void init_records_immutable_data(struct trace_records *records, unsigned long num_records, int severity_type)
 {
-	while (num_records > 1) {
-		records->imutab.max_records_shift++;
-		num_records >>= 1;
-	}
-	num_records = 1 << records->imutab.max_records_shift;
-	records->imutab.max_records = num_records;
-	records->imutab.max_records_mask = num_records - 1;
+	records->imutab.max_records_shift = get_nearest_power_of_2(num_records);
+
+	records->imutab.max_records = 1U << records->imutab.max_records_shift;
+	records->imutab.max_records_mask = records->imutab.max_records - 1U;
+
+	TRACE_ASSERT(records->imutab.max_records > 1U);
+
     records->imutab.severity_type = severity_type;
+    TRACE_ASSERT(0 != records->imutab.severity_type);
 }
 
 static void init_record_mutable_data(struct trace_records *recs)
@@ -404,7 +413,7 @@ static void init_records_metadata(void)
 {
     init_records_immutable_data(&current_trace_buffer->u.records._other, TRACE_RECORD_BUFFER_RECS, (1 << TRACE_SEV_FATAL) | (1 << TRACE_SEV_ERR) | (1 << TRACE_SEV_INFO) | (1 << TRACE_SEV_WARN));
     init_records_immutable_data(&current_trace_buffer->u.records._debug, TRACE_RECORD_BUFFER_RECS, (1 << TRACE_SEV_DEBUG));
-    init_records_immutable_data(&current_trace_buffer->u.records._funcs, TRACE_RECORD_BUFFER_RECS, (1 << TRACE_SEV_FUNC_TRACE));
+	init_records_immutable_data(&current_trace_buffer->u.records._funcs, TRACE_RECORD_BUFFER_FUNCS_RECS, (1 << TRACE_SEV_FUNC_TRACE));
 
  	init_record_mutable_data(&(current_trace_buffer->u.records._other));
 	init_record_mutable_data(&(current_trace_buffer->u.records._debug));
@@ -420,9 +429,12 @@ static void map_dynamic_log_buffers()
         return;
     }
     TRACE_ASSERT(shm_fd >= 0);
-    int rc = ftruncate(shm_fd, sizeof(struct trace_buffer));
+    const size_t buf_size = sizeof(struct trace_buffer)
+    		- TRACE_RECORD_BUFFER_RECS  	 * sizeof(struct trace_record)
+    		+ TRACE_RECORD_BUFFER_FUNCS_RECS * sizeof(struct trace_record);
+    int rc = ftruncate(shm_fd, buf_size);
     TRACE_ASSERT (0 == rc);
-    void *mapped_addr = mmap(NULL, sizeof(struct trace_buffer), PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    void *mapped_addr = mmap(NULL, buf_size, PROT_WRITE, MAP_SHARED, shm_fd, 0);
     TRACE_ASSERT((MAP_FAILED != mapped_addr) && (NULL != mapped_addr));
     set_current_trace_buffer_ptr((struct trace_buffer *)mapped_addr);
     init_records_metadata();

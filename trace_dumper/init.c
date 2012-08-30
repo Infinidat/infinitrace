@@ -256,7 +256,6 @@ int init_dumper(struct trace_dumper_configuration_s *conf)
     }
 
     conf->ts_flush_delta = FLUSH_DELTA;
-    conf->flush_iovec_total_records = 0;
     conf->next_housekeeping_ts = 0;
 
     TRACE_PARSER__from_external_stream(&conf->parser, parser_event_handler, NULL);
