@@ -20,6 +20,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <getopt.h>
 #include <signal.h>
 #include <sysexits.h>
@@ -42,7 +43,9 @@ static const char usage[] = {
     " -h, --help                            Display this help message                                              \n" \
     " -f  --filter [buffer_name]            Filter out specified buffer name                                       \n" \
     " -o  --online                          Show data from buffers as it arrives (slows performance)               \n" \
+    " -n  --no-color                        Show noline data wothout color                                         \n" \
     " -w  --write-to-file[filename]         Write log records to file                                              \n" \
+    " -N  --notification-file[filename]     Write notifications (messages with severity > WARN) to a separate file \n" \
     " -b  --logdir                          Specify the base log directory trace files are written to              \n" \
     " -p  --pid [pid]                       Attach the specified process                                           \n" \
     " -d  --debug-online                    Display DEBUG records in online mode                                   \n" \
@@ -68,7 +71,8 @@ static const struct option longopts[] = {
 	{ "no-color", 0, 0, 'n'},
     { "syslog", 0, 0, 's'},
     { "pid", required_argument, 0, 'p'},
-    { "write", optional_argument, 0, 'w'},
+    { "write-to-file", optional_argument, 0, 'w'},
+    { "notification-file",  optional_argument, 0, 'N'},
     { "quota-size", required_argument, 0, 'q'},
     { "record-write-limit", required_argument, 0, 'r'},
     { "dump-online-statistics", 0, 0, 'v'},
@@ -82,7 +86,7 @@ void print_usage(const char *prog_name)
     printf(usage, display_name);
 }
 
-static const char shortopts[] = "vtdiaer:q:sw::p:hf:ob:n";
+static const char shortopts[] = "vtdiaer:q:sw::N::p:hf:ob:n";
 
 #define DEFAULT_LOG_DIRECTORY "/mnt/logs/traces"
 
@@ -111,6 +115,10 @@ int parse_commandline(struct trace_dumper_configuration_s *conf, int argc, char 
         case 'w':
             conf->write_to_file = 1;
             conf->fixed_output_filename = optarg;
+            break;
+        case 'N':
+            conf->write_notifications_to_file = 1;
+            conf->fixed_notification_filename = optarg;
             break;
         case 's':
             conf->syslog = 1;
@@ -211,6 +219,18 @@ static void set_default_online_severities(struct trace_dumper_configuration_s *c
     conf->error_online = 1;
 }
 
+static int init_record_file(struct trace_record_file *record_file, size_t initial_iov_len)
+{
+	record_file->fd = -1;
+	record_file->filename[0] = '\0';
+	record_file->records_written = 0;
+	record_file->iov_allocated_len = (initial_iov_len > 0U) ? initial_iov_len : (size_t) sysconf(_SC_IOV_MAX);
+	record_file->iov = calloc(record_file->iov_allocated_len, sizeof(struct iovec));
+	if (NULL == record_file->iov) {
+		return -1;
+	}
+	return 0;
+}
 
 int init_dumper(struct trace_dumper_configuration_s *conf)
 {
@@ -231,6 +251,10 @@ int init_dumper(struct trace_dumper_configuration_s *conf)
     }
 
     conf->record_file.fd = -1;
+    if (conf->write_notifications_to_file && init_record_file(&conf->notification_file, 0) != 0) {
+    	return EX_SOFTWARE;
+    }
+
     conf->ts_flush_delta = FLUSH_DELTA;
     conf->flush_iovec_total_records = 0;
     conf->next_housekeeping_ts = 0;
@@ -276,6 +300,10 @@ int init_dumper(struct trace_dumper_configuration_s *conf)
         return EX_IOERR;
     }
 
+    if (conf->write_notifications_to_file && (conf->fixed_output_filename || conf->fixed_notification_filename)) {
+    	fprintf(stderr, "Use of a notification file with either fixed output file or a fixed notification file is not yet supported");
+    	return EX_USAGE;
+    }
     return 0;
 }
 
@@ -289,12 +317,12 @@ struct trace_dumper_configuration_s *trace_dumper_get_configuration()
 
 static void usr1_handler()
 {
-	close_record_file_if_necessary(&trace_dumper_configuration);
+	close_all_files(&trace_dumper_configuration);
 }
 
 static void usr2_handler()
 {
-	close_record_file_if_necessary(&trace_dumper_configuration);
+	close_all_files(&trace_dumper_configuration);
 
 	static const char snapshot_prefix[] = "snapshot.";
 

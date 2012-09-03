@@ -23,6 +23,8 @@
 #include <sys/types.h>
 #include <errno.h>
 #include <syslog.h>
+#include <assert.h>
+#include <alloca.h>
 #include <limits.h>
 #include <fcntl.h>
 #include <time.h>
@@ -45,7 +47,7 @@ unsigned long long trace_get_walltime(void)
     return (((unsigned long long)tv.tv_sec) * 1000000) + tv.tv_usec;
 }
 
-static int trace_write_header(struct trace_dumper_configuration_s *conf)
+static int trace_write_header(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file)
 {
     struct utsname ubuf;
     struct trace_record rec;
@@ -63,13 +65,13 @@ static int trace_write_header(struct trace_dumper_configuration_s *conf)
     file_header->format_version = TRACE_FORMAT_VERSION;
     file_header->magic = TRACE_MAGIC_FILE_HEADER;
 
-    rc = write_single_record(conf, &rec);
+    rc = write_single_record(conf, record_file, &rec);
 	if (rc < 0) {
-		syslog(LOG_USER|LOG_ERR, "Failed to write to a data file %s due to error: %s", conf->record_file.filename, strerror(errno));
+		syslog(LOG_USER|LOG_ERR, "Failed to write to a data file %s due to error: %s", record_file->filename, strerror(errno));
 		return rc;
     }
 
-	syslog(LOG_USER|LOG_INFO, "Trace dumper starting to write to the file %s", conf->record_file.filename);
+	syslog(LOG_USER|LOG_INFO, "Trace dumper starting to write to the file %s", record_file->filename);
 	return 0;
 }
 
@@ -96,6 +98,7 @@ static int trace_open_file(struct trace_dumper_configuration_s *conf, struct tra
     }
 
     INFO("Opening trace file:", filename);
+    assert(record_file->fd < 0);
     record_file->fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (record_file->fd < 0) {
     	syslog(LOG_ERR|LOG_USER, "Failed to open new trace file %s due to error %s", filename, strerror(errno));
@@ -103,7 +106,7 @@ static int trace_open_file(struct trace_dumper_configuration_s *conf, struct tra
     }
 
     strncpy(record_file->filename, filename, sizeof(record_file->filename));
-    return trace_write_header(conf);
+    return trace_write_header(conf, record_file);
 }
 
 bool_t trace_quota_is_enabled(const struct trace_dumper_configuration_s *conf)
@@ -119,7 +122,7 @@ int rotate_trace_file_if_necessary(struct trace_dumper_configuration_s *conf)
         return 0;
     }
 
-    if (conf->max_records_per_logdir < LLONG_MAX) {
+    if (trace_quota_is_enabled(conf)) {
 		while (TRUE) {
 			if (total_records_in_logdir(conf->logs_base) > conf->max_records_per_logdir) {
 				rc = delete_oldest_trace_file(conf);
@@ -139,7 +142,7 @@ int rotate_trace_file_if_necessary(struct trace_dumper_configuration_s *conf)
     close_record_file(conf);
 
     /* Reopen journal file */
-    rc = trace_open_file(conf, &conf->record_file, conf->logs_base);
+    rc = open_trace_file_if_necessary(conf);
     if (0 != rc) {
         ERR("Unable to open trace file:", strerror(errno));
         return -1;
@@ -150,12 +153,27 @@ int rotate_trace_file_if_necessary(struct trace_dumper_configuration_s *conf)
 
 int open_trace_file_if_necessary(struct trace_dumper_configuration_s *conf)
 {
-    if (conf->write_to_file && conf->record_file.fd < 0) {
-        int rc = trace_open_file(conf, &conf->record_file, conf->logs_base);
-        if (0 != rc) {
-            ERR("Unable to open trace file");
-            return rc;
-        }
+    if (conf->write_to_file) {
+    	if (conf->record_file.fd < 0) {
+    		syslog(LOG_USER|LOG_DEBUG, "About to open a regular file");
+			int rc = trace_open_file(conf, &conf->record_file, conf->logs_base);
+			if (0 != rc) {
+				ERR("Unable to open trace file");
+				return rc;
+			}
+    	}
+
+    	if (conf->write_notifications_to_file && (conf->notification_file.fd < 0)) {
+    		static const char warn_subdir[] = "warn";
+    		char* warn_dir = alloca(strlen(conf->logs_base) + sizeof(warn_subdir) + 4);
+    		sprintf(warn_dir, "%s/%s", conf->logs_base, warn_subdir);
+    		int rc = trace_open_file(conf, &conf->notification_file, warn_dir);
+			if (0 != rc) {
+				ERR("Unable to open warning file");
+				syslog(LOG_USER|LOG_ERR, "Trace dumper failed to open an error and warning file in %s due to %s", warn_dir, strerror(errno));
+				return rc;
+			}
+    	}
     }
 
     return 0;
@@ -181,9 +199,22 @@ void close_record_file(struct trace_dumper_configuration_s *conf)
     }
 }
 
-void close_record_file_if_necessary(struct trace_dumper_configuration_s *conf)
+void close_all_files(struct trace_dumper_configuration_s *conf)
 {
-	 if (conf->record_file.fd >= 0) {
+	if (conf->notification_file.fd >= 0) {
+		close(conf->notification_file.fd);
+		conf->notification_file.fd = -1;
+
+		struct trace_mapped_buffer *mapped_buffer;
+		struct trace_mapped_records *mapped_records;
+		int i;
+		int rid;
+		for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
+			mapped_buffer->notification_metadata_dumped = FALSE;
+		}
+	}
+
+	if (conf->record_file.fd >= 0) {
 		close_record_file(conf);
 	}
 }

@@ -30,6 +30,7 @@
 #include <errno.h>
 
 #include "../trace_user.h"
+#include "../min_max.h"
 #include "filesystem.h"
 #include "writer.h"
 
@@ -43,6 +44,15 @@ int total_iovec_len(const struct iovec *iov, int iovcnt)
     }
 
     return total;
+}
+
+struct iovec *increase_iov_if_necessary(struct trace_record_file *record_file, size_t required_size)
+{
+	if (required_size > record_file->iov_allocated_len) {
+		record_file->iov_allocated_len = MAX(required_size, record_file->iov_allocated_len + record_file->iov_allocated_len/2);
+		record_file->iov = (struct iovec *)realloc(record_file->iov, sizeof(struct iovec) * record_file->iov_allocated_len);
+	}
+	return record_file->iov;
 }
 
 static int trace_dumper_writev(int fd, const struct iovec *iov, int iovcnt)
@@ -72,7 +82,7 @@ static int trace_dumper_writev(int fd, const struct iovec *iov, int iovcnt)
     return bytes_written;
 }
 
-int write_single_record(struct trace_dumper_configuration_s *conf, const struct trace_record *rec)
+int write_single_record(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, const struct trace_record *rec)
 {
 	const size_t len = sizeof(*rec);
 	const struct iovec iov = {
@@ -80,7 +90,7 @@ int write_single_record(struct trace_dumper_configuration_s *conf, const struct 
 			len
 	};
 
-	int rc = trace_dumper_write(conf, &conf->record_file, &iov, 1, TRUE);
+	int rc = trace_dumper_write(conf, record_file, &iov, 1, record_file_should_be_parsed(conf, record_file));
     if ((int)len != rc) {
     	if (rc >= 0) { /* Partial write */
     		errno = ETIMEDOUT;
@@ -165,7 +175,12 @@ int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct trace_r
     const useconds_t retry_interval = TRACE_SECOND / 60;
     const useconds_t partial_write_retry_interval = 10000;
 
-    if (conf->record_file.fd >= 0) {
+    if (record_file->fd < 0) {
+    	errno = EBADF;
+    	expected_bytes = -1;
+    }
+    else if (expected_bytes > 0)
+    {
         while (TRUE) {
             if (iovcnt >= sysconf(_SC_IOV_MAX)) {
                 rc = trace_dumper_writev(record_file->fd, iov, iovcnt);
@@ -177,7 +192,7 @@ int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct trace_r
             	if (errno == ENOSPC) {
 					if (0 == retries_due_to_full_fs)
 					{
-						syslog(LOG_USER|LOG_WARNING, "Writing traces to %s paused due to a full filesystem", conf->record_file.filename);
+						syslog(LOG_USER|LOG_WARNING, "Writing traces to %s paused due to a full filesystem", record_file->filename);
 					}
 
 					++retries_due_to_full_fs;
@@ -188,7 +203,7 @@ int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct trace_r
             	}
             	else
             	{
-            		syslog(LOG_USER|LOG_ERR, "Had unexpected error %s while writing to %s", strerror(errno), conf->record_file.filename);
+            		syslog(LOG_USER|LOG_ERR, "Had unexpected error %s while writing to %s", strerror(errno), record_file->filename);
             		expected_bytes = -1;
             		break;
             	}
@@ -204,7 +219,7 @@ int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct trace_r
 
             	if (0 == retries_due_to_partial_write % 500) {
             		syslog(LOG_USER|LOG_WARNING, "Writing traces to %s had to be rolled back since only %d of %d bytes were written. retried %u times so far.",
-            				conf->record_file.filename, rc, expected_bytes, retries_due_to_partial_write);
+            				record_file->filename, rc, expected_bytes, retries_due_to_partial_write);
             	}
             	++retries_due_to_partial_write;
             	usleep(partial_write_retry_interval);
@@ -214,27 +229,50 @@ int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct trace_r
             if (retries_due_to_full_fs > 0) {
             	syslog(LOG_USER|LOG_NOTICE,
             		  "Writing traces to %s resumed after a pause due a full file-system after %u retries every %.2f seconds",
-            		  conf->record_file.filename, retries_due_to_full_fs, retry_interval/1E6);
+            		  record_file->filename, retries_due_to_full_fs, retry_interval/1E6);
             	retries_due_to_full_fs = 0;
             }
 
             if (retries_due_to_partial_write > 0) {
                 syslog(LOG_USER|LOG_NOTICE,
 				  "Writing traces to %s resumed after a pause due to to a partial write after %u retries every %.1f ms",
-				  conf->record_file.filename, retries_due_to_partial_write, partial_write_retry_interval/1000.0);
+				  record_file->filename, retries_due_to_partial_write, partial_write_retry_interval/1000.0);
                 retries_due_to_partial_write = 0;
             }
 
             record_file->records_written += expected_bytes / sizeof(struct trace_record);
             break;
         }
-    }
-    else {
-    	errno = EBADF;
-    	expected_bytes = -1;
-    }
 
-    dump_to_parser_if_necessary(conf, iov, iovcnt, dump_to_parser);
+        dump_to_parser_if_necessary(conf, iov, iovcnt, dump_to_parser);
+    }
 
     return expected_bytes;
+}
+
+int trace_dumper_write_and_sync(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, const struct iovec *iov, int iovcnt)
+{
+	if (record_file->fd < 0) {
+		errno = EBADF;
+		return -1;
+	}
+
+	if (iovcnt > 0) {
+		int num_warn_bytes = total_iovec_len(iov, iovcnt);
+		if (trace_dumper_write(conf, record_file, iov, iovcnt, FALSE) != num_warn_bytes) {
+			syslog(LOG_USER|LOG_ERR,
+					"Trace dumper encountered the following error while writing to the file %s: %s",
+					conf->notification_file.filename, strerror(errno));
+			fsync(record_file->fd); /* Use fsync in case we applied ftruncate to the file in trace_dumper_write() */
+			return -1;
+		}
+		else if (fdatasync(record_file->fd) < 0) {
+			syslog(LOG_USER|LOG_ERR,
+					"Trace dumper encountered the following error while flushing data to the file %s: %s",
+					conf->notification_file.filename, strerror(errno));
+			return -1;
+		}
+    }
+
+	return 0;
 }

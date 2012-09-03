@@ -16,7 +16,15 @@ static void *do_log(void *)
 	interval.tv_nsec = interval_ns;
 	pthread_t thread = pthread_self();
 	for (int i = 0; i < n_thread_iters; i++) {
-		INFO(thread, ": iteration", i);
+		if (i & 0xFFF) {
+			INFO(thread, ": iteration", i);
+		}
+		else if (i & 0xFFFF) {
+			WARN(thread, ": iteration", i);
+		}
+		else {
+			ERR(thread, ": iteration", i);
+		}
 		if (interval_ns > 0)
 			nanosleep(&interval, NULL);
 

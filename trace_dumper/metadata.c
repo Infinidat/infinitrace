@@ -37,7 +37,7 @@ static void init_metadata_rec(struct trace_record *rec, const struct trace_mappe
     rec->u.metadata.metadata_magic = TRACE_MAGIC_METADATA;
 }
 
-static int write_metadata_header_start(struct trace_dumper_configuration_s *conf, const struct trace_mapped_buffer *mapped_buffer)
+static int write_metadata_header_start(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, const struct trace_mapped_buffer *mapped_buffer)
 {
     struct trace_record rec;
     init_metadata_rec(&rec, mapped_buffer);
@@ -51,43 +51,44 @@ static int write_metadata_header_start(struct trace_dumper_configuration_s *conf
     	PidList__dequeue(&conf->dead_pids, rec.u.metadata.dead_pids + i);
     }
 
-    return write_single_record(conf, &rec);
+    return write_single_record(conf, record_file, &rec);
 }
 
-static int write_metadata_end(struct trace_dumper_configuration_s *conf, const struct trace_mapped_buffer *mapped_buffer)
+static int write_metadata_end(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, const struct trace_mapped_buffer *mapped_buffer)
 {
     struct trace_record rec;
     init_metadata_rec(&rec, mapped_buffer);
 	rec.rec_type = TRACE_REC_TYPE_METADATA_PAYLOAD;
 	rec.termination = TRACE_TERMINATION_LAST;
-	return write_single_record(conf, &rec);
+	return write_single_record(conf, record_file, &rec);
 }
 
-static int trace_dump_metadata(struct trace_dumper_configuration_s *conf, struct trace_mapped_buffer *mapped_buffer)
+static int trace_dump_metadata(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, struct trace_mapped_buffer *mapped_buffer)
 {
     unsigned int num_records;
     int rc;
 
     mapped_buffer->metadata.metadata_payload_record.ts = trace_get_nsec();
-    rc = write_metadata_header_start(conf, mapped_buffer);
+    rc = write_metadata_header_start(conf, record_file, mapped_buffer);
     if (0 != rc) {
         return -1;
     }
 
     num_records = mapped_buffer->metadata.size / (TRACE_RECORD_PAYLOAD_SIZE) + ((mapped_buffer->metadata.size % (TRACE_RECORD_PAYLOAD_SIZE)) ? 1 : 0);
-    rc = trace_dumper_write(conf, &conf->record_file, mapped_buffer->metadata.metadata_iovec, 2 * num_records, TRUE);
+    rc = trace_dumper_write(conf, record_file, mapped_buffer->metadata.metadata_iovec, 2 * num_records,
+    						record_file_should_be_parsed(conf, record_file));
     if ((unsigned int) rc != num_records * sizeof(struct trace_record)) {
     	return -1;
     }
 
-    return write_metadata_end(conf, mapped_buffer);
+    return write_metadata_end(conf, record_file, mapped_buffer);
 }
 
 int dump_metadata_if_necessary(struct trace_dumper_configuration_s *conf, struct trace_mapped_buffer *mapped_buffer)
 {
     if (!mapped_buffer->metadata_dumped) {
         mapped_buffer->last_metadata_offset = conf->record_file.records_written;
-        int rc = trace_dump_metadata(conf, mapped_buffer);
+        int rc = trace_dump_metadata(conf, &conf->record_file, mapped_buffer);
         if (0 != rc) {
         	syslog(LOG_USER|LOG_ERR, "Failed to dump metadata to the file %s due to error: %s", conf->record_file.filename, strerror(errno));
             ERR("Error dumping metadata");
@@ -95,8 +96,20 @@ int dump_metadata_if_necessary(struct trace_dumper_configuration_s *conf, struct
             return rc;
         }
     }
-
     mapped_buffer->metadata_dumped = TRUE;
+
+    if (conf->write_notifications_to_file) {
+		if (!mapped_buffer->notification_metadata_dumped) {
+			int rc = trace_dump_metadata(conf, &conf->notification_file, mapped_buffer);
+			if (0 != rc) {
+				syslog(LOG_USER|LOG_ERR, "Failed to dump warnings metadata to the file %s due to error: %s", conf->notification_file.filename, strerror(errno));
+				ERR("Error dumping metadata");
+				return rc;
+			}
+		}
+		mapped_buffer->notification_metadata_dumped = TRUE;
+    }
+
     return 0;
 }
 

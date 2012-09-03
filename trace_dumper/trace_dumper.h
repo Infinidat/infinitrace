@@ -77,6 +77,7 @@ struct trace_mapped_buffer {
     trace_record_counter_t records_buffer_size;
     trace_record_counter_t last_metadata_offset;
     bool_t metadata_dumped;
+    bool_t notification_metadata_dumped;
     struct trace_mapped_records mapped_records[TRACE_BUFFER_NUM_RECORDS];
     struct trace_mapped_metadata metadata;
     trace_pid_t pid;
@@ -99,6 +100,8 @@ struct trace_record_file {
     unsigned long records_written;
     char filename[0x100];
     int fd;
+    struct iovec *iov;
+    size_t iov_allocated_len;
 };
 
 enum operation_type {
@@ -123,8 +126,10 @@ struct trace_dumper_configuration_s {
     struct trace_record_matcher_spec_s severity_filter[SEVERITY_FILTER_LEN];
     unsigned int header_written;
     unsigned int write_to_file;
+    unsigned int write_notifications_to_file;
     unsigned int dump_online_statistics;
     const char *fixed_output_filename;
+    const char *fixed_notification_filename;
     unsigned int online;
     unsigned int trace_online;
     unsigned int debug_online;
@@ -146,6 +151,7 @@ struct trace_dumper_configuration_s {
     unsigned long long max_records_per_second;
     int stopping;
 	struct trace_record_file record_file;
+	struct trace_record_file notification_file;
 	unsigned int last_flush_offset;
     enum operation_type op_type;
     trace_ts_t prev_flush_ts;

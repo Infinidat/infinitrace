@@ -225,6 +225,7 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
     new_mapped_buffer->metadata.metadata_fd = static_fd;
     new_mapped_buffer->pid = (trace_pid_t) pid;
     new_mapped_buffer->metadata_dumped = FALSE;
+    new_mapped_buffer->notification_metadata_dumped = FALSE;
     unsigned long long process_time;
     rc = get_process_time(pid, &process_time);
     if (0 != rc) {
@@ -252,6 +253,15 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
     }
 
     INFO("new process joined" ,"pid =", new_mapped_buffer->pid, "name =", new_mapped_buffer->name);
+    if (new_mapped_buffer->pid != pid) {
+    	syslog(LOG_USER|LOG_WARNING, "Pid %d of %s is too large to be represented in trace dumper's %lu-bit pid field. Please restrict your system's process IDs accordingly",
+    			pid, new_mapped_buffer->name, 8*sizeof(new_mapped_buffer->pid));
+    }
+    else if (!conf->attach_to_pid) {
+    	syslog(LOG_USER|LOG_INFO, "Starting to collect traces from %s with pid %d to %s",
+    			new_mapped_buffer->name, new_mapped_buffer->pid, conf->record_file.filename);
+    }
+
     rc = 0;
     goto exit;
     MappedBuffers__remove_element(&conf->mapped_buffers, MappedBuffers__element_count(&conf->mapped_buffers) - 1);

@@ -365,6 +365,50 @@ static void possibly_report_record_loss(
 	}
 }
 
+static unsigned add_warn_records_to_iov(
+		const struct trace_mapped_records *mapped_records,
+		unsigned count,
+		enum trace_severity threshold_severity,
+		struct trace_record_file *record_file)
+{
+	unsigned iov_idx = 0;
+	unsigned recs_covered = 0;
+	unsigned start_idx = mapped_records->imutab->max_records_mask & mapped_records->current_read_record;
+	unsigned i;
+
+	for (i = 0; i < count; i+= recs_covered) {
+		const struct trace_record *rec = (const struct trace_record *)(&mapped_records->records[(start_idx + i) & mapped_records->imutab->max_records_mask]);
+		struct iovec *iov = increase_iov_if_necessary(record_file, iov_idx + 2);
+
+		if ((rec->termination & TRACE_TERMINATION_FIRST) &&
+			(TRACE_REC_TYPE_TYPED == rec->rec_type) &&
+			(rec->severity >= threshold_severity)) {
+				iov[iov_idx].iov_base = (void *)rec;
+				do {
+					/* In case of wrap-around within the record sequence for a single trace, start a new iovec */
+					if (__builtin_expect(rec == mapped_records->records + mapped_records->imutab->max_records, 0)) {
+						recs_covered = mapped_records->imutab->max_records - (start_idx + i);
+						assert(recs_covered > 0);
+						iov[iov_idx].iov_len = sizeof(*rec) * recs_covered;
+						i+= recs_covered;
+						iov_idx++;
+						rec = (const struct trace_record *)(mapped_records->records);
+						iov[iov_idx].iov_base = (void *)rec;
+					}
+				} while (0 == ((rec++)->termination & TRACE_TERMINATION_LAST));
+
+				recs_covered = rec - (const struct trace_record *)(iov[iov_idx].iov_base);
+				iov[iov_idx].iov_len = sizeof(*rec) * recs_covered;
+				iov_idx++;
+		}
+		else {
+			recs_covered = 1;
+		}
+	}
+
+	return iov_idx;
+}
+
 /* Iterate over all the mapped buffers and flush them. The result will be a new dump added to the file, with the
  * records flushed from every buffer that has data pending constituting a chunk.
  * A negative return value indicates an error. A non-negative return value indicates the total number of records still pending
@@ -390,6 +434,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 		struct trace_record_buffer_dump *bd = NULL;
 		const struct trace_record *last_rec = NULL;
 		struct records_pending_write deltas;
+
         lost_records = 0;
         rc = dump_metadata_if_necessary(conf, mapped_buffer);
         if (0 != rc) {
@@ -430,9 +475,11 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 			                    (mapped_records->imutab->max_records_mask & mapped_records->current_read_record) + deltas.up_to_buf_end - 1]);
 		}
 
+
 		assert(	(TRACE_TERMINATION_LAST & last_rec->termination) ||
 				/* Make sure this is not due to record buffer overflow overwriting *last_rec */
 				(mapped_records->mutab->current_record - mapped_records->current_read_record >= deltas.total));
+
 
 		/* Note: there's a possible race condition here that could lead to silent record loss
 		 * if *last_rec gets overwritten by incoming data before we retrieve the ts from it. */
@@ -441,12 +488,21 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 
         possibly_report_record_loss(conf, mapped_buffer, mapped_records, &deltas);
 
+        static const enum trace_severity notification_severity_threshold = TRACE_SEV_WARN;
+        if (conf->write_notifications_to_file && (mapped_records->imutab->severity_type >= (1U << notification_severity_threshold))) {
+			unsigned int num_warn_iovecs = add_warn_records_to_iov(mapped_records, deltas.total, TRACE_SEV_WARN, &conf->notification_file);
+			trace_dumper_write_and_sync(conf, &conf->notification_file, conf->notification_file.iov, num_warn_iovecs);
+        }
+
         if (conf->online && record_buffer_matches_online_severity(conf, mapped_records->imutab->severity_type)) {
             rc = dump_iovector_to_parser(conf, &conf->parser, &conf->flush_iovec[iovec_base_index], num_iovecs - iovec_base_index);
             if (0 != rc) {
                 syslog(LOG_USER|LOG_WARNING,
-                "Trace dumper encountered the following error while parsing and filtering %d records for syslog: %s",
-                num_iovecs - iovec_base_index, strerror(errno));
+					"Trace dumper encountered the following error while parsing and filtering %lu records bound for %s to %s: %s",
+					total_iovec_len(&conf->flush_iovec[iovec_base_index], num_iovecs - iovec_base_index) / sizeof(struct trace_record),
+					conf->record_file.filename,
+					conf->syslog ? "syslog" : "standard output",
+					strerror(errno));
             }
         }
         
