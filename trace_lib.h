@@ -297,7 +297,7 @@ static inline void trace_commit_record(struct trace_record *target_record, const
 #ifndef _LP64
 #warning "The comparison below might cause anomalous behavior due to counter wrap-around on 32-bit platforms, please verify and test."
 #endif
-		if (expected_value > new_index) {
+		if ((expected_value > new_index) && (expected_value < -1UL)) {
 			break;
 		}
 

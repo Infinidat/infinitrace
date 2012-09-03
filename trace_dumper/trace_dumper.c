@@ -180,7 +180,7 @@ static void calculate_delta(
 
     memset(delta, 0, sizeof(*delta));
     if(TRACE_SEV_INVALID == last_record->severity) {
-    	if (0 != last_written_record) {  /* Some traces have been written */
+    	if (-1UL != last_written_record) {  /* Some traces have been written */
     		syslog(LOG_USER|LOG_ERR,
     				"Record %lu was uninitialized but marked as committed while dumping from a buffer with for pid %d",
     				last_written_record, last_record->pid);
@@ -190,8 +190,8 @@ static void calculate_delta(
     }
 
     /* Verify the record counters haven't wrapped around. On 64-bit platforms this should never happen. */
-    assert(last_written_record >= mapped_records->current_read_record);
-    long backlog_len = last_written_record - mapped_records->current_read_record;
+    assert(last_written_record + 1UL >= mapped_records->current_read_record);
+    long backlog_len = last_written_record + 1UL - mapped_records->current_read_record;
 
     /* Check whether the number of records written to the shared-memory buffers exceeds the number read by the dumper by more than the buffer size.
            * If so - we have lost records. */
@@ -422,6 +422,10 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 			last_rec = (const struct trace_record *) (&mapped_records->records[
 			                    (mapped_records->imutab->max_records_mask & mapped_records->current_read_record) + deltas.up_to_buf_end - 1]);
 		}
+
+		assert(	(TRACE_TERMINATION_LAST & last_rec->termination) ||
+				/* Make sure this is not due to record buffer overflow overwriting *last_rec */
+				(mapped_records->mutab->current_record - mapped_records->current_read_record >= deltas.total));
 
 		/* Note: there's a possible race condition here that could lead to silent record loss
 		 * if *last_rec gets overwritten by incoming data before we retrieve the ts from it. */

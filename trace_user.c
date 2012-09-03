@@ -357,19 +357,21 @@ static void init_records_immutable_data(struct trace_records *records, unsigned 
 static void init_record_mutable_data(struct trace_records *recs)
 {
 	recs->mutab.current_record = 0;
-	recs->mutab.last_committed_record = 0;
+	recs->mutab.last_committed_record = -1UL;
 	memset(recs->records, TRACE_SEV_INVALID, sizeof(recs->records[0]));
+	TRACE_ASSERT(recs->imutab.max_records > 0);
+	memset(recs->records + recs->imutab.max_records - 1, TRACE_SEV_INVALID, sizeof(recs->records[0]));
 }
 
 static void init_records_metadata(void)
 {
-	init_record_mutable_data(&(current_trace_buffer->u.records._debug));
-	init_record_mutable_data(&(current_trace_buffer->u.records._other));
-	init_record_mutable_data(&(current_trace_buffer->u.records._funcs));
-
     init_records_immutable_data(&current_trace_buffer->u.records._other, TRACE_RECORD_BUFFER_RECS, (1 << TRACE_SEV_FATAL) | (1 << TRACE_SEV_ERR) | (1 << TRACE_SEV_INFO) | (1 << TRACE_SEV_WARN));
     init_records_immutable_data(&current_trace_buffer->u.records._debug, TRACE_RECORD_BUFFER_RECS, (1 << TRACE_SEV_DEBUG));
     init_records_immutable_data(&current_trace_buffer->u.records._funcs, TRACE_RECORD_BUFFER_RECS, (1 << TRACE_SEV_FUNC_TRACE));
+
+ 	init_record_mutable_data(&(current_trace_buffer->u.records._other));
+	init_record_mutable_data(&(current_trace_buffer->u.records._debug));
+	init_record_mutable_data(&(current_trace_buffer->u.records._funcs));
 }
 
 static void map_dynamic_log_buffers()
