@@ -273,7 +273,7 @@ int prepend_prefix_to_filename(const char *filename, const char *prefix)
     strncpy(orig_filename, filename, sizeof(orig_filename));
     char *basename_ptr = basename(orig_filename);
     strncpy(base, basename_ptr, sizeof(base));
-    snprintf(snapshot_filename, sizeof(snapshot_filename), "%s/%s%s", prefix, dir, base);
+    snprintf(snapshot_filename, sizeof(snapshot_filename), "%s/%s%s", dir, prefix, base);
     return rename(filename, snapshot_filename);
 }
 
