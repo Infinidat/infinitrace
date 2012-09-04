@@ -365,6 +365,10 @@ static void possibly_report_record_loss(
 	}
 }
 
+/* Iterate over all the mapped buffers and flush them. The result will be a new dump added to the file, with the
+ * records flushed from every buffer that has data pending constituting a chunk.
+ * A negative return value indicates an error. A non-negative return value indicates the total number of records still pending
+ * writing after the buffer flush */
 static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 {
     struct trace_mapped_buffer *mapped_buffer = NULL;
@@ -375,7 +379,9 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
     unsigned int num_iovecs = 0;
     int i = 0, rid = 0;
     unsigned int total_written_records = 0;
+    int total_unflushed_records = 0;
     long lost_records = 0L;
+    int rc = 0;
 
 	cur_ts = trace_get_nsec();
     init_dump_header(conf, &dump_header_rec, cur_ts, &iovec, &num_iovecs, &total_written_records);
@@ -385,7 +391,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 		const struct trace_record *last_rec = NULL;
 		struct records_pending_write deltas;
         lost_records = 0;
-        int rc = dump_metadata_if_necessary(conf, mapped_buffer);
+        rc = dump_metadata_if_necessary(conf, mapped_buffer);
         if (0 != rc) {
             return rc;
         }
@@ -396,6 +402,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
         }
         
         calculate_delta(mapped_records, &deltas);
+        total_unflushed_records += deltas.beyond_chunk_size;
         lost_records = deltas.lost;
         if (lost_records) {
         	adjust_for_overrun(mapped_records);
@@ -449,11 +456,13 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 	dump_header_rec.u.dump_header.total_dump_size = total_written_records - 1;
     dump_header_rec.u.dump_header.first_chunk_offset = conf->record_file.records_written + 1;
 
-	if (cur_ts < conf->next_flush_ts) {
-		return 0;
+	if (cur_ts >= conf->next_flush_ts) {
+		rc = possibly_write_iovecs_to_disk(conf, num_iovecs, total_written_records, cur_ts);
+		if (rc < 0) {
+			return rc;
+		}
 	}
-
-    return possibly_write_iovecs_to_disk(conf, num_iovecs, total_written_records, cur_ts);
+    return total_unflushed_records;
 }
 
 
@@ -487,6 +496,46 @@ static void handle_overwrite(struct trace_dumper_configuration_s *conf)
     conf->last_overwrite_test_record_count = conf->record_file.records_written;
 }
 
+/* Periodic housekeeping functions: Look for any processes that have started and need to have their traces collected, or that have ended, allowing any resouces
+ * allocating for serving them to be freed.
+ * Return value:
+ * 0 		- If housekeeping was performed successfully
+ * EAGAIN 	- If the function was called prematurely and no housekeeping was done
+ * < 0		- If an error occurred.
+ *  */
+static int do_housekeeping_if_necessary(struct trace_dumper_configuration_s *conf)
+{
+	static const trace_ts_t HOUSEKEEPING_INTERVAL = 20000;
+
+	if (trace_get_nsec() < conf->next_housekeeping_ts) {
+		return EAGAIN;
+	}
+	conf->next_housekeeping_ts = trace_get_nsec() + HOUSEKEEPING_INTERVAL;
+
+	int rc = reap_empty_dead_buffers(conf);
+    if (0 != rc) {
+    	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while emptying dead buffers.", strerror(errno));
+    	return rc;
+    }
+
+    handle_overwrite(conf);
+
+    if (!conf->attach_to_pid && !conf->stopping) {
+        rc = map_new_buffers(conf);
+        if (0 != rc) {
+        	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while mapping new buffers.", strerror(errno));
+        	return rc;
+        }
+    }
+
+    rc = unmap_discarded_buffers(conf);
+    if (0 != rc) {
+    	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while unmapping discarded buffers.", strerror(errno));
+    }
+
+    return rc;
+}
+
 static int dump_records(struct trace_dumper_configuration_s *conf)
 {
     int rc;
@@ -513,29 +562,24 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
         possibly_dump_online_statistics(conf);
         
         rc = trace_flush_buffers(conf);
-        if (0 != rc) {
+        if (rc > TRACE_FILE_IMMEDIATE_FLUSH_THRESHOLD) {
+        	struct timespec ts = { 0, conf->ts_flush_delta };
+        	nanosleep(&ts, NULL);
+        	continue;
+        }
+        else if (rc < 0) {
         	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while flushing trace buffers.", strerror(errno));
         	break;
         }
 
-        rc = reap_empty_dead_buffers(conf);
-        if (0 != rc) {
-        	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while emptying dead buffers.", strerror(errno));
+        rc = do_housekeeping_if_necessary(conf);
+        if (EAGAIN == rc) { /* No housekeeping performed */
+			usleep(1000);
+		}
+        else if (rc < 0) {
         	break;
         }
-
-        usleep(20000);
-        handle_overwrite(conf);
-
-        if (!conf->attach_to_pid && !conf->stopping) {
-            map_new_buffers(conf);
-        }
-
-        rc = unmap_discarded_buffers(conf);
-        if (0 != rc) {
-        	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while unmapping discarded buffers.", strerror(errno));
-            break;
-        }
+        else assert(0 == rc);
     }
 
     rc = errno;
