@@ -39,11 +39,13 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 /* Global per process/thread data structures */
 struct trace_buffer *current_trace_buffer = NULL;
 __thread unsigned short trace_current_nesting;
-
+__thread enum trace_severity trace_thread_severity_threshold = TRACE_SEV_INVALID;
 
 static struct trace_runtime_control runtime_control = 
 {
-	TRACE_SEV_INVALID /* 0 */
+	TRACE_SEV_INVALID,
+	{0, 0},
+	NULL
 };
 
 const struct trace_runtime_control *p_trace_runtime_control = &runtime_control;
@@ -51,6 +53,41 @@ const struct trace_runtime_control *p_trace_runtime_control = &runtime_control;
 void trace_runtime_control_set_default_min_sev(enum trace_severity sev)
 {
 	runtime_control.default_min_sev = sev;
+}
+
+int trace_runtime_control_set_sev_threshold_for_subsystem(int subsystem_id, enum trace_severity sev)
+{
+	if ((NULL == runtime_control.thresholds) ||
+		(subsystem_id < runtime_control.subsystem_range[0]) ||
+		(subsystem_id > runtime_control.subsystem_range[1])) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	runtime_control.thresholds[subsystem_id - p_trace_runtime_control->thresholds[0]] = sev;
+	return 0;
+}
+
+int trace_runtime_control_set_subsystem_range(int low, int high)
+{
+	if (high < low) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	if (NULL != runtime_control.thresholds) {
+		free(runtime_control.thresholds);
+	}
+
+	runtime_control.subsystem_range[0] = low;
+	runtime_control.subsystem_range[1] = high;
+
+	runtime_control.thresholds = calloc(high - low + 1, sizeof(runtime_control.thresholds[0]));
+	if (NULL == runtime_control.thresholds) {
+		return -1;
+	}
+
+	return 0;
 }
 
 #define ALLOC_STRING(dest, source)                      \

@@ -633,8 +633,9 @@ void TraceCall::expand()
 {
     std::string declaration = getTraceDeclaration();
     std::string trace_write_expression = varlength_getFullTraceWriteExpression();
+    static const char sev_threshold_expr[] = "((TRACE_SEV_INVALID != trace_thread_severity_threshold) ? trace_thread_severity_threshold : p_trace_runtime_control->default_min_sev)";
     replaceExpr(call_expr, "{" + declaration + "if ((" + 
-    	getSeverity() +  ">= p_trace_runtime_control->default_min_sev) && (current_trace_buffer != 0)){"  + trace_write_expression + "}}");    
+    	getSeverity() +  ">= " + sev_threshold_expr + ") && (current_trace_buffer != 0)){"  + trace_write_expression + "}}");
 }
 
 /* Expand a recursive trace call via REPR */

@@ -66,8 +66,27 @@ extern __thread unsigned short trace_current_nesting;
 
 /* An interface that the traced process can use at runtime to limit the severity of trace messages that will
  * be written to shared memory. */
-extern const struct trace_runtime_control *p_trace_runtime_control;    
+extern const struct trace_runtime_control *p_trace_runtime_control;
+
+/* Set the default severity threshold which can be overridden for the current thread */
 void trace_runtime_control_set_default_min_sev(enum trace_severity sev);
+
+/* Reset all per-subsystem thresholds and set the range of allowed subsytem IDs */
+int trace_runtime_control_set_subsystem_range(int low, int high);
+
+int trace_runtime_control_set_sev_threshold_for_subsystem(int subsystem_id, enum trace_severity sev);
+static inline enum trace_severity trace_runtime_control_get_sev_threshold_for_subsystem(int subsystem_id)
+{
+	if (NULL == p_trace_runtime_control->thresholds) {
+		return TRACE_SEV_INVALID;
+	}
+	TRACE_ASSERT((subsystem_id >= p_trace_runtime_control->subsystem_range[0]) && (subsystem_id <= p_trace_runtime_control->subsystem_range[1]));
+	return p_trace_runtime_control->thresholds[subsystem_id - p_trace_runtime_control->thresholds[0]];
+}
+
+/* Allow the global default severity threshold to be overridden for the current thread by setting trace_thread_severity_threshold
+ * to a value other than TRACE_SEV_INVALID */
+extern __thread enum trace_severity trace_thread_severity_threshold;
 
 /*** Supporting inline functions used by the trace code that that ccwrap.py injects into the source files ***/
 
