@@ -75,14 +75,31 @@ static int trace_write_header(struct trace_dumper_configuration_s *conf, struct 
 	return 0;
 }
 
+static void generate_file_name(char *filename, const struct trace_dumper_configuration_s *conf, const char *filename_base)
+{
+	const size_t name_len = sizeof(conf->record_file.filename);
+	unsigned long long now_ms = trace_get_walltime() / 1000;
+
+	if (trace_quota_is_enabled(conf)) {
+		/* The quota code parses the file names to get their creation time, so we have to preserve the format. */
+		snprintf(filename, name_len, "%s/trace.%llu.dump", filename_base, now_ms);
+	}
+	else {
+		struct tm now_tm;
+		time_t now_sec = now_ms / 1000UL;
+		gmtime_r(&now_sec, &now_tm);
+		int len = snprintf(filename, name_len, "%s/trace.", filename_base);
+		len += strftime(filename + len, name_len - len, "%F--%H-%M-%S--", &now_tm);
+		snprintf(filename + len, name_len - len, "%llu.dump", (now_ms % 1000) / 10);
+	}
+}
 
 static int trace_open_file(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, const char *filename_base)
 {
-    unsigned long long now = 0;
+
     char filename[sizeof(record_file->filename)];
 
     record_file->records_written = 0;
-    now = trace_get_walltime() / 1000;
 
     if (conf->fixed_output_filename) {
         if ((size_t)(stpncpy(filename, conf->fixed_output_filename, sizeof(filename)) - filename) >= sizeof(filename)) {
@@ -93,8 +110,7 @@ static int trace_open_file(struct trace_dumper_configuration_s *conf, struct tra
     	if (trace_create_dir_if_necessary(filename_base) < 0) {
     		return -1;
     	}
-        snprintf(filename, sizeof(filename),
-                 "%s/trace.%lld.dump", filename_base, now);
+    	generate_file_name(filename, conf, filename_base);
     }
 
     INFO("Opening trace file:", filename);
