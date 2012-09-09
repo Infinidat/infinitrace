@@ -262,14 +262,7 @@ int trace_dumper_write_and_sync(struct trace_dumper_configuration_s *conf, struc
 		if (trace_dumper_write(conf, record_file, iov, iovcnt, FALSE) != num_warn_bytes) {
 			syslog(LOG_USER|LOG_ERR,
 					"Trace dumper encountered the following error while writing to the file %s: %s",
-					conf->notification_file.filename, strerror(errno));
-			fsync(record_file->fd); /* Use fsync in case we applied ftruncate to the file in trace_dumper_write() */
-			return -1;
-		}
-		else if (fdatasync(record_file->fd) < 0) {
-			syslog(LOG_USER|LOG_ERR,
-					"Trace dumper encountered the following error while flushing data to the file %s: %s",
-					conf->notification_file.filename, strerror(errno));
+					record_file->filename, strerror(errno));
 			return -1;
 		}
     }
