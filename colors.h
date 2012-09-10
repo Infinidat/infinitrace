@@ -1,6 +1,20 @@
 #ifndef __COLORS_H__
 #define __COLORS_H__
 
+#define GREY            "\033[1;24;30m"
+#define WHITE           "\033[0;37m"
+#define GREEN           "\033[0;32m"
+#define MAGENTA         "\033[0;35m"
+#define WHITE_B         "\033[1;37m" 
+#define GREEN_B         "\033[1;32m" 
+#define YELLOW_B        "\033[1;33m"
+#define RED_B           "\033[1;31m"
+#define CYAN_B          "\033[1;36m"
+#define BLUE_B          "\033[1;34m"
+#define MAGENTA_B       "\033[1;35m"
+#define ANSI_RESET      "\033[0;39;49m"
+
+
 #define _B_BLACK(x)        "\033[40m" x
 #define _F_GREY(x)         "\033[1;24;30m" x
 #define _F_WHITE(x)        "\033[0;37m" x

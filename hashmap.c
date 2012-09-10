@@ -107,7 +107,8 @@ map_t hashmap_new() {
  */
 unsigned int hashmap_key_to_int(hashmap_map * m, const char* keystring){
    unsigned int key = 0;
-    for (unsigned int i = 0 ; keystring[i] && i < 1024; i++)
+   unsigned int i;
+    for (i = 0 ; keystring[i] && i < 1024; i++)
         key += i * keystring[i] ;
 
     assert(m->table_size >= INITIAL_SIZE);
