@@ -250,7 +250,7 @@ int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct trace_r
     return expected_bytes;
 }
 
-int trace_dumper_write_and_sync(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, const struct iovec *iov, int iovcnt)
+int trace_dumper_write_to_record_file(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, int iovcnt)
 {
 	if (record_file->fd < 0) {
 		errno = EBADF;
@@ -258,8 +258,8 @@ int trace_dumper_write_and_sync(struct trace_dumper_configuration_s *conf, struc
 	}
 
 	if (iovcnt > 0) {
-		int num_warn_bytes = total_iovec_len(iov, iovcnt);
-		if (trace_dumper_write(conf, record_file, iov, iovcnt, FALSE) != num_warn_bytes) {
+		int num_warn_bytes = total_iovec_len(record_file->iov, iovcnt);
+		if (trace_dumper_write(conf, record_file, record_file->iov, iovcnt, FALSE) != num_warn_bytes) {
 			syslog(LOG_USER|LOG_ERR,
 					"Trace dumper encountered the following error while writing to the file %s: %s",
 					record_file->filename, strerror(errno));

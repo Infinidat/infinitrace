@@ -271,6 +271,7 @@ static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *co
     struct trace_mapped_buffer *mapped_buffer;
     struct trace_mapped_records *mapped_records;
     if (num_iovecs > 1) {
+    	assert(num_iovecs >= 3);  /* Should have at least dump and chunk headers and some data */
         conf->last_flush_offset = conf->record_file.records_written;
 		conf->prev_flush_ts = cur_ts;
 		conf->next_flush_ts = cur_ts + conf->ts_flush_delta;
@@ -428,7 +429,13 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
     int rc = 0;
 
 	cur_ts = trace_get_nsec();
-    init_dump_header(conf, &dump_header_rec, cur_ts, &iovec, &num_iovecs, &total_written_records);
+	bool_t premature_call = (cur_ts < conf->next_flush_ts);
+	if (!premature_call) {
+		init_dump_header(conf, &dump_header_rec, cur_ts, &iovec, &num_iovecs, &total_written_records);
+	}
+	else {
+		syslog(LOG_USER|LOG_DEBUG, "Trace buffer flush called prematurely at %llu < %llu", cur_ts, conf->next_flush_ts);
+	}
 
 	for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
 		struct trace_record_buffer_dump *bd = NULL;
@@ -448,6 +455,11 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
         
         calculate_delta(mapped_records, &deltas);
         total_unflushed_records += deltas.beyond_chunk_size;
+        if (premature_call) {
+        	total_unflushed_records += deltas.total;
+        	continue;
+        }
+
         lost_records = deltas.lost;
         if (lost_records) {
         	adjust_for_overrun(mapped_records);
@@ -491,7 +503,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
         static const enum trace_severity notification_severity_threshold = TRACE_SEV_WARN;
         if (conf->write_notifications_to_file && (mapped_records->imutab->severity_type >= (1U << notification_severity_threshold))) {
 			unsigned int num_warn_iovecs = add_warn_records_to_iov(mapped_records, deltas.total, TRACE_SEV_WARN, &conf->notification_file);
-			trace_dumper_write_and_sync(conf, &conf->notification_file, conf->notification_file.iov, num_warn_iovecs);
+			trace_dumper_write_to_record_file(conf, &conf->notification_file, num_warn_iovecs);
         }
 
         if (conf->online && record_buffer_matches_online_severity(conf, mapped_records->imutab->severity_type)) {
@@ -509,10 +521,10 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 		total_written_records += deltas.total + 1;
 	}
 
-	dump_header_rec.u.dump_header.total_dump_size = total_written_records - 1;
-    dump_header_rec.u.dump_header.first_chunk_offset = conf->record_file.records_written + 1;
+	if (!premature_call) {
+		dump_header_rec.u.dump_header.total_dump_size = total_written_records - 1;
+		dump_header_rec.u.dump_header.first_chunk_offset = conf->record_file.records_written + 1;
 
-	if (cur_ts >= conf->next_flush_ts) {
 		rc = possibly_write_iovecs_to_disk(conf, num_iovecs, total_written_records, cur_ts);
 		if (rc < 0) {
 			return rc;

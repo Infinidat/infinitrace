@@ -30,7 +30,7 @@ int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct trace_r
 int dump_iovector_to_parser(const struct trace_dumper_configuration_s *conf, struct trace_parser *parser, const struct iovec *iov, int iovcnt);
 
 /* A wrapper for trace_dumper_write which syncs the written data to the disk after the write. */
-int trace_dumper_write_and_sync(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, const struct iovec *iov, int iovcnt);
+int trace_dumper_write_to_record_file(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, int iovcnt);
 
 /* If the existing size of the IO vector is insufficient to hold size_t records, increase it by at least 50% */
 struct iovec *increase_iov_if_necessary(struct trace_record_file *record_file, size_t required_size);
