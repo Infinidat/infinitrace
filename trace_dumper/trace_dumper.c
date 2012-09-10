@@ -148,11 +148,20 @@ struct records_pending_write {
 	long remaining_before_loss;
 };
 
-static void adjust_for_overrun(struct trace_mapped_records *mapped_records)
+static trace_record_counter_t adjust_for_overrun(struct trace_mapped_records *mapped_records)
 {
 	trace_record_counter_t current_record = mapped_records->mutab->current_record;
 	assert(current_record >= mapped_records->imutab->max_records - 1);
-	mapped_records->current_read_record = current_record + 1L - mapped_records->imutab->max_records;
+
+	trace_record_counter_t additional_skipped;
+
+	for (additional_skipped = 1;	/* TODO: Consider a higher starting value to avoid the new starting point getting overrun. */
+		(0 == (mapped_records->records[(current_record + additional_skipped) & mapped_records->imutab->max_records_mask].termination & TRACE_TERMINATION_FIRST));
+		additional_skipped++) ;
+
+	mapped_records->current_read_record = current_record + additional_skipped - mapped_records->imutab->max_records;
+	return additional_skipped;
+
 	/* TODO: There's a race condition here is that remains to be addressed. Until the records are
 	 * actually written to the disk, the writing process will continue to write records. This will result in
 	 * some records appearing twice.
@@ -462,7 +471,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 
         lost_records = deltas.lost;
         if (lost_records) {
-        	adjust_for_overrun(mapped_records);
+        	lost_records += adjust_for_overrun(mapped_records);
         	calculate_delta(mapped_records, &deltas);
         	deltas.lost += lost_records;
         }
