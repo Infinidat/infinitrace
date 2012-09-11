@@ -45,6 +45,7 @@ static int write_metadata_header_start(struct trace_dumper_configuration_s *conf
     rec.termination = TRACE_TERMINATION_FIRST;
     rec.u.metadata.metadata_size_bytes = mapped_buffer->metadata.size;
 
+    /* Copy dead PIDs to the header, so the parser will know it can deallocate their resources. */
     int num_dead_pids = MIN(PidList__element_count(&conf->dead_pids), (int)ARRAY_LENGTH(rec.u.metadata.dead_pids));
     int i;
     for (i = 0; i < num_dead_pids; i++) {
@@ -63,9 +64,13 @@ static int write_metadata_end(struct trace_dumper_configuration_s *conf, struct 
 	return write_single_record(conf, record_file, &rec);
 }
 
+static inline size_t num_metadata_trace_records(size_t metadata_size)
+{
+	return (metadata_size + TRACE_RECORD_PAYLOAD_SIZE - 1) / TRACE_RECORD_PAYLOAD_SIZE;
+}
+
 static int trace_dump_metadata(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, struct trace_mapped_buffer *mapped_buffer)
 {
-    unsigned int num_records;
     int rc;
 
     mapped_buffer->metadata.metadata_payload_record.ts = trace_get_nsec();
@@ -74,11 +79,20 @@ static int trace_dump_metadata(struct trace_dumper_configuration_s *conf, struct
         return -1;
     }
 
-    num_records = mapped_buffer->metadata.size / (TRACE_RECORD_PAYLOAD_SIZE) + ((mapped_buffer->metadata.size % (TRACE_RECORD_PAYLOAD_SIZE)) ? 1 : 0);
-    rc = trace_dumper_write(conf, record_file, mapped_buffer->metadata.metadata_iovec, 2 * num_records,
-    						record_file_should_be_parsed(conf, record_file));
-    if ((unsigned int) rc != num_records * sizeof(struct trace_record)) {
-    	return -1;
+    if (mapped_buffer->metadata.metadata_iovec_len > 0) {
+		assert(NULL != mapped_buffer->metadata.metadata_iovec);
+		rc = trace_dumper_write(conf, record_file, mapped_buffer->metadata.metadata_iovec, mapped_buffer->metadata.metadata_iovec_len,
+								record_file_should_be_parsed(conf, record_file));
+		if ((size_t) rc != (mapped_buffer->metadata.metadata_iovec_len / 2) * sizeof(struct trace_record)) {
+			if (0 == errno) {
+				errno = EIO;
+			}
+			return -1;
+		}
+    }
+    else {
+    	syslog(LOG_USER|LOG_WARNING, "Trace dumper could not dump metadata for the process %s (pid %u) because it has length 0",
+    			mapped_buffer->name, mapped_buffer->pid);
     }
 
     return write_metadata_end(conf, record_file, mapped_buffer);
@@ -113,23 +127,45 @@ int dump_metadata_if_necessary(struct trace_dumper_configuration_s *conf, struct
     return 0;
 }
 
-void init_metadata_iovector(struct trace_mapped_metadata *metadata, unsigned short pid)
+void init_metadata_iovector(struct trace_mapped_metadata *metadata, trace_pid_t pid)
 {
     memset(&metadata->metadata_payload_record, 0, sizeof(metadata->metadata_payload_record));
     metadata->metadata_payload_record.rec_type = TRACE_REC_TYPE_METADATA_PAYLOAD;
     metadata->metadata_payload_record.termination = 0;
     metadata->metadata_payload_record.pid = pid;
 
-    unsigned long remaining_length = metadata->size;
+    size_t remaining_length = metadata->size;
+    size_t num_iovec_pairs = num_metadata_trace_records(remaining_length);
+    metadata->metadata_iovec_len = 2*num_iovec_pairs;
+    metadata->metadata_iovec = malloc((metadata->metadata_iovec_len + 1) * sizeof(struct iovec));
+
     unsigned int i;
-    for (i = 0; i < TRACE_METADATA_IOVEC_SIZE / 2; i++) {
-        if (remaining_length <= 0) {
-            break;
-        }
+    for (i = 0; i < num_iovec_pairs; i++) {
+
         metadata->metadata_iovec[i*2].iov_base = &metadata->metadata_payload_record;
         metadata->metadata_iovec[i*2].iov_len = TRACE_RECORD_HEADER_SIZE;
         metadata->metadata_iovec[i*2+1].iov_base = &((char *) metadata->base_address)[i * TRACE_RECORD_PAYLOAD_SIZE];
-		metadata->metadata_iovec[i*2+1].iov_len = TRACE_RECORD_PAYLOAD_SIZE;
-        remaining_length -= TRACE_RECORD_PAYLOAD_SIZE;
+        size_t len = MIN(TRACE_RECORD_PAYLOAD_SIZE, remaining_length);
+        assert(len > 0);
+		metadata->metadata_iovec[i*2+1].iov_len = len;
+        remaining_length -= len;
     }
+    assert (remaining_length == 0);
+
+    if (metadata->metadata_iovec[metadata->metadata_iovec_len - 1].iov_len < TRACE_RECORD_PAYLOAD_SIZE) {
+    	static const char zeros[TRACE_RECORD_PAYLOAD_SIZE] = { '\0' };
+    	metadata->metadata_iovec[metadata->metadata_iovec_len].iov_len = TRACE_RECORD_PAYLOAD_SIZE - metadata->metadata_iovec[metadata->metadata_iovec_len - 1].iov_len;
+    	metadata->metadata_iovec[metadata->metadata_iovec_len].iov_base = (void *)zeros;
+    	metadata->metadata_iovec_len++;
+    }
+}
+
+void free_metadata(struct trace_mapped_metadata *metadata)
+{
+	if (NULL != metadata->metadata_iovec) {
+		free(metadata->metadata_iovec);
+	}
+
+	metadata->metadata_iovec = NULL;
+	metadata->metadata_iovec_len = 0;
 }

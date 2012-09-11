@@ -364,6 +364,8 @@ static bool_t process_exists(unsigned short pid) {
 void discard_buffer(struct trace_dumper_configuration_s *conf, struct trace_mapped_buffer *mapped_buffer)
 {
     INFO("Discarding pid", mapped_buffer->pid, mapped_buffer->name);
+    free_metadata(&mapped_buffer->metadata);
+
     int rc = munmap(mapped_buffer->metadata.base_address, mapped_buffer->metadata.size);
     if (0 == rc) {
     	mapped_buffer->metadata.base_address = MAP_FAILED;

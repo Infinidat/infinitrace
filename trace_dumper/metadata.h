@@ -24,6 +24,11 @@
 #include "trace_dumper.h"
 
 int dump_metadata_if_necessary(struct trace_dumper_configuration_s *conf, struct trace_mapped_buffer *mapped_buffer);
-void init_metadata_iovector(struct trace_mapped_metadata *metadata, unsigned short pid);
+
+/* Allocate and initialize an IO vector which can be used to write the metadata using writev() */
+void init_metadata_iovector(struct trace_mapped_metadata *metadata, trace_pid_t pid);
+
+/* Free supporting data-structures in the metadata area given as argument, notably the IO vector */
+void free_metadata(struct trace_mapped_metadata *metadata);
 
 #endif /* METADATA_H_ */

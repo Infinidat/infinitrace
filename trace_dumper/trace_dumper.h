@@ -43,11 +43,12 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #define RELAXATION_BACKOFF (TRACE_SECOND * 10)
 
 struct trace_mapped_metadata {
-    struct iovec metadata_iovec[METADATA_IOVEC_SIZE];
+    struct iovec *metadata_iovec;
     struct trace_record metadata_payload_record;
     unsigned long log_descriptor_count;
     unsigned long type_definition_count;
-    unsigned int size;
+    size_t size;
+    size_t metadata_iovec_len;
     void *base_address;
     int  metadata_fd;
     struct trace_log_descriptor *descriptors;
