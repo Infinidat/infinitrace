@@ -121,6 +121,7 @@ CREATE_LIST_PROTOTYPE(PidList, trace_pid_t, MappedBuffers_NUM_ELEMENTS);
 
 struct trace_dumper_configuration_s {
     const char *logs_base;
+    const char *notifications_subdir;
     const char *attach_to_pid;
     int should_quit;
     struct trace_record_matcher_spec_s severity_filter[SEVERITY_FILTER_LEN];

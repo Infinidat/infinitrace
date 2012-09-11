@@ -94,23 +94,24 @@ static void generate_file_name(char *filename, const struct trace_dumper_configu
 	}
 }
 
-static int trace_open_file(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, const char *filename_base)
+static int trace_open_file(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, const char *filename_spec, bool_t autogen_filenames)
 {
 
     char filename[sizeof(record_file->filename)];
 
     record_file->records_written = 0;
 
-    if (conf->fixed_output_filename) {
-        if ((size_t)(stpncpy(filename, conf->fixed_output_filename, sizeof(filename)) - filename) >= sizeof(filename)) {
+    assert(NULL != filename_spec);
+    if (!autogen_filenames) { /* filename_spec specifies a full filename */
+        if ((size_t)(stpncpy(filename, filename_spec, sizeof(filename)) - filename) >= sizeof(filename)) {
         	errno = ENAMETOOLONG;
         	return -1;
         }
-    } else {
-    	if (trace_create_dir_if_necessary(filename_base) < 0) {
+    } else { /* filename_spec specifies a directory where files are auto-generated */
+    	if (trace_create_dir_if_necessary(filename_spec) < 0) {
     		return -1;
     	}
-    	generate_file_name(filename, conf, filename_base);
+    	generate_file_name(filename, conf, filename_spec);
     }
 
     INFO("Opening trace file:", filename);
@@ -169,30 +170,41 @@ int rotate_trace_file_if_necessary(struct trace_dumper_configuration_s *conf)
 
 int open_trace_file_if_necessary(struct trace_dumper_configuration_s *conf)
 {
-    if (conf->write_to_file) {
-    	if (conf->record_file.fd < 0) {
-    		syslog(LOG_USER|LOG_DEBUG, "About to open a regular file");
-			int rc = trace_open_file(conf, &conf->record_file, conf->logs_base);
-			if (0 != rc) {
-				ERR("Unable to open trace file");
-				return rc;
-			}
-    	}
+	int rc = 0;
+	if ((conf->write_to_file) && (conf->record_file.fd < 0)) {
+		if (conf->fixed_output_filename) {
+			rc = trace_open_file(conf, &conf->record_file, conf->fixed_output_filename, FALSE);
+		}
+		else {
+			rc = trace_open_file(conf, &conf->record_file, conf->logs_base, TRUE);
+		}
 
-    	if (conf->write_notifications_to_file && (conf->notification_file.fd < 0)) {
-    		static const char warn_subdir[] = "warn";
-    		char* warn_dir = alloca(strlen(conf->logs_base) + sizeof(warn_subdir) + 4);
-    		sprintf(warn_dir, "%s/%s", conf->logs_base, warn_subdir);
-    		int rc = trace_open_file(conf, &conf->notification_file, warn_dir);
-			if (0 != rc) {
-				ERR("Unable to open warning file");
-				syslog(LOG_USER|LOG_ERR, "Trace dumper failed to open an error and warning file in %s due to %s", warn_dir, strerror(errno));
-				return rc;
-			}
-    	}
+		if (0 != rc) {
+			ERR("Unable to open trace file");
+			syslog(LOG_USER|LOG_ERR, "Trace dumper failed to open a trace file due to %s", strerror(errno));
+			return rc;
+		}
     }
 
-    return 0;
+   	if (conf->write_notifications_to_file && (conf->notification_file.fd < 0)) {
+		if (conf->fixed_notification_filename) {
+			rc = trace_open_file(conf, &conf->notification_file, conf->fixed_notification_filename, FALSE);
+		}
+		else {
+			assert(NULL != conf->logs_base);
+			assert(NULL != conf->notifications_subdir);
+			char *warn_dir = alloca(strlen(conf->logs_base) + strlen(conf->notifications_subdir) + 4);
+			sprintf(warn_dir, "%s/%s", conf->logs_base, conf->notifications_subdir);
+			rc = trace_open_file(conf, &conf->notification_file, warn_dir, TRUE);
+		}
+
+		if (0 != rc) {
+			ERR("Unable to open notification file");
+			syslog(LOG_USER|LOG_ERR, "Trace dumper failed to open a notification file due to %s", strerror(errno));
+		}
+	}
+
+    return rc;
 }
 
 

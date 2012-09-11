@@ -245,6 +245,8 @@ int init_dumper(struct trace_dumper_configuration_s *conf)
     if (! conf->logs_base) {
     	conf->logs_base = DEFAULT_LOG_DIRECTORY;
     }
+    /* TODO: Make this configurable */
+    conf->notifications_subdir = "warn";
 
     if ((! conf->fixed_output_filename) && (trace_create_dir_if_necessary(conf->logs_base) != 0)) {
         return EX_CANTCREAT;
@@ -299,10 +301,6 @@ int init_dumper(struct trace_dumper_configuration_s *conf)
         return EX_IOERR;
     }
 
-    if (conf->write_notifications_to_file && (conf->fixed_output_filename || conf->fixed_notification_filename)) {
-    	fprintf(stderr, "Use of a notification file with either fixed output file or a fixed notification file is not yet supported");
-    	return EX_USAGE;
-    }
     return 0;
 }
 
