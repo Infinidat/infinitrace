@@ -90,7 +90,7 @@ static void generate_file_name(char *filename, const struct trace_dumper_configu
 		gmtime_r(&now_sec, &now_tm);
 		int len = snprintf(filename, name_len, "%s/trace.", filename_base);
 		len += strftime(filename + len, name_len - len, "%F--%H-%M-%S--", &now_tm);
-		snprintf(filename + len, name_len - len, "%llu.dump", (now_ms % 1000) / 10);
+		snprintf(filename + len, name_len - len, "%02llu.dump", (now_ms % 1000) / 10);
 	}
 }
 
