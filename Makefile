@@ -1,5 +1,5 @@
 CFLAGS=-I. -c -Wall -g -std=gnu99 -fPIC -O2
-LIBTRACE_OBJS=trace_metadata_util.o cached_file.o trace_parser.o halt.o hashmap.o
+LIBTRACE_OBJS=trace_metadata_util.o cached_file.o trace_parser.o halt.o hashmap.o opt_util.o
 LIBTRACEUSER_OBJS=trace_metadata_util.o trace_user.o halt.o
 DUMPER_OBJS=trace_dumper/trace_dumper.o trace_dumper/filesystem.o trace_dumper/writer.o trace_dumper/buffers.o trace_dumper/init.o trace_dumper/open_close.o trace_dumper/metadata.o trace_user_stubs.o
 
@@ -10,7 +10,7 @@ ifeq ($(TARGET_PLATFORM),linux-gnu)
        EXTRA_LIBS+=-lrt
 endif
 
-all: libtrace libtraceuser simple_trace_reader trace_dumper trace_instrumentor interactive_reader
+all: libtrace libtraceuser simple_trace_reader trace_dumper dump_file_diags trace_instrumentor interactive_reader
 trace_dumper: libtrace $(DUMPER_OBJS)
 	gcc -L.  $(DUMPER_OBJS) -ltrace $(EXTRA_LIBS) -o trace_dumper/trace_dumper 
 
@@ -28,6 +28,9 @@ interactive_reader: trace_parser.h
 	h2xml  -c -I. trace_parser.h -o _trace_parser_ctypes.xml
 	xml2py -k f -k e -k s _trace_parser_ctypes.xml > interactive_reader/_trace_parser_ctypes.py
 	rm _trace_parser_ctypes.xml
+
+dump_file_diags: libtrace tools/dump_file_diags.o trace_defs.h
+	gcc -L. tools/dump_file_diags.o -ltrace -o tools/dump_file_diags
 
 trace_instrumentor/trace_instrumentor.o: CXXFLAGS := $(shell llvm-config --cxxflags) -g
 trace_instrumentor/trace_instrumentor.o: LDFLAGS := $(shell llvm-config --libs --ldflags)

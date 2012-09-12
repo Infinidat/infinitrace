@@ -1,4 +1,5 @@
 Import('xn_env')
+Import('TracesDisabled')
 
 srcs = xn_env.AutoSplit('''dumper_stress.cpp''')
 libs = ["rt", "pthread"]
@@ -6,3 +7,9 @@ libs = ["rt", "pthread"]
 prog = xn_env.XnProgram(target = "dumper_stress", source = srcs, LIBS = libs)
 xn_env.Alias('xn', prog)
 
+optflags=Split("""$CCFLAGS -Wall -O2""")
+with TracesDisabled(xn_env) as untraced_env:
+    srcs = untraced_env.AutoSplit('''dump_file_diags.c''')
+    libs = ["traces"]
+    prog = untraced_env.XnProgram(target = "dump_file_diags", source = srcs, LIBS = libs, CCFLAGS = optflags)
+    untraced_env.Alias('xn', prog)
