@@ -51,6 +51,8 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "string.h"
 #include "timeformat.h"
 
+#include "zlib.h"
+
 /* print out */
 typedef struct {
     char buf[0x2000];
@@ -2017,9 +2019,126 @@ static int remove_limits(void)
     return setrlimit(RLIMIT_AS, &limit);
 }
 
-static void *mmap_fd(int fd, long long size)
+static long long aligned_size(long long size)
 {
-	return mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
+    static long long page_size;
+    
+    if (!page_size) {
+        page_size = sysconf(_SC_PAGE_SIZE);
+        if (!page_size || (page_size & (page_size - 1))) {
+            /* page size is not a power of two */
+            page_size = 4096;
+        }
+    }
+
+    return (size + page_size - 1) & ~(page_size - 1);
+}
+
+static void *mmap_grow(void* addr, long long size, long long new_size)
+{
+    /* XXX: consider converting to mremap */
+    void* new_addr = mmap(NULL, new_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    if (addr == MAP_FAILED) {
+        return new_addr;
+    }
+
+    if (addr) {
+        memcpy(new_addr, addr, size);
+        munmap(addr, size);
+    }
+
+    return new_addr;
+}
+
+static void *mmap_gzip(int fd, long long *input_size)
+{
+    gzFile gz;
+    unsigned char u[4];
+    int len;
+    void *addr;
+    long long size;
+    long long offset;
+    long long avail;
+
+    lseek64(fd, -4, SEEK_END);
+    len = read(fd, u, sizeof(u));
+    if (len != 4) {
+        return NULL;
+    }
+
+    /* unfortunately gzip's size is 32-bit */
+    size = (u[3] << 24) + (u[2] << 16) + (u[1] << 8) + u[0];
+
+    if (size < *input_size) {
+        size = (double)*input_size * 1.3;
+    }
+
+    lseek64(fd, 0, SEEK_SET);
+    gz = gzdopen(fd, "rb");
+    if (gz == NULL || gzdirect(gz)) {
+        return NULL;
+    }
+
+    size = aligned_size(size);
+
+    addr = mmap_grow(NULL, 0, size);
+    if (addr == MAP_FAILED) {
+        return addr;
+    }
+
+    offset = 0;
+    avail = size;
+
+    for (;;) {
+#define CHUNK 65536
+        len = gzread(gz, (char*)addr + offset, MIN(CHUNK, avail));
+        if (len < 0) {
+            gzclose(gz);
+            munmap(addr, size);
+            return MAP_FAILED;
+        }
+        if (len == 0) {
+            break;
+        }
+        offset += len;
+        avail -= len;
+
+        // size in trailer doesn't match actual data - more than 4G of input?
+        if (avail == 0) {
+            long long new_size = aligned_size(size + 0x100000000ll);
+            void* new_addr;
+
+            remove_limits();
+
+            new_addr = mmap_grow(addr, size, new_size);
+
+            if (addr == MAP_FAILED) {
+                gzclose(gz);
+                munmap(addr, size);
+                return MAP_FAILED;
+            }
+
+            avail = new_size - size;
+            addr = new_addr;
+            size = new_size;
+        }
+    }
+
+    gzclose(gz);
+
+    *input_size = offset;
+
+    return addr;
+}
+
+static void *mmap_fd(int fd, long long *size)
+{
+    void *addr = mmap_gzip(fd, size);
+    if (addr == MAP_FAILED || addr != NULL) {
+        return addr;
+    }
+
+    return mmap(NULL, *size, PROT_READ, MAP_SHARED, fd, 0);
 }
 
 static int mmap_file(trace_parser_t *parser, const char *filename)
@@ -2038,13 +2157,13 @@ static int mmap_file(trace_parser_t *parser, const char *filename)
         return -1;
     }
 
-    addr = mmap_fd(fd, size);
+    addr = mmap_fd(fd, &size);
     if ((MAP_FAILED == addr) && (ENOMEM == errno)) {
     	/* The failure may be due to rlimit for virtual memory set too low, so try to raise it */
     	if (0 != remove_limits()) {
     		return -1;
     	}
-    	addr = mmap_fd(fd, size);
+    	addr = mmap_fd(fd, &size);
     }
 
     if (MAP_FAILED == addr) {

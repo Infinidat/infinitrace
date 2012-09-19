@@ -33,7 +33,7 @@ with TracesDisabled(xn_env) as untraced_env:
     optflags=Split("""$CCFLAGS -Wall -O2""")
     srcs = untraced_env.AutoSplit('''reader.c''')
     libs = ["reader", "rt"]
-    prog = untraced_env.XnProgram(target = "reader", source = srcs, LIBS = libs, CCFLAGS = optflags)
+    prog = untraced_env.XnProgram(target = "reader", source = srcs, LIBS = libs, CCFLAGS = optflags, LINKFLAGS="-lz")
     untraced_env.Alias('xn', prog)
 
 # srcs = xn_env.AutoSplit('''hashmap.c trace_metadata_util.c cached_file.c trace_parser.c''')
