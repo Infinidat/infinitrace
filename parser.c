@@ -945,20 +945,23 @@ static int TRACE_PARSER__format_typed_record(
 
     const int color_bool = parser->color;
     const int timestamp_bool = parser->show_timestamp;
-    const char *buffer_name = context ? context->name : "<? unknown>";
     SAY_COL(out, ANSI_RESET);
-    if (timestamp_bool)
+    if (timestamp_bool) {
         SAY_S  (out, format_timestamp(record->ts, parser->nanoseconds_ts, parser->compact_traces));
 
-    SAY_S  (out, " [");
-    SAY_COL(out, MAGENTA);
-    if (timestamp_bool) {
+        SAY_S  (out, " [");
+        SAY_COL(out, MAGENTA);
+
         if (parser->compact_traces)
             SAY_F  (out, "%5d", record->pid);
         else
-            SAY_S  (out, buffer_name);
+            SAY_S  (out, context ? context->name : "<? unknown>");
         SAY_COL(out, GREY);
         SAY_S  (out, ":");
+    }
+    else {
+        SAY_S  (out, "[");
+        SAY_COL(out, MAGENTA);
     }
     SAY_COL(out, BLUE_B);
     SAY_F  (out, "%5d", record->tid);
