@@ -1369,14 +1369,19 @@ static bool_t record_params_contain_value(
         } break;
 
         default:
-            continue;
+            continue; 
         }
         
-        if (!const_str)
-            if (!param_name ||
-                (param->param_name &&
-                 strcmp(param_name, param->param_name) == 0))
-                return (value_mask && (value&value_mask) == param_value);
+        if (!const_str
+            &&
+            ((param_name == NULL) ||
+             (param->param_name &&
+              strcmp(param_name, param->param_name) == 0))
+            &&
+            (value_mask)
+            &&
+            (value_mask&value) == param_value)
+            return TRUE;
     }
 
     if ( log_size )
