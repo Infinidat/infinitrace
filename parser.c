@@ -138,10 +138,10 @@ static int my_strncpy(char* formatted_record, const char* source, int max_size) 
     int i;
     if (0 >= max_size)
         return 0;
-    for (i = 0; source[i] && i < max_size; i++)
-        formatted_record[i] = source[i]; 
+    for (i = 0; source[i] > 9 && i < max_size -1; i++)
+        formatted_record[i] = source[i];
+    formatted_record[i] = 0;  /* null termination, not included in count */
     return i;
-
 }
 
 static int wait_for_data(trace_parser_t *parser)
@@ -451,8 +451,8 @@ static int accumulate_metadata(trace_parser_t *parser, const struct trace_record
         context->metadata_log_desciptor_size = get_log_descriptor_size(parser->file_info.format_version);
         context->descriptors = (struct trace_log_descriptor *) context->metadata->data;
         context->types = (struct trace_type_definition *) ((char *) context->metadata->data + context->metadata_log_desciptor_size * context->metadata->log_descriptor_count);
-        my_strncpy(context->name, context->metadata->name, sizeof(context->name) - 1);
-        context->name[sizeof(context->name) - 1] = '\0';
+        my_strncpy(context->name, context->metadata->name, sizeof(context->name));
+        // context->name[sizeof(context->name) - 1] = '\0';
 
         if (0 != init_types_hash(context)) {
         	return -1;
