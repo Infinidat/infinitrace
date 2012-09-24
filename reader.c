@@ -89,10 +89,10 @@ static const char *usage =
  * Enums can be filtered as literal numbers (named enums - TBD) \n\
     Examples: \n\
  '-l WARN'                              shows warnings, errors, and fatal traces\n\
- '-g snap -v a_vu=0 -v 333 -g remove'   means 'str(snap) && (named_val(a_vu, 0) || val(333)) && str(remove) \n\
- '-g str1 -v 111 -z 222 -z 333 -z str2' means 'str(str1) && val(111) && (val(222) || val(333) || str(str2))' \n\
- '-u module=6 -v a_lba=1442'            means 'MODULE_CACHE && lba(1442)' \n\
- '-u module=6 -v a_lba=1442' -v a_lba=1444' means 'MODULE_CACHE && (lba(1442) || lab(1444))' \n\
+ '-g snap -v a_vu=0 -v 333 -g remove'    means 'str(snap) && (named_val(a_vu, 0) || val(333)) && str(remove) \n\
+ '-g str1 -v 111 -z 222 -z 333 -z str2'  means 'str(str1) && val(111) && (val(222) || val(333) || str(str2))' \n\
+ '-g CACHE -v a_lba=1442'                means 'MODULE_CACHE && lba(1442)' \n\
+ '-z CACHE -v a_lba=1442' -v a_lba=1444' means 'MODULE_CACHE && (lba(1442) || lab(1444))' \n\
 \n";
     //    " -u  --function  [func]     Show only records generated from function [func] 
 
