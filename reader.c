@@ -43,6 +43,7 @@ struct trace_reader_conf {
 
     filter_t * filter_function; // TODO - not supported by parser yet
     filter_t * filter_grep;
+    filter_t * filter_strcmp;    
     filter_t * filter_value;
     filter_t * filter_value2;
     filter_t * filter_value3;
@@ -74,7 +75,8 @@ static const char *usage =
     Filters: \n\
  -l  --level  [severity] : Show records from severity and up. Int value or FUNC/DEBUG/INFO/WARN/ERR/FATAL (DEFAULT: INFO) \n\
  -t  --time   [time]     : Used once or twice to set a time range. [time] may be nanoseconds int, or time format string \n\
- -g  --grep   [str]      : Show records whose constant string matches [str] \n\
+ -g  --grep   [str]      : Show records whose constant string contains [str] \n\
+ -c  --strcmp [str]      : Show records whose constant string exact-matches [str] (faster than -g, useful to filter MODULE)\n\
  -v  --value  [num ]     : Show records with int value equal to [num] \n\
  -v  --value  [name=num] : Show records with specific name field [name] equal to [num] (as name apears with -O) \n\
  -u  --value2 [num] or [name=num] : similar to -v \n\
@@ -87,12 +89,14 @@ static const char *usage =
  * Differnt options are bound with AND \n\
  * Filter options can be repeated, repetitions are bound with OR (exceptioned by -t) \n\
  * Enums can be filtered as literal numbers (named enums - TBD) \n\
+ * Instead of 'name=num' one can use 'name<num' or 'name>num' (quote to avoid shell's redirection, unsigned only) \n\
     Examples: \n\
- '-l WARN'                              shows warnings, errors, and fatal traces\n\
+ '-l WARN'                               shows warnings, errors, and fatal traces\n\
  '-g snap -v a_vu=0 -v 333 -g remove'    means 'str(snap) && (named_val(a_vu, 0) || val(333)) && str(remove) \n\
  '-g str1 -v 111 -z 222 -z 333 -z str2'  means 'str(str1) && val(111) && (val(222) || val(333) || str(str2))' \n\
- '-g CACHE -v a_lba=1442'                means 'MODULE_CACHE && lba(1442)' \n\
- '-z CACHE -v a_lba=1442' -v a_lba=1444' means 'MODULE_CACHE && (lba(1442) || lab(1444))' \n\
+ '-c CACHE -v a_lba=1442'                means 'CACHE && lba(1442)' \n\
+ '-c CACHE -v a_lba=1442' -v a_lba=1444' means 'CACHE && (lba(1442) || lab(1444))' \n\
+ \"-v 'vu<4' -w 'vu>1' -Q20 \"           same as '-v vu=2 -v -Q20' \n\
 \n";
     //    " -u  --function  [func]     Show only records generated from function [func] 
 
@@ -115,6 +119,7 @@ static const struct option longopts[] = {
     { "level"           , required_argument, 0, 'l'},
     { "time"            , required_argument, 0, 't'},
     { "grep"            , required_argument, 0, 'g'},
+    { "strcmp"          , required_argument, 0, 'c'},
     { "value"           , required_argument, 0, 'v'},
     { "value2"          , required_argument, 0, 'u'},
     { "value3"          , required_argument, 0, 'w'},
@@ -122,6 +127,8 @@ static const struct option longopts[] = {
     { "function"        , required_argument, 0, 'f'},
 	{ 0, 0, 0, 0}
 };
+
+static const char shortopts[] = "hisdm NOFXEMPA:Q: g:c:v:u:w:t:z:l:f:"; // " xcig:u:v:V:moft:hdnesr";
 
 static int exit_usage(const char *prog_name, const char* more)
 {
@@ -137,8 +144,6 @@ static int exit_usage(const char *prog_name, const char* more)
     exit(EX_USAGE);
     return 0;                   /* happy compiler */
 }
-
-static const char shortopts[] = "hisdm NOFXEMPA:Q: g:v:u:w:t:z:l:f:"; // " xcig:u:v:V:moft:hdnesr";
 
 static filter_t *new_filter_t() {
     filter_t* ret = malloc(sizeof(filter_t));
@@ -307,12 +312,26 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
                 WITH(filter_grep);
             }
             break;
+
+        case 'c':
+            {
+                filter_t * f = new_filter_t();
+                f->type = TRACE_MATCHER_CONST_STRCMP;
+                strncpy(f->u.const_string, optarg, sizeof(f->u.const_string));
+                WITH(filter_strcmp);
+            } break;
+
         case 'w':
         case 'v':
         case 'u':
             {
                 filter_t * f = new_filter_t();
-                char* equal = rindex(optarg, '=');
+                char* equal = NULL ; 
+        #define OR_MAYBE(C) if (! equal ) equal = rindex(optarg, C)
+                OR_MAYBE('=');
+                OR_MAYBE('>');
+                OR_MAYBE('<');
+        #undef  OR_MAYBE
                 if (equal) {
                     if (equal > sizeof(f->u.named_param_value.param_name) + optarg) {
                         fprintf(stderr, "'%s': Too long.", optarg);
@@ -322,13 +341,15 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
                         exit_usage(NULL, " Bad integer number in named value");
                     f->type = TRACE_MATCHER_LOG_NAMED_PARAM_VALUE;
                     f->u.named_param_value.param_value = num;
+                    f->u.named_param_value.compare_type = *equal;
                     strncpy(f->u.named_param_value.param_name, optarg, equal-optarg);
                 }
                 else {
                     if (!get_number(optarg, &num))
                         exit_usage(NULL, " Bad integer number in value");
                     f->type = TRACE_MATCHER_LOG_PARAM_VALUE;
-                    f->u.param_value = num;
+                    f->u.named_param_value.param_value = num;
+                    f->u.named_param_value.compare_type = '=';
                 }
                 if      (o == 'v') { WITH(filter_value ); }
                 else if (o == 'u') { WITH(filter_value2); }
@@ -340,7 +361,8 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
                 filter_t * f = new_filter_t();
                 if (get_number(optarg, &num)) {
                     f->type = TRACE_MATCHER_LOG_PARAM_VALUE;
-                    f->u.param_value = num;
+                    f->u.named_param_value.param_value = num;
+                    f->u.named_param_value.compare_type = '=';
                 }
                 else {
                     f->type = TRACE_MATCHER_CONST_SUBSTRING;
@@ -388,6 +410,7 @@ static void set_parser_filter(struct trace_reader_conf *conf, trace_parser_t *pa
 #define WITH(FILTER) if (conf->FILTER) and_filter(filter, conf->FILTER)
     WITH(filter_time);
     WITH(filter_grep);
+    WITH(filter_strcmp);
     WITH(filter_value);
     WITH(filter_value2);
     WITH(filter_value3);

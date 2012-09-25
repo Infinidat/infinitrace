@@ -124,6 +124,7 @@ enum trace_record_matcher_type {
     TRACE_MATCHER_PROCESS_NAME,
     TRACE_MATCHER_NESTING,
     TRACE_MATCHER_CONST_SUBSTRING,
+    TRACE_MATCHER_CONST_STRCMP,
     TRACE_MATCHER_TIMERANGE,
     TRACE_MATCHER_QUOTA_MAX,
     TRACE_MATCHER_FUNCTION_NAME,
@@ -146,12 +147,13 @@ struct trace_record_matcher_spec_s {
         char type_name[0x100];
         char process_name[0x100];
         char const_string[0x100];
-        unsigned long long param_value;
+        /* unsigned long long param_value; */
         unsigned short nesting;
         long long quota_max;
         
         struct trace_matcher_named_param_value {
-            char param_name[0x100];
+            char param_name[0xf8];
+            char compare_type;
             unsigned long long param_value;
         } named_param_value;
             

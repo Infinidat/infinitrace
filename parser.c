@@ -1282,11 +1282,93 @@ static bool_t params_have_type_name(const struct trace_param_descriptor *param, 
     return FALSE;
 }
 
+static bool_t record_params_contain_string(
+		const struct trace_parser_buffer_context *buffer,
+		const struct trace_record_typed *typed_record,
+		const char *const_str,
+        int exact,
+		unsigned int *log_size) {
+
+    unsigned int metadata_index = typed_record->log_id;
+    const struct trace_log_descriptor *log_desc = get_log_descriptor(buffer, metadata_index);;
+    const struct trace_param_descriptor *param = log_desc->params;
+    const unsigned char *pdata = typed_record->payload;
+    for (; param->flags != 0; param++) {
+
+        switch(param->flags &
+               (TRACE_PARAM_FLAG_ENUM    |
+                TRACE_PARAM_FLAG_NUM_8   |
+                TRACE_PARAM_FLAG_NUM_16  |
+                TRACE_PARAM_FLAG_NUM_32  |
+                TRACE_PARAM_FLAG_NUM_64  |
+                TRACE_PARAM_FLAG_CSTR    |
+                TRACE_PARAM_FLAG_VARRAY  |
+                TRACE_PARAM_FLAG_NESTED_LOG)) {
+
+        case TRACE_PARAM_FLAG_ENUM: {
+            pdata += sizeof(unsigned int);
+        } break;
+        
+        case TRACE_PARAM_FLAG_NUM_8: {
+            pdata += sizeof(char);
+        } break;
+
+        case TRACE_PARAM_FLAG_NUM_16: {
+            pdata += sizeof(unsigned short);
+        } break;
+            
+        case TRACE_PARAM_FLAG_NUM_32: {
+            pdata += sizeof(unsigned int);
+        } break;
+
+        case TRACE_PARAM_FLAG_NUM_64: {
+            pdata += sizeof(unsigned long long);
+        } break;
+
+        case TRACE_PARAM_FLAG_CSTR: {
+            if (exact ? 
+                strcmp(param->const_str, const_str) == 0 :
+                strstr(param->const_str, const_str) != 0)
+                return TRUE;
+        } break;
+
+        case TRACE_PARAM_FLAG_VARRAY: {
+            while (1) {
+                unsigned char sl = (*(unsigned char *)pdata);
+                unsigned char len = sl & 0x7f;
+                unsigned char continuation = sl & 0x80;
+                
+                pdata += sizeof(len) + len;
+                if (!continuation) {
+                    break;
+                }
+            }
+        } break;
+
+        case TRACE_PARAM_FLAG_NESTED_LOG: {
+            unsigned int _log_size = 0;
+            if (record_params_contain_string(buffer, (struct trace_record_typed *) pdata, const_str, exact, &_log_size))
+                return TRUE;
+            pdata += _log_size;
+        } break;
+
+        default:
+            continue; 
+        }
+    }
+
+    if ( log_size )
+        *log_size = (char *) pdata - (char *) typed_record;
+    return FALSE;
+}
+
+
 static bool_t record_params_contain_value(
 		const struct trace_parser_buffer_context *buffer,
 		const struct trace_record_typed *typed_record,
-		const char *param_name, const char *const_str,
+        char compare_type,
 		unsigned long long value,
+		const char *param_name, 
 		unsigned int *log_size)
 {
     unsigned int metadata_index = typed_record->log_id;
@@ -1308,7 +1390,6 @@ static bool_t record_params_contain_value(
                 TRACE_PARAM_FLAG_NUM_16  |
                 TRACE_PARAM_FLAG_NUM_32  |
                 TRACE_PARAM_FLAG_NUM_64  |
-                TRACE_PARAM_FLAG_CSTR    |
                 TRACE_PARAM_FLAG_VARRAY  |
                 TRACE_PARAM_FLAG_NESTED_LOG)) {
 
@@ -1342,12 +1423,6 @@ static bool_t record_params_contain_value(
             pdata += sizeof(unsigned long long);
         } break;
 
-        case TRACE_PARAM_FLAG_CSTR: {
-            if (const_str && strstr(param->const_str, const_str))
-                return TRUE;
-
-        } break;
-
         case TRACE_PARAM_FLAG_VARRAY: {
             while (1) {
                 unsigned char sl = (*(unsigned char *)pdata);
@@ -1363,7 +1438,7 @@ static bool_t record_params_contain_value(
 
         case TRACE_PARAM_FLAG_NESTED_LOG: {
             unsigned int _log_size = 0;
-            if (record_params_contain_value(buffer, (struct trace_record_typed *) pdata, param_name, const_str, value, &_log_size))
+            if (record_params_contain_value(buffer, (struct trace_record_typed *) pdata, compare_type, value, param_name, &_log_size))
                 return TRUE;
             pdata += _log_size;
         } break;
@@ -1372,15 +1447,22 @@ static bool_t record_params_contain_value(
             continue; 
         }
         
-        if (!const_str
-            &&
-            ((param_name == NULL) ||
-             (param->param_name &&
-              strcmp(param_name, param->param_name) == 0))
-            &&
-            (value_mask)
-            &&
-            (value_mask&value) == param_value)
+        if ( (value_mask)
+             &&
+
+             ((param_name == NULL) ||
+              (param->param_name &&
+               strcmp(param_name, param->param_name) == 0))
+
+             &&
+
+             (compare_type == '>' ?
+              (value_mask&value) < param_value :
+              compare_type == '<' ? 
+              (value_mask&value) > param_value :
+              (value_mask&value) == param_value
+             )
+             )
             return TRUE;
     }
 
@@ -1461,13 +1543,23 @@ static bool_t match_record_with_match_expression(
         break;
         
     case TRACE_MATCHER_LOG_PARAM_VALUE:
-        return record_params_contain_value(buffer, &record->u.typed, NULL, NULL, matcher->u.param_value, NULL);
+        return record_params_contain_value(buffer, &record->u.typed,
+                                           matcher->u.named_param_value.compare_type,
+                                           matcher->u.named_param_value.param_value,
+                                           NULL, NULL);
 
     case TRACE_MATCHER_LOG_NAMED_PARAM_VALUE:
-        return record_params_contain_value(buffer, &record->u.typed, matcher->u.named_param_value.param_name, NULL, matcher->u.named_param_value.param_value, NULL);
+        return record_params_contain_value(buffer, &record->u.typed,
+                                           matcher->u.named_param_value.compare_type,
+                                           matcher->u.named_param_value.param_value,
+                                           matcher->u.named_param_value.param_name,
+                                           NULL);
 
     case TRACE_MATCHER_CONST_SUBSTRING:
-        return record_params_contain_value(buffer, &record->u.typed, NULL, matcher->u.const_string, 0, NULL);
+        return record_params_contain_string(buffer, &record->u.typed, matcher->u.const_string, 0, NULL);
+
+    case TRACE_MATCHER_CONST_STRCMP:
+        return record_params_contain_string(buffer, &record->u.typed, matcher->u.const_string, 1, NULL);
 
     case TRACE_MATCHER_TIMERANGE:
         return ( (record->ts <= matcher->u.time_range.end ) ?
