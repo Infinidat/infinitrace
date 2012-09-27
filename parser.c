@@ -71,6 +71,7 @@ static void out_check(out_fd* out) {
     if (out->i < 0x1800)
         return;
     fprintf(stderr, "Formatted record is too long (0x%x)", out->i);
+    out_flush(out);
     exit(EX_DATAERR);
 }
 static void SAY_S(out_fd* out, const char* str) {
