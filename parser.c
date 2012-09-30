@@ -72,7 +72,7 @@ static void out_check(out_fd* out) {
         return;
     fprintf(stderr, "Formatted record is too long (0x%x)", out->i);
     out_flush(out);
-    exit(EX_DATAERR);
+    /* exit(EX_DATAERR); */
 }
 static void SAY_S(out_fd* out, const char* str) {
     out_check(out);
@@ -123,8 +123,6 @@ static void SAY_ESCAPED(out_fd* out, const char* buf, int size) {
 static int ends_with_equal(const out_fd* out) {
     return (out->i > 10 && out->buf[out->i-1] == '=');
 }
-
-#define COLOR_BOOL parser->color
 
 CREATE_LIST_IMPLEMENTATION(BufferParseContextList, struct trace_parser_buffer_context)
 CREATE_LIST_IMPLEMENTATION(RecordsAccumulatorList, struct trace_record_accumulator)
@@ -1472,12 +1470,66 @@ static bool_t record_params_contain_value(
     return FALSE;
 }
 
+#define AFTER_COUNT_COUNT 20
+
 typedef struct {
     int keep_going;
     long long quota;
-    int after_count;
-    short unsigned int after_count_tid;
+    int after_count_all;
+    int after_count_cnt[AFTER_COUNT_COUNT];
+    short unsigned int after_count_tid[AFTER_COUNT_COUNT];
 } iter_t;
+
+static bool_t after_count_push(iter_t* iter, short unsigned int tid, int count) {
+    if (! iter || count <= 0) return TRUE;
+
+    int all = iter->after_count_all;
+    for (int i = 0; all > 0&& i < AFTER_COUNT_COUNT; i++) {
+        if (iter->after_count_tid[i] == tid) {
+            iter->after_count_all += count - iter->after_count_cnt[i];
+            iter->after_count_cnt[i] = count;
+            return TRUE;
+        }
+        all -= iter->after_count_cnt[i];
+    }
+    if (all) {
+        /* warn ? */
+        //        fprintf(stderr, "Warning: after count has %i global leftovers\n", all);
+        iter->after_count_all -= all;
+    }
+    for (int i = 0; i < AFTER_COUNT_COUNT; i++)
+        if (iter->after_count_tid[i] == 0) {
+            iter->after_count_tid[i] = tid;
+            iter->after_count_cnt[i] = count;
+            iter->after_count_all += count;
+            return TRUE;
+        }
+
+    fprintf(stderr, "Warning: after count exceeded %i thread ids\n", AFTER_COUNT_COUNT);
+    return TRUE;
+}
+
+static bool_t after_count_pop(iter_t* iter, short unsigned int tid) {
+    if (! iter) return FALSE;
+
+    int all = iter->after_count_all;
+    for (int i = 0; all > 0 && i < AFTER_COUNT_COUNT; i++) {
+        if (iter->after_count_tid[i] == tid) {
+            if (-- iter->after_count_cnt[i] <= 0)
+                iter->after_count_tid[i] = 0;
+            iter->after_count_all --;
+            return TRUE;
+        }
+        all -= iter->after_count_cnt[i];
+    }
+    if (all) {
+        /* warn ? */
+        //        fprintf(stderr, "Warning: after count has %i global leftovers\n", all);
+        iter->after_count_all -= all;
+    }
+    return FALSE;
+}
+#undef AFTER_COUNT_COUNT
 
 static bool_t match_record_with_match_expression(
 		const struct trace_record_matcher_spec_s *matcher,
@@ -1622,19 +1674,10 @@ static int process_single_record(
         case 0: /* We passed a complete record */
             complete_rec.buffer = buffer;
             complete_rec.record = complete_record;
-            int doit = 0;
-            if (match_record_with_match_expression(filter, buffer, complete_record, iter)) {
-                if (iter) {
-                    iter->after_count = 0;
-                    iter->after_count_tid = complete_record->tid;
-                }
-                doit = 1;
-            }
-            else if (iter &&
-                     complete_record->tid == iter->after_count_tid &&
-                     parser->after_count > iter->after_count ++)
-                doit = 1;
-            if (doit) {
+            if ((match_record_with_match_expression(filter, buffer, complete_record, iter) &&
+                 after_count_push(iter, complete_record->tid, parser->after_count)) ||
+                (after_count_pop (iter, complete_record->tid))) {
+
             	rc = handler(parser, TRACE_PARSER_COMPLETE_TYPED_RECORD_PROCESSED, &complete_rec, arg);
                 if (0 == rc) {
                 	*complete_typed_record_found = TRUE;
