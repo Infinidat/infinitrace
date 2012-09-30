@@ -452,6 +452,7 @@ static int dump_all_files(struct trace_reader_conf *conf)
             return EX_NOINPUT;
         }
         set_parser_params(conf, &parser);
+        parser.show_filename = filename;
 
         if ((!error_occurred) && (TRACE_PARSER__dump(&parser) < 0)) {
         	error_occurred = errno;

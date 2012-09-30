@@ -194,6 +194,7 @@ typedef struct trace_parser {
     enum trace_input_stream_type stream_type;
     bool_t free_dead_buffer_contexts;
     int after_count;
+    const char* show_filename;
 } trace_parser_t;
 
 int TRACE_PARSER__from_file(trace_parser_t *parser, bool_t wait_for_input, const char *filename, trace_parser_event_handler_t event_handler, void *arg);

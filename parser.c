@@ -1780,6 +1780,23 @@ static int process_next_record_from_file(trace_parser_t *parser, const struct tr
     return rc;
 }
 
+static void say_new_file(out_fd* out, trace_parser_t *parser, unsigned long long ts) {
+    const int color_bool = parser->color;
+    SAY_COL(out, ANSI_RESET);
+    if (parser->show_timestamp)
+        SAY_S  (out, format_timestamp(MAX(ts, 0), parser->nanoseconds_ts, parser->compact_traces));
+    SAY_S  (out, " [");
+    SAY_COL(out, BLUE_B);
+    SAY_S  (out, "Traces New Filename");
+    SAY_COL(out, ANSI_RESET);
+    SAY_S  (out, "] ");
+    SAY_COL(out, WHITE_B);
+    SAY_S  (out, parser->show_filename);
+    SAY_COL(out, ANSI_RESET);
+    SAY_S  (out, "\n");
+    parser->show_filename = 0;
+}
+
 static int dumper_event_handler(trace_parser_t *parser, enum trace_parser_event_e event, void *event_data, void __attribute__((unused)) *arg)
 {
     if (event != TRACE_PARSER_COMPLETE_TYPED_RECORD_PROCESSED) {
@@ -1789,6 +1806,10 @@ static int dumper_event_handler(trace_parser_t *parser, enum trace_parser_event_
     out_fd out;
     out_init(&out);
     struct parser_complete_typed_record *complete_typed_record = (struct parser_complete_typed_record *) event_data;
+
+    if (parser->show_filename) 
+        say_new_file(&out, parser, complete_typed_record->record->ts-1);
+
     int formatted_len = TRACE_PARSER__format_typed_record(parser, complete_typed_record->buffer, complete_typed_record->record, &out);
     if (formatted_len < 0) {
     	errno = ENOMEM;
