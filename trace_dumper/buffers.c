@@ -257,7 +257,7 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
     	syslog(LOG_USER|LOG_WARNING, "Pid %d of %s is too large to be represented in trace dumper's %lu-bit pid field. Please restrict your system's process IDs accordingly",
     			pid, new_mapped_buffer->name, 8*sizeof(new_mapped_buffer->pid));
     }
-    else if (!conf->attach_to_pid) {
+    else if (conf->log_details && !conf->attach_to_pid) {
     	syslog(LOG_USER|LOG_INFO, "Starting to collect traces from %s with pid %d to %s",
     			new_mapped_buffer->name, new_mapped_buffer->pid, conf->record_file.filename);
     }

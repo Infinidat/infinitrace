@@ -71,7 +71,9 @@ static int trace_write_header(struct trace_dumper_configuration_s *conf, struct 
 		return rc;
     }
 
-	syslog(LOG_USER|LOG_INFO, "Trace dumper starting to write to the file %s", record_file->filename);
+	if (conf->log_details) {
+		syslog(LOG_USER|LOG_INFO, "Trace dumper starting to write to the file %s", record_file->filename);
+	}
 	return 0;
 }
 

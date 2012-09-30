@@ -139,6 +139,7 @@ struct trace_dumper_configuration_s {
     unsigned int warn_online;
     unsigned int error_online;
     unsigned int syslog;
+    unsigned int log_details;
     trace_ts_t 	 start_time;
     unsigned int no_color_specified;
     unsigned int color;

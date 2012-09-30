@@ -29,6 +29,7 @@
 #include <limits.h>
 
 #include "../trace_user.h"
+#include "../opt_util.h"
 #include "trace_dumper.h"
 #include "filesystem.h"
 #include "buffers.h"
@@ -86,12 +87,14 @@ void print_usage(const char *prog_name)
     printf(usage, display_name);
 }
 
-static const char shortopts[] = "vtdiaer:q:sw::N::p:hf:ob:n";
 
 #define DEFAULT_LOG_DIRECTORY "/mnt/logs/traces"
 
 int parse_commandline(struct trace_dumper_configuration_s *conf, int argc, char **argv)
 {
+    char shortopts[MAX_SHORT_OPTS_LEN(ARRAY_LENGTH(longopts))];
+    short_opts_from_long_opts(shortopts, longopts);
+
     int o;
     while ((o = getopt_long(argc, argv, shortopts, longopts, 0)) != EOF) {
 		switch (o) {
@@ -245,8 +248,9 @@ int init_dumper(struct trace_dumper_configuration_s *conf)
     if (! conf->logs_base) {
     	conf->logs_base = DEFAULT_LOG_DIRECTORY;
     }
-    /* TODO: Make this configurable */
+    /* TODO: Make these configurable */
     conf->notifications_subdir = "warn";
+    conf->log_details = FALSE;
 
     if ((! conf->fixed_output_filename) && (trace_create_dir_if_necessary(conf->logs_base) != 0)) {
         return EX_CANTCREAT;
