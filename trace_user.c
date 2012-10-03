@@ -90,6 +90,131 @@ int trace_runtime_control_set_subsystem_range(int low, int high)
 	return 0;
 }
 
+
+/* Runtime support functions called when writing traces to shared-memory */
+
+
+static struct trace_records *trace_get_records(enum trace_severity severity)
+{
+	TRACE_ASSERT(TRACE_SEV_INVALID != severity);
+
+	switch ((int)severity) {
+	case TRACE_SEV_FUNC_TRACE:
+		return &current_trace_buffer->u.records._funcs;
+
+	case TRACE_SEV_DEBUG:
+		return &current_trace_buffer->u.records._debug;
+
+	default:
+		return &current_trace_buffer->u.records._other;
+	}
+}
+
+
+/* TODO: Consider allowing an option for lossless tracing. */
+struct trace_record *trace_get_record(enum trace_severity severity, trace_generation_t *generation)
+{
+
+	struct trace_record *record;
+	trace_record_counter_t record_index;
+	struct trace_records *records = trace_get_records(severity);
+
+	/* To implement lossless mode: Make sure we don't overwrite data beyond
+	   records->imutab.latest_flush_ts */
+
+    record_index = __sync_fetch_and_add(&records->mutab.current_record, 1);
+    *generation = (trace_generation_t) (record_index >> records->imutab.max_records_shift);
+    record_index &= records->imutab.max_records_mask;
+
+    struct trace_records_immutable_metadata mu = records->imutab;
+	record = &records->records[record_index % mu.max_records];
+	return record;
+}
+
+static inline int trace_compare_generation(trace_generation_t a, trace_generation_t b)
+{
+#ifndef _LP64
+#warning "This function was tested with sizeof(trace_generation_t)=4, sizeof(trace_atomic_t)=8, if this is not true please test it!"
+#endif
+
+	enum thresholds {
+		GEN_LOW  = 0x4U << (8 * sizeof(trace_generation_t) - 4),
+		GEN_HIGH = 0xcU << (8 * sizeof(trace_generation_t) - 4),
+	};
+
+	if (a >= GEN_HIGH   &&  b < GEN_LOW)
+		return 1;
+	if (b > a)
+		return 1;
+	if (b < a)
+		return -1;
+	return 0;
+}
+
+void trace_commit_record(struct trace_record *target_record, const struct trace_record *source_record, enum trace_severity severity)
+{
+	/* Check for malformed records. */
+	TRACE_ASSERT((0 == (source_record->termination & TRACE_TERMINATION_FIRST)) || (source_record->u.typed.log_id != -1U));
+
+	/* One would expect to be able to extract the severity value from the source record. Unfortunately for some records the severity value
+	 * written inside the record differs from the one used to place it. See IBOX15-133 for further details. */
+	struct trace_records *records = trace_get_records(severity);
+
+	/* If generation > 0 we assume the buffer should contain valid data, so perform some validity checks */
+	if (source_record->generation > 0) {
+		/* If the target record already contains a newer record by another thread, silently discard the trace data. */
+		if (trace_compare_generation(source_record->generation, target_record->generation) > 0) {
+			__sync_fetch_and_add(&records->mutab.records_silently_discarded, 1);
+			return;
+		}
+
+		/* Check if another thread had already committed the exact same record. */
+		else TRACE_ASSERT(source_record->generation != target_record->generation);
+	}
+	__builtin_memcpy(target_record, source_record, sizeof(*source_record));
+
+	/* Only records that terminate a sequence should be marked as committed. */
+	if ((TRACE_TERMINATION_LAST & source_record->termination) == 0) {
+		return;
+	}
+
+	unsigned record_pos = target_record - records->records;
+	TRACE_ASSERT(record_pos < records->imutab.max_records);
+
+	trace_record_counter_t new_index = ((trace_record_counter_t)(source_record->generation) << records->imutab.max_records_shift) + record_pos;
+
+	__sync_synchronize();
+
+	trace_record_counter_t expected_value;
+	trace_record_counter_t found_value;
+
+	/* Update records->mutab.last_committed_record to the index of the current record, taking care not to overwrite a larger value.
+	 * It's possible that another thread has increased records->mutab.last_committed_record between the last statement and this point so
+	 * occasionally we might have to repeat this more than once.  */
+	do {
+		expected_value = records->mutab.last_committed_record;
+
+		/* Forego the update if another thread has committed a later record */
+#ifndef _LP64
+#warning "The comparison below might cause anomalous behavior due to counter wrap-around on 32-bit platforms, please verify and test."
+#endif
+		if ((expected_value > new_index) && (expected_value < -1UL)) {
+			break;
+		}
+
+		found_value = __sync_val_compare_and_swap(
+				&records->mutab.last_committed_record,
+				expected_value,
+				new_index);
+
+		/* Make absolutely sure that no other thread has committed the same record that we were working on */
+		TRACE_ASSERT((new_index != found_value) || (0 == new_index));
+	} while (found_value != expected_value);
+}
+
+
+
+
 #define ALLOC_STRING(dest, source)                      \
     do {                                                \
     unsigned int str_size = __builtin_strlen(source) + 1;   \
