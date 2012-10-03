@@ -37,6 +37,7 @@
 #include "../trace_user.h"
 #include "trace_dumper.h"
 #include "metadata.h"
+#include "open_close.h"
 #include "buffers.h"
 
 
@@ -425,9 +426,13 @@ void discard_buffer(struct trace_dumper_configuration_s *conf, struct trace_mapp
         }
     }
 
+    int buffers_remaining = MappedBuffers__element_count(&conf->mapped_buffers);
+    syslog(LOG_USER|LOG_INFO, "Discarded %d instance(s) of the buffer for %s pid %u, %d mapped buffer(s) remaining",
+    		removed_count,  mapped_buffer->name, mapped_buffer->pid, buffers_remaining);
 
-    syslog(LOG_USER|LOG_INFO, "Discarded %d instances of the buffer for %s pid %u, %d mapped buffers remaining",
-    		removed_count,  mapped_buffer->name, mapped_buffer->pid, MappedBuffers__element_count(&conf->mapped_buffers));
+    if (0 == buffers_remaining) {
+    	close_all_files(conf);
+    }
 }
 
 int unmap_discarded_buffers(struct trace_dumper_configuration_s *conf)
