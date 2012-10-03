@@ -403,7 +403,7 @@ void discard_buffer(struct trace_dumper_configuration_s *conf, struct trace_mapp
     	syslog(LOG_USER|LOG_WARNING, "Error deleting shm files for buffer %s, pid %u: %s", mapped_buffer->name, mapped_buffer->pid, strerror(errno));
     }
 
-    if (TRACE_PARSER__free_buffer_context_by_pid(&(conf->parser), mapped_buffer->pid) < 0) {
+    if (conf->trace_online && (TRACE_PARSER__free_buffer_context_by_pid(&(conf->parser), mapped_buffer->pid) < 0)) {
     	syslog(LOG_USER|LOG_WARNING, "Failed to free trace parser resources associated with the process %s, pid %u: %s", mapped_buffer->name, mapped_buffer->pid, strerror(errno));
     }
 
