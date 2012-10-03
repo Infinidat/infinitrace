@@ -1289,6 +1289,9 @@ static bool_t record_params_contain_string(
 		unsigned int *log_size) {
 
     unsigned int metadata_index = typed_record->log_id;
+    if (metadata_index >= buffer->metadata->log_descriptor_count)
+        return FALSE;
+
     const struct trace_log_descriptor *log_desc = get_log_descriptor(buffer, metadata_index);;
     const struct trace_param_descriptor *param = log_desc->params;
     const unsigned char *pdata = typed_record->payload;
@@ -1371,9 +1374,8 @@ static bool_t record_params_contain_value(
 		unsigned int *log_size)
 {
     unsigned int metadata_index = typed_record->log_id;
-    if (metadata_index >= buffer->metadata->log_descriptor_count) {
+    if (metadata_index >= buffer->metadata->log_descriptor_count)
         return FALSE;
-    }
 
     const struct trace_log_descriptor *log_desc = get_log_descriptor(buffer, metadata_index);;
     const struct trace_param_descriptor *param = log_desc->params;
@@ -1539,9 +1541,8 @@ static bool_t match_record_with_match_expression(
 {
     unsigned int metadata_index = record->u.typed.log_id;
 
-    if (metadata_index >= buffer->metadata->log_descriptor_count) {
+    if (metadata_index >= buffer->metadata->log_descriptor_count)
         return FALSE;
-    }
 
     const struct trace_log_descriptor *log_desc = get_log_descriptor(buffer, metadata_index);
 

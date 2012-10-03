@@ -32,6 +32,7 @@ struct trace_reader_conf {
     int no_color;
     int hex;
     int show_field_names;
+    int show_trace_file;
     int hide_funtion_name;
     int nanoseconds_ts;
     int empty_timestamp;
@@ -66,6 +67,7 @@ static const char *usage =
  -O  --show-field-names  : Show field names for all trace records \n\
  -X  --hex               : Display all numeric values in hexadecimal \n\
  -F  --hide-function     : As the name implies, avoid displaying function names \n\
+ -L  --show-trace-file   : Display faked log messages with trace's file name \n\
  -E  --hide-timestamp    : Hide timestamp and process name/id (mnemonic - Empty) \n\
  -M  --compact-traces    : Compact trace output \n\
  -P  --nano-timestamp    : Print timestamps as raw nano-seconds-since-Epoch units \n\
@@ -111,7 +113,8 @@ static const struct option longopts[] = {
     { "hide-function"   , 0, 0, 'F'},
 	{ "no-color"        , 0, 0, 'N'},
     { "hex"             , 0, 0, 'X'},
-    { "hide-timestamp" , 0, 0, 'E'},
+    { "hide-timestamp"  , 0, 0, 'E'},
+    { "show-trace-file" , 0, 0, 'L'},
     { "compact-trace"   , 0, 0, 'M'},
     { "nano-timestamp"  , 0, 0, 'P'},
     { "quota-max"       , required_argument, 0, 'Q'},
@@ -128,7 +131,7 @@ static const struct option longopts[] = {
 	{ 0, 0, 0, 0}
 };
 
-static const char shortopts[] = "hisdm NOFXEMPA:Q: g:c:v:u:w:t:z:l:f:"; // " xcig:u:v:V:moft:hdnesr";
+static const char shortopts[] = "hisdm NOFLXEMPA:Q: g:c:v:u:w:t:z:l:f:"; // " xcig:u:v:V:moft:hdnesr";
 
 static int exit_usage(const char *prog_name, const char* more)
 {
@@ -242,6 +245,9 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
             break;
         case 'F':
             conf->hide_funtion_name = TRUE;
+            break;
+        case 'L':
+            conf->show_trace_file = TRUE;
             break;
         case 'X':
             conf->hex = TRUE;
@@ -452,7 +458,7 @@ static int dump_all_files(struct trace_reader_conf *conf)
             return EX_NOINPUT;
         }
         set_parser_params(conf, &parser);
-        parser.show_filename = filename;
+        parser.show_filename = conf->show_trace_file ? filename : 0;
 
         if ((!error_occurred) && (TRACE_PARSER__dump(&parser) < 0)) {
         	error_occurred = errno;
