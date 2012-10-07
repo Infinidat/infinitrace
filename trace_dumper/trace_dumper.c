@@ -71,6 +71,19 @@ static void severity_type_to_str(unsigned int severity_type, char *severity_str,
     }
 }
 
+static trace_ts_t trace_get_nsec_monotonic()
+{
+	struct timespec now;
+	int rc = clock_gettime(CLOCK_MONOTONIC, &now);
+	if (0 != rc) {
+		syslog(LOG_ERR|LOG_USER, "Trace dumper has failed to read system time because of the following error: %s", strerror(errno));
+		return (trace_ts_t) -1;
+	}
+
+	return now.tv_nsec + TRACE_SECOND * now.tv_sec;
+}
+
+
 static void dump_online_statistics(const struct trace_dumper_configuration_s *conf)
 {
     char display_bar[60];
@@ -128,7 +141,7 @@ static void possibly_dump_online_statistics(struct trace_dumper_configuration_s 
 {
     static const unsigned long long STATS_DUMP_DELTA = TRACE_SECOND * 3;
 
-	unsigned long long current_time = trace_get_nsec();
+	trace_ts_t current_time = trace_get_nsec_monotonic();
     if (! (conf->dump_online_statistics && current_time > conf->next_stats_dump_ts)) {
         return;
     }
@@ -437,7 +450,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
     long lost_records = 0L;
     int rc = 0;
 
-	cur_ts = trace_get_nsec();
+	cur_ts = trace_get_nsec_monotonic();
 	bool_t premature_call = (cur_ts < conf->next_flush_ts);
 	if (!premature_call) {
 		init_dump_header(conf, &dump_header_rec, cur_ts, &iovec, &num_iovecs, &total_written_records);
@@ -549,7 +562,7 @@ static void handle_overwrite(struct trace_dumper_configuration_s *conf)
         return;
     }
     
-    unsigned long long current_time = trace_get_nsec();
+    unsigned long long current_time = trace_get_nsec_monotonic();
     DEBUG("Checking overrwrite. Wrote", conf->record_file.records_written - conf->last_overwrite_test_record_count,
           "records in a second. Minimal severity is now", conf->minimal_allowed_severity);
     if (current_time - conf->last_overwrite_test_time < TRACE_SECOND) {
@@ -582,12 +595,14 @@ static void handle_overwrite(struct trace_dumper_configuration_s *conf)
  *  */
 static int do_housekeeping_if_necessary(struct trace_dumper_configuration_s *conf)
 {
-	static const trace_ts_t HOUSEKEEPING_INTERVAL = 20000;
+	static const trace_ts_t HOUSEKEEPING_INTERVAL = 10000000; /* 10ms */
+	const trace_ts_t now = trace_get_nsec_monotonic();
 
-	if (trace_get_nsec() < conf->next_housekeeping_ts) {
+
+	if (now < conf->next_housekeeping_ts) {
 		return EAGAIN;
 	}
-	conf->next_housekeeping_ts = trace_get_nsec() + HOUSEKEEPING_INTERVAL;
+	conf->next_housekeeping_ts = now + HOUSEKEEPING_INTERVAL;
 
 	int rc = reap_empty_dead_buffers(conf);
     if (0 != rc) {
