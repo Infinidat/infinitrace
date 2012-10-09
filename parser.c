@@ -240,6 +240,12 @@ static int read_next_record(trace_parser_t *parser, struct trace_record *record)
 
 void trace_parser_init(trace_parser_t *parser, trace_parser_event_handler_t event_handler, void *arg, enum trace_input_stream_type stream_type)
 {
+	/* Catch resource deallocation issues. This is only gauranteed to work if a single parser structure is used consistently. */
+	static trace_parser_t *last_parser_used = NULL;
+	bool_t first_init = (parser != last_parser_used);
+	assert((MAP_FAILED == parser->file_info.file_base) || first_init);
+	assert((-1 == parser->file_info.fd) || first_init);
+
     memset(parser, 0, sizeof(*parser));
     parser->event_handler = event_handler;
     parser->arg = arg;
@@ -248,7 +254,13 @@ void trace_parser_init(trace_parser_t *parser, trace_parser_event_handler_t even
     parser->record_filter.type = TRACE_MATCHER_TRUE;
     parser->show_timestamp = TRUE;
     parser->show_function_name = TRUE;
+    parser->file_info.file_base = MAP_FAILED;
+    parser->file_info.fd = -1;
+    parser->inotify_fd = -1;
+    parser->inotify_descriptor = -1;
     RecordsAccumulatorList__init(&parser->records_accumulators);
+
+    last_parser_used = parser;
 }
 
 static int read_file_header(trace_parser_t *parser, struct trace_record *record) {
@@ -2240,7 +2252,7 @@ static void *mmap_gzip(int fd, long long *input_size)
     }
 
     lseek64(fd, 0, SEEK_SET);
-    gz = gzdopen(fd, "rb");
+    gz = gzdopen(dup(fd), "rb");
     if (gz == NULL || gzdirect(gz)) {
         return NULL;
     }
@@ -2337,19 +2349,40 @@ static int mmap_file(trace_parser_t *parser, const char *filename)
         return -1;
     }
 
+    assert(-1 == parser->file_info.fd);
     parser->file_info.fd = fd;
+
+    assert(MAP_FAILED == parser->file_info.file_base);
     parser->file_info.file_base = addr;
+
     parser->file_info.end_offset = size;
     parser->file_info.current_offset = 0;
     return 0;
-
 }
 
 static void unmap_file(trace_parser_t *parser)
 {
-    munmap(parser->file_info.file_base, parser->file_info.end_offset);
-    close(parser->file_info.fd);
-    parser->file_info.fd = -1;
+    if (MAP_FAILED != parser->file_info.file_base) {
+    	assert(0 == munmap(parser->file_info.file_base, parser->file_info.end_offset));
+    	parser->file_info.file_base = MAP_FAILED;
+    }
+
+    parser->file_info.end_offset = 0;
+
+    if (-1 != parser->inotify_descriptor) {
+    	assert(0 == inotify_rm_watch(parser->inotify_fd, parser->inotify_fd));
+    	parser->inotify_descriptor = -1;
+    }
+
+    if (-1 != parser->inotify_fd) {
+    	assert(0 == close(parser->inotify_fd));
+    	parser->inotify_fd = -1;
+    }
+
+    if (-1 != parser->file_info.fd) {
+    	assert(0 == close(parser->file_info.fd));
+    	parser->file_info.fd = -1;
+    }
 }
 
 int TRACE_PARSER__from_file(trace_parser_t *parser, bool_t wait_for_input, const char *filename, trace_parser_event_handler_t event_handler, void *arg)
@@ -2392,6 +2425,7 @@ int TRACE_PARSER__from_file(trace_parser_t *parser, bool_t wait_for_input, const
     	break;
 
     default:
+    	unmap_file(parser);
     	errno = EFTYPE;
     	return -1;
     }
