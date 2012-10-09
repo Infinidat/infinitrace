@@ -55,7 +55,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 
 /* print out */
 typedef struct {
-    char buf[0x2000];
+    char buf[0x4000];
     unsigned int i;
 } out_fd;
 
@@ -68,7 +68,7 @@ static void out_flush(out_fd* out) {
     out->i = 0;
 }
 static void out_check(out_fd* out) {
-    if (out->i < 0x1800)
+    if (out->i < sizeof(out->buf) - 0x200)
         return;
     fprintf(stderr, "Formatted record is too long (0x%x)", out->i);
     out_flush(out);
