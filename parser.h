@@ -185,6 +185,7 @@ typedef struct trace_parser {
     int indent;
     int nanoseconds_ts;
     bool_t wait_for_input;
+    bool_t silent_mode;
     int inotify_fd;
     int inotify_descriptor;
     int show_field_names;

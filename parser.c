@@ -94,8 +94,8 @@ static void SAY_F(out_fd* out, const char* fmt, ...) {
     va_end  (args);
 } 
 
-#define SAY_COL(O,C) if (color_bool) SAY_S(O,C)
-#define SAY_COLORED(O,S,C) do { if (color_bool) { SAY_COL(O,C); SAY_S(O,S); SAY_COL(O,ANSI_RESET);} else SAY_S(O,S); } while(0)
+#define SAY_COL(O,C) do { if (color_bool) { SAY_S(O,C); } } while (0)
+#define SAY_COLORED(O,S,C) do { if (color_bool) { SAY_COL(O,C); SAY_S(O,S); SAY_COL(O,ANSI_RESET);} else { SAY_S(O,S); } } while(0)
 static void SAY_ESCAPED(out_fd* out, const char* buf, int size) {
     out_check(out);
     static const char hex_digits[] = "0123456789abcdef";
@@ -221,6 +221,7 @@ static int read_next_record(trace_parser_t *parser, struct trace_record *record)
         }
 
         if (parser->wait_for_input) {
+            parser->silent_mode = FALSE;
             rc = wait_for_data(parser);
             if (0 != rc) {
                 return -1;
@@ -1855,6 +1856,10 @@ static void say_new_file(out_fd* out, trace_parser_t *parser, unsigned long long
 
 static int dumper_event_handler(trace_parser_t *parser, enum trace_parser_event_e event, void *event_data, void __attribute__((unused)) *arg)
 {
+    if (parser->silent_mode) {
+        return 0;
+    }
+
     if (event != TRACE_PARSER_COMPLETE_TYPED_RECORD_PROCESSED) {
         return 0;
     }
@@ -2390,6 +2395,7 @@ int TRACE_PARSER__from_file(trace_parser_t *parser, bool_t wait_for_input, const
     int rc;
     trace_parser_init(parser, event_handler, arg, TRACE_INPUT_STREAM_TYPE_SEEKABLE_FILE);
     if (wait_for_input) {
+        parser->silent_mode = TRUE;
         parser->wait_for_input = TRUE;
         if (0 != init_inotify(parser, filename)) {
         	fprintf(stderr, "Failed to set-up inotify"
