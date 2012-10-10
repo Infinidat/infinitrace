@@ -117,7 +117,7 @@ static int trace_open_file(struct trace_dumper_configuration_s *conf, struct tra
     }
 
     INFO("Opening trace file:", filename);
-    assert(record_file->fd < 0);
+    assert(is_closed(record_file));
     record_file->fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (record_file->fd < 0) {
     	syslog(LOG_ERR|LOG_USER, "Failed to open new trace file %s due to error %s", filename, strerror(errno));
@@ -173,7 +173,7 @@ int rotate_trace_file_if_necessary(struct trace_dumper_configuration_s *conf)
 int open_trace_file_if_necessary(struct trace_dumper_configuration_s *conf)
 {
 	int rc = 0;
-	if ((conf->write_to_file) && (conf->record_file.fd < 0)) {
+	if ((conf->write_to_file) && is_closed(&conf->record_file)) {
 		if (conf->fixed_output_filename) {
 			rc = trace_open_file(conf, &conf->record_file, conf->fixed_output_filename, FALSE);
 		}
@@ -188,7 +188,7 @@ int open_trace_file_if_necessary(struct trace_dumper_configuration_s *conf)
 		}
     }
 
-   	if (conf->write_notifications_to_file && (conf->notification_file.fd < 0)) {
+   	if (conf->write_notifications_to_file && is_closed(&conf->notification_file)) {
 		if (conf->fixed_notification_filename) {
 			rc = trace_open_file(conf, &conf->notification_file, conf->fixed_notification_filename, FALSE);
 		}
@@ -209,43 +209,111 @@ int open_trace_file_if_necessary(struct trace_dumper_configuration_s *conf)
     return rc;
 }
 
-
-void close_record_file(struct trace_dumper_configuration_s *conf)
-{
-    close(conf->record_file.fd);
-    conf->record_file.fd = -1;
-    conf->last_flush_offset = 0;
-
-    int i;
-    struct trace_mapped_buffer *mapped_buffer;
-    struct trace_mapped_records *mapped_records;
-    conf->header_written = 0;
-    int rid;
-
-    for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
-        mapped_records->last_flush_offset = 0;
-        mapped_buffer->last_metadata_offset = 0;
-        mapped_buffer->metadata_dumped = FALSE;
-    }
+bool_t is_closed(const struct trace_record_file *file) {
+	return file->fd < 0;
 }
 
-void close_all_files(struct trace_dumper_configuration_s *conf)
-{
-	if (conf->notification_file.fd >= 0) {
-		close(conf->notification_file.fd);
-		conf->notification_file.fd = -1;
+static int close_file(struct trace_record_file *file) {
+	int rc = 0;
+	if (!is_closed(file)) {
+		rc = close(file->fd);
+		if (0 == rc) {
+			file->fd = -1;
+		}
+	}
 
+	return rc;
+}
+
+int close_record_file(struct trace_dumper_configuration_s *conf)
+{
+    int rc = close_file(&conf->record_file);
+
+    if (is_closed(&conf->record_file)) {
+
+    	conf->last_flush_offset = 0;
+    	conf->header_written = FALSE;
+
+		int i;
 		struct trace_mapped_buffer *mapped_buffer;
 		struct trace_mapped_records *mapped_records;
-		int i;
 		int rid;
+
 		for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
+			mapped_records->last_flush_offset = 0;
+			mapped_buffer->last_metadata_offset = 0;
+			mapped_buffer->metadata_dumped = FALSE;
+		}
+	}
+
+    return rc;
+}
+
+int close_notification_file(struct trace_dumper_configuration_s *conf)
+{
+	int rc = close_file(&conf->notification_file);
+
+	if (is_closed(&conf->notification_file)) {
+		struct trace_mapped_buffer *mapped_buffer;
+		int i;
+		for_each_mapped_buffer(i, mapped_buffer) {
 			mapped_buffer->notification_metadata_dumped = FALSE;
 		}
 	}
 
-	if (conf->record_file.fd >= 0) {
-		close_record_file(conf);
+	return rc;
+}
+
+int close_all_files(struct trace_dumper_configuration_s *conf)
+{
+	int rc = 0;
+
+	if (conf->notification_file.fd >= 0) {
+		rc |= close_notification_file(conf);
 	}
+
+	if (conf->record_file.fd >= 0) {
+		rc |= close_record_file(conf);
+	}
+
+	return rc;
+}
+
+unsigned request_file_operations(struct trace_dumper_configuration_s *conf, unsigned op_flags)
+{
+	return __sync_fetch_and_or(&conf->request_flags, op_flags);
+}
+
+int apply_requested_file_operations(struct trace_dumper_configuration_s *conf, unsigned op_mask)
+{
+	int rc = 0;
+	unsigned flags = conf->request_flags & op_mask;
+
+	if (flags & TRACE_REQ_CLOSE_RECORD_FILE) {
+		rc |= close_record_file(conf);
+	}
+
+	if (flags & TRACE_REQ_CLOSE_NOTIFICATION_FILE) {
+		rc |= close_notification_file(conf);
+	}
+
+	static const char snapshot_prefix[] = "snapshot.";
+
+	if (flags & TRACE_REQ_RENAME_RECORD_FILE) {
+		rc |= prepend_prefix_to_filename(conf->record_file.filename, snapshot_prefix);
+	}
+
+	if (flags & TRACE_REQ_RENAME_NOTIFICATION_FILE) {
+		rc |= prepend_prefix_to_filename(conf->notification_file.filename, snapshot_prefix);
+	}
+
+	unsigned all_flags = __sync_fetch_and_and(&conf->request_flags, ~flags);
+
+	if (0 != rc) {
+		syslog( LOG_USER|LOG_ERR,
+				"Trace has encountered the following error while trying to execute operations requested asynchronously corresponding to flags=%X, flag_word=%X: %s",
+				flags, all_flags, strerror(errno));
+	}
+	return rc;
 }
 

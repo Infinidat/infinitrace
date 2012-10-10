@@ -286,7 +286,7 @@ static void init_buffer_chunk_record(struct trace_dumper_configuration_s *conf, 
 }
 
 
-static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *conf, unsigned int num_iovecs, unsigned int total_written_records, unsigned long long cur_ts)
+static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *conf, unsigned int num_iovecs, unsigned int total_written_records, trace_ts_t cur_ts)
 {
     int i;
     int rid;
@@ -611,6 +611,7 @@ static int do_housekeeping_if_necessary(struct trace_dumper_configuration_s *con
     }
 
     handle_overwrite(conf);
+    apply_requested_file_operations(conf, TRACE_REQ_ALL_OPS);
 
     if (!conf->attach_to_pid && !conf->stopping) {
         rc = map_new_buffers(conf);

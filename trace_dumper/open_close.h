@@ -28,7 +28,21 @@ int rotate_trace_file_if_necessary(struct trace_dumper_configuration_s *conf);
 int open_trace_file_if_necessary(struct trace_dumper_configuration_s *conf);
 bool_t trace_quota_is_enabled(const struct trace_dumper_configuration_s *conf);
 unsigned long long trace_get_walltime(void);
-void close_record_file(struct trace_dumper_configuration_s *conf);
-void close_all_files(struct trace_dumper_configuration_s *conf);
+
+bool_t is_closed(const struct trace_record_file *file);
+int close_record_file(struct trace_dumper_configuration_s *conf);
+int close_notification_file(struct trace_dumper_configuration_s *conf);
+int close_all_files(struct trace_dumper_configuration_s *conf);
+
+/* Functions for performing file operations be performed asynchronously. See enum trace_request_flags for the supported operations.
+ * The handling of the requested operations word is thread safe. */
+
+/* Request operations. Returns the value of the requested operation flags prior to the execution of the function. */
+unsigned request_file_operations(struct trace_dumper_configuration_s *conf, unsigned op_flags);
+
+/* Perform the operations corresponding to a logical AND of the requested operation flags and op_mask.
+ * The mask may be used to only apply operations to files that the current thread owns.
+ * Returns 0 if all the operation succeeded, -1 otherwise, and sets errno accordingly. */
+int apply_requested_file_operations(struct trace_dumper_configuration_s *conf, unsigned op_mask);
 
 #endif /* OPEN_CLOSE_H_ */

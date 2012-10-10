@@ -105,6 +105,21 @@ struct trace_record_file {
     size_t iov_allocated_len;
 };
 
+/* */
+enum trace_request_flags {
+	TRACE_REQ_CLOSE_RECORD_FILE = 0x01,
+	TRACE_REQ_CLOSE_NOTIFICATION_FILE = 0x02,
+	TRACE_REQ_CLOSE_ALL_FILES = TRACE_REQ_CLOSE_RECORD_FILE | TRACE_REQ_CLOSE_NOTIFICATION_FILE,
+
+	TRACE_REQ_RENAME_RECORD_FILE = 0x04,
+	TRACE_REQ_RENAME_NOTIFICATION_FILE = 0x08,
+	TRACE_REQ_RENAME_ALL_FILES = TRACE_REQ_RENAME_RECORD_FILE | TRACE_REQ_RENAME_NOTIFICATION_FILE,
+
+	TRACE_REQ_RECORD_OPS = TRACE_REQ_CLOSE_RECORD_FILE | TRACE_REQ_RENAME_RECORD_FILE,
+	TRACE_REQ_NOTIFICATION_OPS = TRACE_REQ_CLOSE_NOTIFICATION_FILE | TRACE_REQ_RENAME_NOTIFICATION_FILE,
+	TRACE_REQ_ALL_OPS = -1,
+};
+
 enum operation_type {
     OPERATION_TYPE_DUMP_RECORDS,
     OPERATION_TYPE_DUMP_BUFFER_STATS,
@@ -125,6 +140,7 @@ struct trace_dumper_configuration_s {
     const char *notifications_subdir;
     const char *attach_to_pid;
     int should_quit;
+    unsigned int request_flags;
     struct trace_record_matcher_spec_s severity_filter[SEVERITY_FILTER_LEN];
     unsigned int header_written;
     unsigned int write_to_file;

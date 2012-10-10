@@ -318,37 +318,17 @@ struct trace_dumper_configuration_s *trace_dumper_get_configuration()
 
 static void usr1_handler()
 {
-	close_all_files(&trace_dumper_configuration);
+	request_file_operations(&trace_dumper_configuration, TRACE_REQ_CLOSE_ALL_FILES);
 }
 
 static void usr2_handler()
 {
-	close_all_files(&trace_dumper_configuration);
-
-	static const char snapshot_prefix[] = "snapshot.";
-	static const char *files_to_rename[] = {
-			trace_dumper_configuration.record_file.filename,
-			trace_dumper_configuration.notification_file.filename
-	};
-
-	for (unsigned i = 0; i < ARRAY_LENGTH(files_to_rename); i++) {
-		const char *filename = files_to_rename[i];
-		int rc = prepend_prefix_to_filename(filename, snapshot_prefix);
-		if (0 != rc) {
-			syslog(LOG_USER|LOG_ERR, "Trace dumper failed to create a snapshot of file %s due to error: %s",
-					filename, strerror(errno));
-			ERR("Error prefixing",  filename, "(", strerror(errno), ")");
-			break;
-		} else {
-			INFO("Created snapshot file at", snapshot_prefix, filename);
-		}
-	}
-
-	return;
+	request_file_operations(&trace_dumper_configuration, TRACE_REQ_CLOSE_ALL_FILES | TRACE_REQ_RENAME_ALL_FILES);
 }
 
 int set_signal_handling(void)
 {
+	int rc = 0;
 	const struct {
 		int sig;
 		sig_t handler;
@@ -360,12 +340,13 @@ int set_signal_handling(void)
 	unsigned i;
 	for (i = 0; i < ARRAY_LENGTH(sig_handlers); i++) {
 		if (SIG_ERR == signal(sig_handlers[i].sig, sig_handlers[i].handler)) {
-			syslog(LOG_USER|LOG_ERR, "Failed to set the handler for signal %d due to error: %s", sig_handlers[i].sig, strerror(errno));
-			return -1;
+			syslog(LOG_USER|LOG_ERR, "Failed to set the handler for signal %d (%s) due to error: %s",
+					sig_handlers[i].sig, strsignal(sig_handlers[i].sig), strerror(errno));
+			rc |= -1;
 		}
 	}
 
-    return 0;
+    return rc;
 }
 
 
