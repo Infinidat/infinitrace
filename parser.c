@@ -76,15 +76,26 @@ static void out_check(out_fd* out) {
 }
 static void SAY_S(out_fd* out, const char* str) {
     out_check(out);
-    while(*str) out->buf[out->i++] = *(str++);
+    int capacity = sizeof(out->buf) - out->i;
+    char* dst = out->buf + out->i;
+    const char* p = memccpy(dst, str, 0, capacity);
+    if (p == NULL) {
+        out->i += capacity;
+    } else {
+        out->i += (p - dst - 1);
+    }
 }
 static void SAY_C(out_fd* out, const char chr) {
     out->buf[out->i++] = chr;
 }
 static void SAY_N(out_fd* out, const char* str, int n) {
     out_check(out);
-    for (int i = 0; i < n; i++)
-        out->buf[out->i++] = str[i];
+    int capacity = sizeof(out->buf) - out->i;
+    if (n > capacity) {
+        n = capacity;
+    }
+    memcpy(&out->buf[out->i], str, n);
+    out->i += n;
 }
 static void SAY_F(out_fd* out, const char* fmt, ...) {
     out_check(out);
@@ -133,15 +144,14 @@ CREATE_LIST_IMPLEMENTATION(RecordsAccumulatorList, struct trace_record_accumulat
 #define MAX_ULLONG     18446744073709551615ULL
 #endif
 
-static int my_strncpy(char* formatted_record, const char* source, int max_size) {
-    // Heaven knows why, but this is much faster than strncpy
-    int i;
-    if (0 >= max_size)
-        return 0;
-    for (i = 0; source[i] > 9 && i < max_size -1; i++)
-        formatted_record[i] = source[i];
-    formatted_record[i] = 0;  /* null termination, not included in count */
-    return i;
+static int my_strncpy(char* formatted_record, const char* source, int max_size) 
+{
+    const char* p = memccpy(formatted_record, source, '0', max_size);
+    if (p == NULL) {
+        return max_size;
+    } else {
+        return p - formatted_record - 1;
+    }
 }
 
 static int wait_for_data(trace_parser_t *parser)
@@ -230,6 +240,7 @@ static int read_next_record(trace_parser_t *parser, struct trace_record *record)
                 continue;
             }
         } else {
+            memset(record, 0, sizeof(*record));
             parser->buffer_dump_context.file_offset++;
             record->rec_type = TRACE_REC_TYPE_END_OF_FILE;
             record->ts = 0;
@@ -1754,7 +1765,6 @@ static bool_t inside_record_dump(const trace_parser_t *parser)
 static int read_smallest_ts_record(trace_parser_t *parser, struct trace_record *record)
 {
     struct trace_record tmp_record;
-    memset(&tmp_record, 0, sizeof(tmp_record));
     unsigned int i;
     unsigned long long min_ts = MAX_ULLONG;
     int rc;
@@ -1981,8 +1991,9 @@ static int get_minimal_log_id_size(const struct trace_parser_buffer_context *con
 static int log_id_to_log_template(trace_parser_t *parser, struct trace_parser_buffer_context *context, int log_id, char *formatted_record, int formatted_record_size)
 {
     int total_length = 0;
-    memset(formatted_record, 0, formatted_record_size);
     bool_t exact_size = FALSE;
+
+    formatted_record[0] = '\0';
 
     const char *exact_indicator = "*";
     unsigned int minimal_log_size = get_minimal_log_id_size(context, log_id, &exact_size);
@@ -2235,6 +2246,7 @@ static void *mmap_grow(void* addr, long long size, long long new_size)
 
 static void *mmap_gzip(int fd, long long *input_size)
 {
+    int new_fd = -1;
     gzFile gz;
     unsigned char u[4];
     int len;
@@ -2257,8 +2269,16 @@ static void *mmap_gzip(int fd, long long *input_size)
     }
 
     lseek64(fd, 0, SEEK_SET);
-    gz = gzdopen(dup(fd), "rb");
-    if (gz == NULL || gzdirect(gz)) {
+    new_fd = dup(fd);
+    gz = gzdopen(new_fd, "rb");
+    if (gz == NULL) {
+        close(new_fd);
+        return NULL;
+    }
+    new_fd = -1;
+ 
+    if (gzdirect(gz)) {
+        gzclose(gz);
         return NULL;
     }
 
@@ -2266,6 +2286,7 @@ static void *mmap_gzip(int fd, long long *input_size)
 
     addr = mmap_grow(NULL, 0, size);
     if (addr == MAP_FAILED) {
+        gzclose(gz);
         return addr;
     }
 
