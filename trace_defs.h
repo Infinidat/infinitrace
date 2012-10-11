@@ -106,28 +106,9 @@ typedef unsigned trace_generation_t;
 #error "TRACE_RECORD_BUFFER_FUNCS_RECS is not a power of 2"
 #endif
 
-
-
 #undef IS_PWR_OF_2
 
-#define TRACE_SEVERITY_DEF       \
-     TRACE_SEV_X(0, INVALID)     \
-     TRACE_SEV_X(1, FUNC_TRACE)  \
-     TRACE_SEV_X(2, DEBUG)       \
-     TRACE_SEV_X(3, INFO)        \
-     TRACE_SEV_X(4, WARN)        \
-     TRACE_SEV_X(5, ERR)       \
-     TRACE_SEV_X(6, FATAL)       \
-
-enum trace_severity {
-#define TRACE_SEV_X(num, name) \
-	TRACE_SEV_##name  = num,
-
-TRACE_SEVERITY_DEF
-        TRACE_SEV__MIN = 1,
-        TRACE_SEV__MAX = TRACE_SEV_FATAL
-#undef TRACE_SEV_X
-};
+#include "trace_sev_levels.h"
 
 /* The trace record type constants defined below are used in the rec_type field of the trace_record structure */
 

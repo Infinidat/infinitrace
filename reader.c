@@ -53,7 +53,12 @@ struct trace_reader_conf {
     filter_t * filter_quota;
 };
 
-static const char *usage = 
+
+#define TRACE_SEV_X(ignored, sev) "/" #sev
+#define TRACE_LEVELS_STR "FUNC" TRACE_SEVERITY_DEF
+
+
+static const char usage[] =
     "Usage: %s [params] file[s]\n\
     Actions:\n\
      (DEFAULT ACTION)    : Dump contents of trace file \n\
@@ -75,7 +80,7 @@ static const char *usage =
  -A  --after     [num]   : Show [num] traces of the same thread after each hit (TBD: -B/C) \n\
  \n\
     Filters: \n\
- -l  --level  [severity] : Show records from severity and up. Int value or FUNC/DEBUG/INFO/WARN/ERR/FATAL (DEFAULT: INFO) \n\
+ -l  --level  [severity] : Show records from severity and up. Int value or " TRACE_LEVELS_STR " (DEFAULT: INFO) \n\
  -t  --time   [time]     : Used once or twice to set a time range. [time] may be nanoseconds int, or time format string \n\
  -g  --grep   [str]      : Show records whose constant string contains [str] \n\
  -c  --strcmp [str]      : Show records whose constant string exact-matches [str] (faster than -g, useful to filter MODULE)\n\
@@ -88,7 +93,7 @@ static const char *usage =
  \n\
     Filters Rules: \n\
  * legal -t values: '2012/09/03_05:10:56_676665242', '2012/09/03_05:10:56' (zero padded), '1346649056676293891' (as in -P) \n\
- * Differnt options are bound with AND \n\
+ * Different options are bound with AND \n\
  * Filter options can be repeated, repetitions are bound with OR (exceptioned by -t) \n\
  * Enums can be filtered as literal numbers (named enums - TBD) \n\
  * Instead of 'name=num' one can use 'name<num' or 'name>num' (quote to avoid shell's redirection, unsigned only) \n\
@@ -101,6 +106,10 @@ static const char *usage =
  \"-v 'vu<4' -w 'vu>1' -Q20 \"           same as '-v vu=2 -v -Q20' \n\
 \n";
     //    " -u  --function  [func]     Show only records generated from function [func] 
+
+static const char invalid_severity_msg[] = "Severity format may be a number, or " TRACE_LEVELS_STR;
+
+#undef TRACE_SEV_X
 
 static const struct option longopts[] = {
     { "help"            , 0, 0, 'h'},
@@ -210,12 +219,13 @@ static int get_severity_level(const char* str) {
     return 
         get_number(str, &n)           ? n :
         0 == strcasecmp(str, "FUNC" ) ? 1 :
-        0 == strcasecmp(str, "DEBUG") ? 2 :
-        0 == strcasecmp(str, "INFO" ) ? 3 :
-        0 == strcasecmp(str, "WARN" ) ? 4 :
-        0 == strcasecmp(str, "ERR"  ) ? 5 :
-        0 == strcasecmp(str, "FATAL") ? 6 :
-        exit_usage(NULL, "Severity format may be a number, or FUNC/DEBUG/INFO/WARN/ERR/FATAL");
+
+#define TRACE_SEV_X(ignored, sev) \
+		(0 == strcasecmp(str, #sev)) ? TRACE_SEV_##sev :
+
+        TRACE_SEVERITY_DEF
+
+        exit_usage(NULL, invalid_severity_msg);
 }
 
 static int parse_command_line(struct trace_reader_conf *conf, int argc, const char **argv)

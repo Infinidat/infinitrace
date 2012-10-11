@@ -536,7 +536,10 @@ static void init_record_mutable_data(struct trace_records *recs)
 
 static void init_records_metadata(void)
 {
-    init_records_immutable_data(&current_trace_buffer->u.records._other, TRACE_RECORD_BUFFER_RECS, (1 << TRACE_SEV_FATAL) | (1 << TRACE_SEV_ERR) | (1 << TRACE_SEV_INFO) | (1 << TRACE_SEV_WARN));
+
+#define ALL_SEVS_ABOVE(sev) ((1 << (TRACE_SEV__MAX + 1))) - (1 << (sev + 1))
+
+    init_records_immutable_data(&current_trace_buffer->u.records._other, TRACE_RECORD_BUFFER_RECS, ALL_SEVS_ABOVE(TRACE_SEV_DEBUG));
     init_records_immutable_data(&current_trace_buffer->u.records._debug, TRACE_RECORD_BUFFER_RECS, (1 << TRACE_SEV_DEBUG));
 	init_records_immutable_data(&current_trace_buffer->u.records._funcs, TRACE_RECORD_BUFFER_FUNCS_RECS, (1 << TRACE_SEV_FUNC_TRACE));
 

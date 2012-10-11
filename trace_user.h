@@ -18,6 +18,8 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #ifndef __TRACE_USER_H__
 #define __TRACE_USER_H__
 
+#include "trace_sev_levels.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -50,20 +52,23 @@ typedef unsigned char hex_t;
 #define CALL_INVALID __attribute__((error("traces: Trace symbol name should not appear in final code, this is a bug. Contact Yotam Rubin <yotamrubin@gmail.com> and report a bug")))
 #ifdef __cplusplus
 
-void REPR(...) CALL_INVALID;    
-void DEBUG(...) CALL_INVALID;
-void WARN(...) CALL_INVALID;
-void INFO(...) CALL_INVALID;
-void ERR(...) CALL_INVALID;
-void FATAL(...) CALL_INVALID;
+void REPR(...) CALL_INVALID;
+
+#define TRACE_SEV_X(ignored, sev) void sev(...) CALL_INVALID;
+
+TRACE_SEVERITY_DEF
+
+#undef TRACE_SEV_X
     
 #else
+
 void REPR() CALL_INVALID;
-void DEBUG() CALL_INVALID;
-void WARN() CALL_INVALID;
-void INFO() CALL_INVALID;
-void ERR() CALL_INVALID;
-void FATAL() CALL_INVALID;
+
+#define TRACE_SEV_X(ignored, sev) void sev() CALL_INVALID;
+
+TRACE_SEVERITY_DEF
+
+#undef TRACE_SEV_X
 
 #endif /* __cplusplus */
 
@@ -72,18 +77,21 @@ void FATAL() CALL_INVALID;
 #else /* __TRACE_INSTRUMENTATION */
 #ifdef __cplusplus
 void REPR(...);
-void DEBUG(...);
-void WARN(...);
-void INFO(...);
-void ERR(...);
-void FATAL(...);    
+
+#define TRACE_SEV_X(ignored, sev) void sev(...);
+
+TRACE_SEVERITY_DEF
+
+#undef TRACE_SEV_X
+
 #else
 void REPR();
-void DEBUG();
-void WARN();
-void INFO();
-void ERR();
-void FATAL();
+
+#define TRACE_SEV_X(ignored, sev) void sev();
+
+TRACE_SEVERITY_DEF
+
+#undef TRACE_SEV_X
 
 #endif /* __cplusplus */
 #endif /* __TRACE_INSTRUMENTATION */    

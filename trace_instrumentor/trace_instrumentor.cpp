@@ -345,7 +345,15 @@ void TraceCall::replaceExpr(const Expr *expr, std::string replacement)
 }
 
 
-const char *sev_to_str[] = {"INVALID", "FUNC_TRACE", "DEBUG", "INFO", "WARN", "ERR", "FATAL"};
+const char *sev_to_str[] = {"INVALID", "FUNC_TRACE",
+
+#define TRACE_SEV_X(ignored, sev) #sev,
+
+		TRACE_SEVERITY_DEF
+
+#undef TRACE_SEV_X
+
+};
 
 std::string TraceCall::getSeverity()
 {

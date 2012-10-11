@@ -47,7 +47,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "list_template.h"
 #include "trace_metadata_util.h"
 #include "object_pool.h"
-#include "colors.h"
+#include "trace_sev_display.h"
 #include "string.h"
 #include "timeformat.h"
 
@@ -936,23 +936,26 @@ static const char * severity_to_str(unsigned int sev, int color_bool) {
 
 	static const char* sevs_colored[] = {
         GREY     "----",
-        WHITE    "DBG ",
-        GREEN_B	 "INFO",
-        YELLOW_B "WARN",
-        RED_B    "ERR ",
-        RED_B    "FATAL"
+
+#define TRACE_SEV_X(ignored, name) TRACE_SEV_##name##_DISPLAY_COLOR TRACE_SEV_##name##_DISPLAY_STR,
+
+        TRACE_SEVERITY_DEF
+
+#undef TRACE_SEV_X
+
     };
     static const char* sevs[] = {
         "----",
-        "DBG ",
-        "INFO",
-        "WARN",
-        "ERR ",
-        "FATAL"
+#define TRACE_SEV_X(ignored, name) TRACE_SEV_##name##_DISPLAY_STR,
+
+        TRACE_SEVERITY_DEF
+
+#undef TRACE_SEV_X
+
     };
 
     return
-        (sev < TRACE_SEV_FUNC_TRACE || sev > TRACE_SEV_FATAL ) ?
+        (sev < TRACE_SEV_FUNC_TRACE || sev > TRACE_SEV__MAX ) ?
         "???" :
         color_bool ?
         sevs_colored[sev - TRACE_SEV_FUNC_TRACE] :

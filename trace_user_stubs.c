@@ -24,25 +24,12 @@ void REPR()
 {
 }
 
-void DEBUG()
-{
-}
+#define TRACE_SEV_X(ignored, sev) void sev() {}
 
-void ERR()
-{
-}
+TRACE_SEVERITY_DEF
 
-void INFO()
-{
-}
+#undef TRACE_SEV_X
 
-void WARN()
-{
-}
-
-void FATAL()
-{
-}
 
 void trace_runtime_control_set_default_min_sev(enum trace_severity sev __attribute__ ((unused))) {}
 
