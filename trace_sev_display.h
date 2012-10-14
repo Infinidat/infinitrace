@@ -22,6 +22,7 @@
 /* Define ANSI color patterns */
 #include "colors.h"
 #define TRACE_SEV_DEBUG_DISPLAY_COLOR  WHITE
+#define TRACE_SEV_TRIO_DISPLAY_COLOR   CYAN
 #define TRACE_SEV_INFO_DISPLAY_COLOR   GREEN_B
 #define TRACE_SEV_WARN_DISPLAY_COLOR   YELLOW_B
 #define TRACE_SEV_ERR_DISPLAY_COLOR    RED_B
@@ -30,6 +31,7 @@
 
 /* Define display names for the severities. This can be used to achieve uniform width  */
 #define TRACE_SEV_DEBUG_DISPLAY_STR "DBG "
+#define TRACE_SEV_TRIO_DISPLAY_STR  "TRIO"
 #define TRACE_SEV_INFO_DISPLAY_STR  "INFO"
 #define TRACE_SEV_WARN_DISPLAY_STR  "WARN"
 #define TRACE_SEV_ERR_DISPLAY_STR   "ERR "
