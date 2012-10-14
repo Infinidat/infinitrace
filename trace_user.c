@@ -70,6 +70,15 @@ int trace_runtime_control_set_sev_threshold_for_subsystem(int subsystem_id, enum
 	return 0;
 }
 
+static void trace_runtime_control_free_thresholds(void) {
+    if (NULL != runtime_control.thresholds) {
+    	void *thresholds = runtime_control.thresholds;
+    	runtime_control.thresholds = NULL;
+    	runtime_control.subsystem_range[0] = runtime_control.subsystem_range[1] = 0;
+    	free(thresholds);
+    }
+}
+
 int trace_runtime_control_set_subsystem_range(int low, int high)
 {
 	if (high < low) {
@@ -77,9 +86,7 @@ int trace_runtime_control_set_subsystem_range(int low, int high)
 		return -1;
 	}
 
-	if (NULL != runtime_control.thresholds) {
-		free(runtime_control.thresholds);
-	}
+	trace_runtime_control_free_thresholds();
 
 	runtime_control.subsystem_range[0] = low;
 	runtime_control.subsystem_range[1] = high;
@@ -608,5 +615,6 @@ static void TRACE__init(void)
 void TRACE__fini(void)
 {
     current_trace_buffer = NULL;
+    trace_runtime_control_free_thresholds();
     delete_shm_files(getpid());
 }
