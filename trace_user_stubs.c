@@ -31,5 +31,5 @@ TRACE_SEVERITY_DEF
 #undef TRACE_SEV_X
 
 
-void trace_runtime_control_set_default_min_sev(enum trace_severity sev __attribute__ ((unused))) {}
+enum trace_severity trace_runtime_control_set_default_min_sev(enum trace_severity sev __attribute__ ((unused))) {return TRACE_SEV_INVALID;}
 

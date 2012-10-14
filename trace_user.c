@@ -50,9 +50,11 @@ static struct trace_runtime_control runtime_control =
 
 const struct trace_runtime_control *p_trace_runtime_control = &runtime_control;
 
-void trace_runtime_control_set_default_min_sev(enum trace_severity sev)
+enum trace_severity trace_runtime_control_set_default_min_sev(enum trace_severity sev)
 {
+    enum trace_severity prev = runtime_control.default_min_sev;
 	runtime_control.default_min_sev = sev;
+	return prev;
 }
 
 int trace_runtime_control_set_sev_threshold_for_subsystem(int subsystem_id, enum trace_severity sev)

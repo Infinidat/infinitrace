@@ -69,7 +69,7 @@ extern __thread unsigned short trace_current_nesting;
 extern const struct trace_runtime_control *p_trace_runtime_control;
 
 /* Set the default severity threshold which can be overridden for the current thread */
-void trace_runtime_control_set_default_min_sev(enum trace_severity sev);
+enum trace_severity trace_runtime_control_set_default_min_sev(enum trace_severity sev);
 
 /* Reset all per-subsystem thresholds and set the range of allowed subsytem IDs */
 int trace_runtime_control_set_subsystem_range(int low, int high);
