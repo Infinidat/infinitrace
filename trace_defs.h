@@ -108,7 +108,37 @@ typedef unsigned trace_generation_t;
 
 #undef IS_PWR_OF_2
 
+#ifndef TRACE_FORMAT_VERSION
+#define TRACE_FORMAT_VERSION (0xA3)
+#endif
+
+#define SEVERITY_COMPAT_DEF(ver) TRACE_SEVERITY_##ver##_DEF
+#define VER_HAS_SEVERITY_DEF(ver) defined(TRACE_SEVERITY_##ver##_DEF)
+#define TRACE_SEVERITY_DEF SEVERITY_COMPAT_DEF(0xA3)
+
 #include "trace_sev_levels.h"
+
+#ifndef TRACE_FORMAT_VERSION
+#error "TRACE_FORMAT_VERSION must be defined"
+#endif
+
+
+enum trace_severity {
+	TRACE_SEV_INVALID = 0,
+	TRACE_SEV_FUNC_TRACE = 1,
+
+#define TRACE_SEV_X(num, name) \
+	TRACE_SEV_##name  = num,
+
+	TRACE_SEVERITY_DEF
+
+#undef TRACE_SEV_X
+
+	TRACE_SEV__COUNT,
+	TRACE_SEV__MIN = TRACE_SEV_INVALID + 1,
+	TRACE_SEV__MAX = TRACE_SEV__COUNT - 1
+};
+
 
 /* The trace record type constants defined below are used in the rec_type field of the trace_record structure */
 
@@ -169,12 +199,12 @@ enum trace_file_type {
     TRACE_TYPE_ID_TYPEDEF = 3
 };
 
-#ifndef TRACE_FORMAT_VERSION
-#define TRACE_FORMAT_VERSION (0xA2)
-#endif
+
 
 #define TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA (0xA2)
 #define TRACE_FORMAT_VERSION_INTRODUCED_DEAD_PID_LIST (0xA2)
+
+#define TRACE_FORMAT_VERSION_INTRODUCED_LEVEL_CUSTOMIZATION (0xA3)
 
  /* Information about user defined types */
 struct trace_type_definition {

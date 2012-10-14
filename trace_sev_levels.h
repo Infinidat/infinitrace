@@ -23,27 +23,23 @@ Copyright 2012 Yitzik Casapu of Indinidat
  * display definitions in trace_sev_display.h
  * Also note that the numbers assigned must be contiguous and ascending, starting at TRACE_SEV__MIN */
 
-#define TRACE_SEVERITY_DEF       \
+/* A TRACE_SEVERITY_.._DEF macro is defined for every format version that changes the severity level mapping. When introducing a format
+ * version that doesn't make any changes to severity level mappings, there's no need to define it for that level. */
+
+#define TRACE_SEVERITY_0xA3_DEF       \
      TRACE_SEV_X(2, DEBUG)       \
      TRACE_SEV_X(3, INFO)        \
      TRACE_SEV_X(4, WARN)        \
      TRACE_SEV_X(5, ERR)         \
      TRACE_SEV_X(6, FATAL)       \
 
-enum trace_severity {
-	TRACE_SEV_INVALID = 0,
-	TRACE_SEV_FUNC_TRACE = 1,
+/* Backward compatibility defintions */
+#define TRACE_SEVERITY_0xA1_DEF  \
+     TRACE_SEV_X(2, DEBUG)       \
+     TRACE_SEV_X(3, INFO)        \
+     TRACE_SEV_X(4, WARN)        \
+     TRACE_SEV_X(5, ERR)         \
+     TRACE_SEV_X(6, FATAL)       \
 
-#define TRACE_SEV_X(num, name) \
-	TRACE_SEV_##name  = num,
-
-TRACE_SEVERITY_DEF
-
-#undef TRACE_SEV_X
-
-	TRACE_SEV__COUNT,
-	TRACE_SEV__MIN = TRACE_SEV_INVALID + 1,
-	TRACE_SEV__MAX = TRACE_SEV__COUNT - 1
-};
 
 #endif /* TRACE_SEV_LEVELS_H_ */

@@ -138,6 +138,8 @@ static int ends_with_equal(const out_fd* out) {
 CREATE_LIST_IMPLEMENTATION(BufferParseContextList, struct trace_parser_buffer_context)
 CREATE_LIST_IMPLEMENTATION(RecordsAccumulatorList, struct trace_record_accumulator)
 
+static enum trace_severity trace_sev_mapping[TRACE_SEV__COUNT];
+
 #ifdef ULLONG_MAX
 #define MAX_ULLONG	ULLONG_MAX
 #else
@@ -954,12 +956,13 @@ static const char * severity_to_str(unsigned int sev, int color_bool) {
 
     };
 
+    enum trace_severity mapped_sev = trace_sev_mapping[sev];
     return
-        (sev < TRACE_SEV_FUNC_TRACE || sev > TRACE_SEV__MAX ) ?
+        (mapped_sev < TRACE_SEV_FUNC_TRACE || mapped_sev > TRACE_SEV__MAX ) ?
         "???" :
         color_bool ?
-        sevs_colored[sev - TRACE_SEV_FUNC_TRACE] :
-        sevs        [sev - TRACE_SEV_FUNC_TRACE] ;
+        sevs_colored[mapped_sev - TRACE_SEV_FUNC_TRACE] :
+        sevs        [mapped_sev - TRACE_SEV_FUNC_TRACE] ;
 }
 
 static int TRACE_PARSER__format_typed_record(
@@ -2415,6 +2418,20 @@ static void unmap_file(trace_parser_t *parser)
     }
 }
 
+static void init_trace_sev_mapping(void) {
+    for (unsigned i = 0; i < ARRAY_LENGTH(trace_sev_mapping); i++) {
+    	trace_sev_mapping[i] = TRACE_SEV_INVALID;
+    }
+
+    trace_sev_mapping[TRACE_SEV_FUNC_TRACE] = TRACE_SEV_FUNC_TRACE;
+}
+
+#define FILL_SEV_MAPPING_FOR_VER(ver) \
+if (! sev_mapping_filled) { \
+	SEVERITY_COMPAT_DEF(ver) \
+	sev_mapping_filled = TRUE; \
+	} \
+
 int TRACE_PARSER__from_file(trace_parser_t *parser, bool_t wait_for_input, const char *filename, trace_parser_event_handler_t event_handler, void *arg)
 {
     int rc;
@@ -2447,13 +2464,33 @@ int TRACE_PARSER__from_file(trace_parser_t *parser, bool_t wait_for_input, const
         return -1;
     }
 
+    init_trace_sev_mapping();
+    bool_t sev_mapping_filled = FALSE;
+
+#define TRACE_SEV_X(num, name) \
+		trace_sev_mapping[num] = TRACE_SEV_##name;
+
+
     parser->file_info.format_version = file_header.u.file_header.format_version;
     switch (parser->file_info.format_version) {
-    case 0xA1:
-    	break;
+    case 0xA3:
+#if VER_HAS_SEVERITY_DEF(0xA3)
+    	FILL_SEV_MAPPING_FOR_VER(0xA3)
+#endif
 
     case 0xA2:
+#if VER_HAS_SEVERITY_DEF(0xA2)
+    	FILL_SEV_MAPPING_FOR_VER(0xA2)
+#endif
+
+    case 0xA1:
+#if VER_HAS_SEVERITY_DEF(0xA1)
+		FILL_SEV_MAPPING_FOR_VER(0xA1)
+#endif
+
     	break;
+
+#undef TRACE_SEV_X
 
     default:
     	unmap_file(parser);

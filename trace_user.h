@@ -18,7 +18,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #ifndef __TRACE_USER_H__
 #define __TRACE_USER_H__
 
-#include "trace_sev_levels.h"
+#include "trace_defs.h"
 
 #ifdef __cplusplus
 extern "C" {
