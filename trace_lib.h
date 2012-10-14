@@ -81,7 +81,7 @@ static inline enum trace_severity trace_runtime_control_get_sev_threshold_for_su
 		return TRACE_SEV_INVALID;
 	}
 	TRACE_ASSERT((subsystem_id >= p_trace_runtime_control->subsystem_range[0]) && (subsystem_id <= p_trace_runtime_control->subsystem_range[1]));
-	return p_trace_runtime_control->thresholds[subsystem_id - p_trace_runtime_control->thresholds[0]];
+	return p_trace_runtime_control->thresholds[subsystem_id - p_trace_runtime_control->subsystem_range[0]];
 }
 
 /* Allow the global default severity threshold to be overridden for the current thread by setting trace_thread_severity_threshold
