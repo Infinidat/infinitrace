@@ -145,11 +145,11 @@ static const char shortopts[] = "hisdm NOFLXEMPA:Q: g:c:v:u:w:t:z:l:f:"; // " xc
 static int exit_usage(const char *prog_name, const char* more)
 {
     if (prog_name) {
+        if (more)
+            fprintf(stderr, "\n%s\n", more);
+
         fprintf(stderr, usage, prog_name);
-        if (!more)
-            exit(0);
-        fprintf(stderr, "\n%s\n", more);
-        exit(EX_USAGE);
+        exit(more ? EX_USAGE : 0);
     }
 
     fprintf(stderr, "%s\n%s\n", more, "    Please use --help option (-h) for full usage ");
