@@ -5,6 +5,7 @@
 #define WHITE           "\033[0;37m"
 #define GREEN           "\033[0;32m"
 #define CYAN            "\033[0;36m"
+#define YELLOW          "\033[0;33m"
 #define MAGENTA         "\033[0;35m"
 #define WHITE_B         "\033[1;37m" 
 #define GREEN_B         "\033[1;32m" 

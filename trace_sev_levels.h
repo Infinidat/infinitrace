@@ -30,9 +30,10 @@ Copyright 2012 Yitzik Casapu of Indinidat
      TRACE_SEV_X(2, DEBUG)       \
      TRACE_SEV_X(3, TRIO)        \
      TRACE_SEV_X(4, INFO)        \
-     TRACE_SEV_X(5, WARN)        \
-     TRACE_SEV_X(6, ERR)         \
-     TRACE_SEV_X(7, FATAL)       \
+     TRACE_SEV_X(5, NOTE)        \
+     TRACE_SEV_X(6, WARN)        \
+     TRACE_SEV_X(7, ERR)         \
+     TRACE_SEV_X(8, FATAL)       \
 
 /* Backward compatibility defintions */
 #define TRACE_SEVERITY_0xA1_DEF  \
