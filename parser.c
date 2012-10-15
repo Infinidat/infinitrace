@@ -1176,9 +1176,10 @@ static bool_t match_record_dump_with_match_expression(
             return (match_record_dump_with_match_expression(matcher->u.binary_operator_parameters.a, record, buffer_context) &&
                     match_record_dump_with_match_expression(matcher->u.binary_operator_parameters.b, record, buffer_context));
 
-            // TODO: Make this more accurate: Consider end range
+            /*
         case TRACE_MATCHER_TIMERANGE:
             return (buffer_dump->ts > matcher->u.time_range.start);
+            */
 
         case TRACE_MATCHER_PID:
             return record->pid == matcher->u.pid;
