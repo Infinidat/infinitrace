@@ -30,6 +30,7 @@
 
 #include "../trace_user.h"
 #include "../opt_util.h"
+#include "../trace_str_util.h"
 #include "trace_dumper.h"
 #include "filesystem.h"
 #include "buffers.h"
@@ -44,9 +45,10 @@ static const char usage[] = {
     " -h, --help                            Display this help message                                              \n" \
     " -f  --filter [buffer_name]            Filter out specified buffer name                                       \n" \
     " -o  --online                          Show data from buffers as it arrives (slows performance)               \n" \
-    " -n  --no-color                        Show noline data wothout color                                         \n" \
+    " -n  --no-color                        Show online data without color                                         \n" \
     " -w  --write-to-file[filename]         Write log records to file                                              \n" \
-    " -N  --notification-file[filename]     Write notifications (messages with severity > WARN) to a separate file \n" \
+    " -N  --notification-file[filename]     Write notifications (messages with severity > notification level) to a separate file\n" \
+    " -L  --notification-level[level]       Specify minimum severity that will be written to the notification file (default: WARN)\n" \
     " -b  --logdir                          Specify the base log directory trace files are written to              \n" \
     " -p  --pid [pid]                       Attach the specified process                                           \n" \
     " -d  --debug-online                    Display DEBUG records in online mode                                   \n" \
@@ -74,6 +76,7 @@ static const struct option longopts[] = {
     { "pid", required_argument, 0, 'p'},
     { "write-to-file", optional_argument, 0, 'w'},
     { "notification-file",  optional_argument, 0, 'N'},
+    { "notification-level", required_argument, 0, 'L'},
     { "quota-size", required_argument, 0, 'q'},
     { "record-write-limit", required_argument, 0, 'r'},
     { "dump-online-statistics", 0, 0, 'v'},
@@ -123,6 +126,13 @@ int parse_commandline(struct trace_dumper_configuration_s *conf, int argc, char 
             conf->write_notifications_to_file = 1;
             conf->fixed_notification_filename = optarg;
             break;
+        case 'L':
+        	conf->minimal_notification_severity = trace_str_to_severity_case_insensitive(optarg);
+        	if (TRACE_SEV_INVALID == conf->minimal_notification_severity) {
+        		fprintf(stderr, "Invalid trace level specified: %s", optarg);
+        		return -1;
+        	}
+        	break;
         case 's':
             conf->syslog = 1;
             break;
@@ -295,6 +305,10 @@ int init_dumper(struct trace_dumper_configuration_s *conf)
         TRACE_PARSER__set_indent(&conf->parser, TRUE);
     } else {
         TRACE_PARSER__set_indent(&conf->parser, FALSE);
+    }
+
+    if (conf->minimal_notification_severity < TRACE_SEV__MIN) {
+    	conf->minimal_notification_severity = TRACE_SEV_WARN;
     }
 
     TRACE_PARSER__matcher_spec_from_severity_mask(severity_mask, conf->severity_filter, ARRAY_LENGTH(conf->severity_filter));

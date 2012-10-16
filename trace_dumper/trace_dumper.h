@@ -159,6 +159,7 @@ struct trace_dumper_configuration_s {
     trace_ts_t 	 start_time;
     unsigned int no_color_specified;
     unsigned int color;
+    enum trace_severity minimal_notification_severity;
     enum trace_severity minimal_allowed_severity;
     trace_ts_t next_possible_overwrite_relaxation;
     trace_ts_t last_overwrite_test_time;

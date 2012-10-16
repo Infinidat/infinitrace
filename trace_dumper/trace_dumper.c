@@ -522,9 +522,8 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 
         possibly_report_record_loss(conf, mapped_buffer, mapped_records, &deltas);
 
-        static const enum trace_severity notification_severity_threshold = TRACE_SEV_WARN;
-        if (conf->write_notifications_to_file && (mapped_records->imutab->severity_type >= (1U << notification_severity_threshold))) {
-			unsigned int num_warn_iovecs = add_warn_records_to_iov(mapped_records, deltas.total, TRACE_SEV_WARN, &conf->notification_file);
+        if (conf->write_notifications_to_file && (mapped_records->imutab->severity_type >= (1U << conf->minimal_notification_severity))) {
+			unsigned int num_warn_iovecs = add_warn_records_to_iov(mapped_records, deltas.total, conf->minimal_notification_severity, &conf->notification_file);
 			trace_dumper_write_to_record_file(conf, &conf->notification_file, num_warn_iovecs);
         }
 
