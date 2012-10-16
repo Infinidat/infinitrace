@@ -82,7 +82,7 @@ static const char usage[] =
  -A  --after     [num]   : Show [num] traces of the same thread after each hit (TBD: -B/C) \n\
  \n\
     Filters: \n\
- -l  --level  [severity] : Show records from severity and up. Int value or " TRACE_LEVELS_STR " (DEFAULT: INFO) \n\
+ -l  --level  [severity] : Show records from severity and up. Int value or " TRACE_LEVELS_STR " (DEFAULT: TRIO) \n\
  -t  --time   [time]     : Used once or twice to set a time range. [time] may be nanoseconds int, or time format string \n\
  -g  --grep   [str]      : Show records whose constant string contains [str] \n\
  -c  --strcmp [str]      : Show records whose constant string exact-matches [str] (faster than -g, useful to filter MODULE)\n\
@@ -389,7 +389,7 @@ static void set_parser_filter(struct trace_reader_conf *conf, trace_parser_t *pa
     filter->type = TRACE_MATCHER_SEVERITY_LEVEL;
     filter->u.severity = ((conf->severity_level < TRACE_SEV__MIN ||
                            conf->severity_level > TRACE_SEV__MAX) ?
-                          TRACE_SEV_INFO : (conf->severity_level)) ;
+                          TRACE_SEV_TRIO : (conf->severity_level)) ;
 
 #define WITH(FILTER) if (conf->FILTER) and_filter(filter, conf->FILTER)
     WITH(filter_time);
