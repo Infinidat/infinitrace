@@ -10,6 +10,6 @@ xn_env.Alias('xn', prog)
 optflags=Split("""$CCFLAGS -Wall -O2""")
 with TracesDisabled(xn_env) as untraced_env:
     srcs = untraced_env.AutoSplit('''dump_file_diags.c''')
-    libs = ["traces"]
+    libs = ["traces", "trace_util"]
     prog = untraced_env.XnProgram(target = "dump_file_diags", source = srcs, LIBS = libs, CCFLAGS = optflags)
     untraced_env.Alias('xn', prog)

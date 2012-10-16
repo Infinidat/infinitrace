@@ -33,7 +33,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "llvm/Support/raw_ostream.h"
 #include "TraceCall.h"
 #include "../trace_defs.h"
-#include "../trace_util.h"
+#include "../trace_str_util.h"
 #include "../trace_lib.h"
 
 #include <sstream>

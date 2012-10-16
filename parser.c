@@ -50,6 +50,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "trace_sev_display.h"
 #include "string.h"
 #include "timeformat.h"
+#include "trace_str_util.h"
 
 #include "zlib.h"
 
@@ -609,12 +610,6 @@ int compare_log_occurrence_entries(const void *a, const void *b)
     return 1;
 }
 
-#define TRACE_SEV_X(v, str) [v] = #str,
-const char *sev_to_str[] = {
-	TRACE_SEVERITY_DEF
-};
-#undef TRACE_SEV_X
-
 static void dump_stats_pool(const log_stats_pool_t stats_pool)
 {
     unsigned int i, j;
@@ -641,7 +636,7 @@ static void dump_stats_pool(const log_stats_pool_t stats_pool)
         printf("Lost records: %llu\n", stats->lost_records);
         printf("Records by severity:\n");
         for (j = 0; j < TRACE_SEV__MAX; j++) {
-            printf("    %s: %d\n", sev_to_str[j], stats->record_count_by_severity[j]);
+            printf("    %s: %d\n", trace_severity_to_str_array[j], stats->record_count_by_severity[j]);
         }
         
         for (j = 0; j < stats->max_log_count; j++) {

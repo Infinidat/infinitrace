@@ -1,5 +1,5 @@
 /*
- * trace_util.h
+ * trace_str_util.h
  *
  ***
 Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
@@ -22,16 +22,30 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 
 /* Trace dumper inline utility functions */
 
-#ifndef __TRACE_UTIL_H__
-#define __TRACE_UTIL_H__
+#ifndef __TRACE_STR_UTIL_H__
+#define __TRACE_STR_UTIL_H__
 
 #include "trace_defs.h"
+#include "bool.h"
 
 #ifdef __cplusplus
  extern "C" {
 #endif
 
 
+ extern const char *trace_severity_to_str_array[];
+
+ enum trace_severity trace_str_to_severity_case_sensitive(const char *s);
+ enum trace_severity trace_str_to_severity_case_insensitive(const char *s);
+
+ /* home made atoll / strtoll.
+ *  Handles numbers in both decimal and hexadecimal representation.
+ *  Returns TRUE on success, FALSE, otherwise */
+ bool_t trace_get_number(const char* str, long long *num);
+
+
+ /* Note: the inline functions below are deprecated. Use the standard strcmp or trace_str_to_severity_case_sensitive instead in new code.
+  * Presently they are only used by the trace instrumentor code. */
  static inline int trace_strcmp(const char *s1, const char *s2)
  {
       /* Move s1 and s2 to the first differing characters
@@ -59,12 +73,9 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
      return TRACE_SEV_INVALID;
  }
 
-
-
-
 #ifdef __cplusplus
 }
 #endif
 
 
-#endif /* __TRACE_UTIL_H__ */
+#endif /* __TRACE_STR_UTIL_H__ */

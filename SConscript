@@ -8,8 +8,12 @@ with TracesDisabled(xn_env) as untraced_env:
     optflags=Split("""$CCFLAGS -Wall -O1""")
     lib = untraced_env.SConscript("trace_instrumentor/SConscript")
 
-    srcs = untraced_env.AutoSplit('''trace_user.c trace_metadata_util_untraced.c  halt.c opt_util.c''')
+    srcs = untraced_env.AutoSplit('''trace_user.c trace_metadata_util_untraced.c  halt.c''')
     lib = untraced_env.XnStaticLibrary(target = 'traces', source = srcs, CCFLAGS = optflags)
+    untraced_env.Alias('xn', lib)
+
+    srcs = untraced_env.AutoSplit('''opt_util.c trace_str_util.c''')
+    lib = untraced_env.XnStaticLibrary(target = 'trace_util', source = srcs, CCFLAGS = optflags)
     untraced_env.Alias('xn', lib)
 
     srcs = untraced_env.AutoSplit('''trace_user_stubs.c ''')
@@ -32,7 +36,7 @@ xn_env.Append(LIBPATH = Dir('.'))
 with TracesDisabled(xn_env) as untraced_env:
     optflags=Split("""$CCFLAGS -Wall -O2""")
     srcs = untraced_env.AutoSplit('''reader.c''')
-    libs = ["reader", "rt"]
+    libs = ["reader", "rt", "trace_util"]
     prog = untraced_env.XnProgram(target = "reader", source = srcs, LIBS = libs, CCFLAGS = optflags, LINKFLAGS="-lz")
     untraced_env.Alias('xn', prog)
 

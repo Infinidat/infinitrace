@@ -15,6 +15,8 @@
 #include "list_template.h"
 #include "array_length.h"
 #include "timeformat.h"
+#include "trace_str_util.h"
+#include "opt_util.h"
 
 enum op_type_e {
     OP_TYPE_INVALID,
@@ -140,8 +142,6 @@ static const struct option longopts[] = {
 	{ 0, 0, 0, 0}
 };
 
-static const char shortopts[] = "hisdm NOFLXEMPA:Q: g:c:v:u:w:t:z:l:f:"; // " xcig:u:v:V:moft:hdnesr";
-
 static int exit_usage(const char *prog_name, const char* more)
 {
     if (prog_name) {
@@ -183,48 +183,12 @@ static void or_filter(filter_t *filter_a,
     filter_a->u.binary_operator_parameters.b = filter_b;
 }
 
-static int get_number(const char* str, long long *num) { /* home made atoll / strtoll */
-    if (! (str && *str)) return 0;
-    int negative = 0;
-    long long n = 0;
-    if (str[0] == '-' || str[0] == '+') {
-        negative = str[0] == '-';
-        str++;
-    }
-    if (str[0] == '0' && (str[1] | 0x20) == 'x') {
-        str += 2;
-        while (*str) {
-            if ((*str < '0' || *str > '9') && ((*str|0x20) < 'a' || (*str|0x20) > 'f'))
-                return 0;
-            n *= 0x10;
-            n += (*str > '9') ? ((*str|0x20) - 'W') : *str-'0';
-            str++;
-        }
-    }
-    else {
-        while  (*str) {
-            if (*str < '0' || *str > '9')
-                return 0;
-            n *= 10;
-            n += *str - '0';
-            str++;
-        }
-    }
-    *num = negative ? 0-n : n;
-    return 1;
-}
-
 static int get_severity_level(const char* str) {
     long long n;
     return 
-        get_number(str, &n)           ? n :
-        0 == strcasecmp(str, "FUNC" ) ? 1 :
-
-#define TRACE_SEV_X(ignored, sev) \
-		(0 == strcasecmp(str, #sev)) ? TRACE_SEV_##sev :
-
-        TRACE_SEVERITY_DEF
-
+        trace_get_number(str, &n)           ? n :
+        (0 == strcasecmp(str, "FUNC")) ? TRACE_SEV_FUNC_TRACE :
+        ((n = trace_str_to_severity_case_insensitive(str)) != TRACE_SEV_INVALID) ? n :
         exit_usage(NULL, invalid_severity_msg);
 }
 
@@ -233,6 +197,10 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
     int o;
     int longindex;
     long long num;
+
+    char shortopts[MAX_SHORT_OPTS_LEN(ARRAY_LENGTH(longopts))];
+    short_opts_from_long_opts(shortopts, longopts);
+
     conf->op_type = OP_TYPE_DUMP_FILE;
 
     while ((o = getopt_long(argc, (char **)argv, shortopts, longopts, &longindex)) != EOF) {
@@ -284,7 +252,7 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
             /* Filters */
         case 'Q':
             {
-                if (!get_number(optarg, &num))
+                if (!trace_get_number(optarg, &num))
                     exit_usage(NULL, "-Q [val] : [val] must be a legal number");
                 if (num <= 0)
                     exit_usage(NULL, "-Q [val] : [val] must be a positive number");
@@ -295,7 +263,7 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
             break;
         case 'A':
             {
-                if (! get_number(optarg, &num))
+                if (! trace_get_number(optarg, &num))
                     exit_usage(NULL, "-A [val] : [val] must be a legal (positive) number");
                 conf->after_count = num > 0 ? num : 0;
             }
@@ -353,7 +321,7 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
                         fprintf(stderr, "'%s': Too long.", optarg);
                         return -1;
                     }
-                    if (!get_number(equal+1, &num))
+                    if (!trace_get_number(equal+1, &num))
                         exit_usage(NULL, " Bad integer number in named value");
                     f->type = TRACE_MATCHER_LOG_NAMED_PARAM_VALUE;
                     f->u.named_param_value.param_value = num;
@@ -361,7 +329,7 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
                     strncpy(f->u.named_param_value.param_name, optarg, equal-optarg);
                 }
                 else {
-                    if (!get_number(optarg, &num))
+                    if (!trace_get_number(optarg, &num))
                         exit_usage(NULL, " Bad integer number in value");
                     f->type = TRACE_MATCHER_LOG_PARAM_VALUE;
                     f->u.named_param_value.param_value = num;
@@ -375,7 +343,7 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
         case 'z':
             {
                 filter_t * f = new_filter_t();
-                if (get_number(optarg, &num)) {
+                if (trace_get_number(optarg, &num)) {
                     f->type = TRACE_MATCHER_LOG_PARAM_VALUE;
                     f->u.named_param_value.param_value = num;
                     f->u.named_param_value.compare_type = '=';
