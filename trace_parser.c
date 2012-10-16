@@ -47,6 +47,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #define COLOR_BOOL parser->color
 #include "colors.h"
 #include "string.h"
+#include "trace_str_util.h"
 
 CREATE_LIST_IMPLEMENTATION(BufferParseContextList, struct trace_parser_buffer_context)
 CREATE_LIST_IMPLEMENTATION(RecordsAccumulatorList, struct trace_record_accumulator)
@@ -598,7 +599,7 @@ static void dump_stats_pool(const log_stats_pool_t stats_pool)
         printf("Lost records: %llu\n", stats->lost_records);
         printf("Records by severity:\n");
         for (j = 0; j < TRACE_SEV__MAX; j++) {
-            printf("    %s: %d\n", sev_to_str[j], stats->record_count_by_severity[j]);
+            printf("    %s: %d\n", trace_severity_to_str_array[j], stats->record_count_by_severity[j]);
         }
         
         for (j = 0; j < stats->max_log_count; j++) {
@@ -1028,7 +1029,7 @@ static inline const char * severity_to_str(const trace_parser_t *parser, unsigne
 
 #define COLOR_TEXT_ENTRY(color, text) {text, color(text) }
 
-	static const struct s_sev_display_info sev_display_info[] = {
+	static const struct s_sev_display_info sev_display_info_0xa1[] = {
 			COLOR_TEXT_ENTRY(_F_GREY, 		 "----"),
 			COLOR_TEXT_ENTRY(_F_WHITE,		 "DBG "),
 			COLOR_TEXT_ENTRY(_F_GREEN_BOLD,	 "INFO"),
@@ -1037,7 +1038,23 @@ static inline const char * severity_to_str(const trace_parser_t *parser, unsigne
 			COLOR_TEXT_ENTRY(_F_RED_BOLD, 	 "FATAL")
 	};
 
-	assert(ARRAY_LENGTH(sev_display_info) == TRACE_SEV__MAX - TRACE_SEV__MIN + 1);
+	static const struct s_sev_display_info sev_display_info_0xa3[] = {
+				COLOR_TEXT_ENTRY(_F_GREY, 		 "----"),
+				COLOR_TEXT_ENTRY(_F_WHITE,		 "DBG "),
+				COLOR_TEXT_ENTRY(_F_CYAN,		 "TRIO"),
+				COLOR_TEXT_ENTRY(_F_GREEN_BOLD,	 "INFO"),
+				COLOR_TEXT_ENTRY(_F_YELLOW,		 "NOTE"),
+				COLOR_TEXT_ENTRY(_F_YELLOW_BOLD, "WARN"),
+				COLOR_TEXT_ENTRY(_F_RED_BOLD, 	 "ERR "),
+				COLOR_TEXT_ENTRY(_F_RED_BOLD, 	 "FATAL")
+	};
+
+	assert(ARRAY_LENGTH(sev_display_info_0xa3) == TRACE_SEV__MAX - TRACE_SEV__MIN + 1);
+
+	const struct s_sev_display_info *sev_display_info =
+				(parser->file_info.format_version < TRACE_FORMAT_VERSION_INTRODUCED_LEVEL_CUSTOMIZATION) ?
+						sev_display_info_0xa1:
+						sev_display_info_0xa3;
 
 	if (TRACE_SEV__MIN <= severity &&  TRACE_SEV__MAX >= severity) {
 		return parser->color ? sev_display_info[severity - TRACE_SEV__MIN].ascii_colored_text : sev_display_info[severity - TRACE_SEV__MIN].plain_text;
@@ -2437,6 +2454,9 @@ int TRACE_PARSER__from_file(trace_parser_t *parser, bool_t wait_for_input, const
 
     case 0xA2:
     	break;
+
+    case 0xA3:
+        break;
 
     default:
     	errno = EFTYPE;

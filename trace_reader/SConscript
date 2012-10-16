@@ -4,6 +4,6 @@ Import('TracesDisabled')
 optflags=Split("""$CCFLAGS -Wall -O2""")
 with TracesDisabled(xn_env) as untraced_env:
     srcs = untraced_env.AutoSplit('''simple_trace_reader.c''')
-    libs = ["tracereader", "rt"]
+    libs = ["tracereader", "rt", "trace_util"]
     prog = untraced_env.XnProgram(target = "simple_trace_reader", source = srcs, LIBS = libs, CCFLAGS = optflags)
     untraced_env.Alias('xn', prog)

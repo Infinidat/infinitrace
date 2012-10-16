@@ -184,7 +184,7 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
 {
     int o;
     int longindex;
-    conf->severity_mask = ((1 << TRACE_SEV_INFO) | (1 << TRACE_SEV_WARN) | (1 << TRACE_SEV_ERR) | (1 << TRACE_SEV_FATAL));
+    conf->severity_mask = ((1 << TRACE_SEV_TRIO) | (1 << TRACE_SEV_INFO) | (1 << TRACE_SEV_NOTE) | (1 << TRACE_SEV_WARN) | (1 << TRACE_SEV_ERR) | (1 << TRACE_SEV_FATAL));
     while ((o = getopt_long(argc, (char **)argv, shortopts, longopts, &longindex)) != EOF) {
 		switch (o) {
 		case 'h':
