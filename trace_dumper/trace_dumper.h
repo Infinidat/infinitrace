@@ -99,13 +99,17 @@ struct trace_mapped_buffer {
 
 struct trace_record_file {
     unsigned long records_written;
+    unsigned long bytes_committed;
     char filename[0x100];
     int fd;
+    void *mem_mapping;
+    size_t mapping_len;
+    long page_size;
     struct iovec *iov;
     size_t iov_allocated_len;
 };
 
-/* */
+/* Values for the request_flags field of struct trace_dumper_configuration_s below */
 enum trace_request_flags {
 	TRACE_REQ_CLOSE_RECORD_FILE = 0x01,
 	TRACE_REQ_CLOSE_NOTIFICATION_FILE = 0x02,
@@ -156,6 +160,7 @@ struct trace_dumper_configuration_s {
     unsigned int error_online;
     unsigned int syslog;
     unsigned int log_details;
+    bool_t	     low_latency_write;
     trace_ts_t 	 start_time;
     unsigned int no_color_specified;
     unsigned int color;

@@ -24,9 +24,13 @@
 #include <sys/uio.h>
 #include "trace_dumper.h"
 
-int total_iovec_len(const struct iovec *iov, int iovcnt);
+size_t total_iovec_len(const struct iovec *iov, int iovcnt);
 int write_single_record(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, const struct trace_record *rec);
+
+/* Write to the output file using a mechanism selected according to conf->low_latency_write, and optionally dump traces to the parser. */
 int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, const struct iovec *iov, int iovcnt, bool_t dump_to_parser);
+
+
 int dump_iovector_to_parser(const struct trace_dumper_configuration_s *conf, struct trace_parser *parser, const struct iovec *iov, int iovcnt);
 
 /* A wrapper for trace_dumper_write which syncs the written data to the disk after the write. */
@@ -41,5 +45,15 @@ static inline bool_t record_file_should_be_parsed(
 {
 	return conf->record_file.fd == record_file->fd;
 }
+
+/* Lower level trace writing functions that use specific mechanisms */
+int trace_dumper_write_via_file_io(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, const struct iovec *iov, int iovcnt);
+int trace_dumper_write_via_mmapping(
+		const struct trace_dumper_configuration_s *conf,
+		struct trace_record_file *record_file,
+		const struct iovec *iov,
+		int iovcnt);
+int trace_dumper_flush_mmapping(struct trace_record_file *record_file, bool_t synchronous);
+
 
 #endif /* WRITER_H_ */

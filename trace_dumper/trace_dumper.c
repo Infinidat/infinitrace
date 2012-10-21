@@ -38,6 +38,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "../array_length.h"
 #include <syslog.h>
 #include <time.h>
+#include <sys/mman.h>
 #include <assert.h>
 #include "../trace_lib.h"
 #include "../trace_user.h"
@@ -290,17 +291,45 @@ static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *co
 {
     int i;
     int rid;
-    struct trace_mapped_buffer *mapped_buffer;
-    struct trace_mapped_records *mapped_records;
+    struct trace_mapped_buffer *mapped_buffer = NULL;
+    struct trace_mapped_records *mapped_records = NULL;
     if (num_iovecs > 1) {
     	assert(num_iovecs >= 3);  /* Should have at least dump and chunk headers and some data */
         conf->last_flush_offset = conf->record_file.records_written;
 		conf->prev_flush_ts = cur_ts;
 		conf->next_flush_ts = cur_ts + conf->ts_flush_delta;
 
-        int ret = trace_dumper_write(conf, &conf->record_file, conf->flush_iovec, num_iovecs, FALSE);
+        int ret = -1;
+        if (conf->low_latency_write) {
+        	for_each_mapped_buffer(i, mapped_buffer) {
+				if (0 != mprotect(mapped_buffer->records_buffer_base_address, mapped_buffer->records_buffer_size, PROT_READ)) {
+					syslog(LOG_ERR|LOG_USER, "mprotect READ failed for %lu bytes starting at %p due to %s",
+							mapped_buffer->records_buffer_size, mapped_buffer->records_buffer_base_address, strerror(errno));
+					return -1;
+				}
+        	}
+
+        	ret = trace_dumper_write_via_mmapping(conf, &conf->record_file, conf->flush_iovec, num_iovecs);
+
+        	for_each_mapped_buffer(i, mapped_buffer) {
+				if (0 != mprotect(mapped_buffer->records_buffer_base_address, mapped_buffer->records_buffer_size, PROT_READ|PROT_WRITE)) {
+					syslog(LOG_ERR|LOG_USER, "mprotect RW failed for %lu bytes starting at %p due to %s",
+							mapped_buffer->records_buffer_size, mapped_buffer->records_buffer_base_address, strerror(errno));
+					return -1;
+				}
+        	}
+        }
+        else {
+        	ret = trace_dumper_write(conf, &conf->record_file, conf->flush_iovec, num_iovecs, FALSE);
+        }
+
 		if ((unsigned int)ret != (total_written_records * sizeof(struct trace_record))) {
-			syslog(LOG_ERR|LOG_USER, "Wrote only %d records out of %u requested", (ret / (int)sizeof(struct trace_record)), total_written_records);
+			if (ret < 0) {
+				syslog(LOG_ERR|LOG_USER, "Had error %s (%d) while writing records", strerror(errno), errno);
+			}
+			else {
+				syslog(LOG_ERR|LOG_USER, "Wrote only %d records out of %u requested", (ret / (int)sizeof(struct trace_record)), total_written_records);
+			}
             return -1;
 		}
         

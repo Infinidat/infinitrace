@@ -197,7 +197,7 @@ static int process_records(int fd)
 			break;
 
 		case TRACE_REC_TYPE_FILE_HEADER:
-			printf("n=%lu: Start of file. Format ver=%u\n", record_num, rec.u.file_header.format_version);
+			printf("n=%lu: Start of file. Format ver=%X, flags = %X\n", record_num, rec.u.file_header.format_version, rec.u.file_header.flags);
 			break;
 
 		case TRACE_REC_TYPE_END_OF_FILE:

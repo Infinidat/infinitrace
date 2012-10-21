@@ -23,21 +23,24 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <syslog.h>
 #include <sys/types.h>
+#include <sys/mman.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <errno.h>
 
 #include "../trace_user.h"
 #include "../min_max.h"
 #include "filesystem.h"
 #include "writer.h"
+#include "open_close.h"
 
-
-int total_iovec_len(const struct iovec *iov, int iovcnt)
+size_t total_iovec_len(const struct iovec *iov, int iovcnt)
 {
-    int total = 0;
+	size_t total = 0;
     int i;
     for (i = 0; i < iovcnt; i++) {
         total += iov[i].iov_len;
@@ -55,6 +58,30 @@ struct iovec *increase_iov_if_necessary(struct trace_record_file *record_file, s
 	return record_file->iov;
 }
 
+static ssize_t copy_iov_to_buffer(void *buffer, const struct iovec *iov, int iovcnt)
+{
+	if ((NULL == iov) || (NULL == buffer)) {
+		errno = EFAULT;
+		return -1;
+	}
+
+	if (iovcnt < 0) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	void *target = buffer;
+	for (int i = 0; i < iovcnt; i++) {
+		if (NULL == iov[i].iov_base) {
+			errno = EFAULT;
+			return -1;
+		}
+		target = mempcpy(target, iov[i].iov_base, iov[i].iov_len);
+	}
+
+	return (const char *)target - (const char *)buffer;
+}
+
 static int trace_dumper_writev(int fd, const struct iovec *iov, int iovcnt)
 {
     int length = total_iovec_len(iov, iovcnt);
@@ -63,19 +90,7 @@ static int trace_dumper_writev(int fd, const struct iovec *iov, int iovcnt)
     	return -1;
     }
 
-    size_t to_copy = length;
-    char *tmp_buffer = buffer;
-    int i;
-    for (i = 0; i < iovcnt; ++i)
-    {
-        size_t copy = MIN(iov[i].iov_len, to_copy);
-        tmp_buffer = mempcpy((void *) tmp_buffer, (const void *) iov[i].iov_base, copy);
-
-        to_copy -= copy;
-        if (to_copy == 0) {
-            break;
-        }
-    }
+    assert(copy_iov_to_buffer(buffer, iov, iovcnt) == length);
 
     ssize_t bytes_written = write(fd, buffer, length);
     free(buffer);
@@ -165,8 +180,22 @@ static int dump_to_parser_if_necessary(struct trace_dumper_configuration_s *conf
 	return 0;
 }
 
-
 int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, const struct iovec *iov, int iovcnt, bool_t dump_to_parser)
+{
+	int ret = -1;
+	if (conf->low_latency_write) {
+		ret = trace_dumper_write_via_mmapping(conf, record_file, iov, iovcnt);
+	}
+	else {
+		ret = trace_dumper_write_via_file_io(conf, record_file, iov, iovcnt);
+	}
+
+	dump_to_parser_if_necessary(conf, iov, iovcnt, dump_to_parser);
+	return ret;
+}
+
+
+int trace_dumper_write_via_file_io(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, const struct iovec *iov, int iovcnt)
 {
 	int expected_bytes = total_iovec_len(iov, iovcnt);
     int rc = 0;
@@ -200,6 +229,9 @@ int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct trace_r
 						usleep(retry_interval);
 					}
 					continue;
+            	}
+            	else if (errno == EINTR) { /* Received a non-fatal signal, probably USR1 or USR2 */
+            		continue;
             	}
             	else
             	{
@@ -243,8 +275,6 @@ int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct trace_r
             record_file->records_written += expected_bytes / sizeof(struct trace_record);
             break;
         }
-
-        dump_to_parser_if_necessary(conf, iov, iovcnt, dump_to_parser);
     }
 
     return expected_bytes;
@@ -252,20 +282,137 @@ int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct trace_r
 
 int trace_dumper_write_to_record_file(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, int iovcnt)
 {
-	if (record_file->fd < 0) {
-		errno = EBADF;
-		return -1;
-	}
+	int num_warn_bytes = total_iovec_len(record_file->iov, iovcnt);
+	if (num_warn_bytes > 0) {
+		if (is_closed(record_file)) {
+				errno = EBADF;
+				return -1;
+		}
 
-	if (iovcnt > 0) {
-		int num_warn_bytes = total_iovec_len(record_file->iov, iovcnt);
 		if (trace_dumper_write(conf, record_file, record_file->iov, iovcnt, FALSE) != num_warn_bytes) {
 			syslog(LOG_USER|LOG_ERR,
-					"Trace dumper encountered the following error while writing to the file %s: %s",
-					record_file->filename, strerror(errno));
+					"Trace dumper encountered the following error while writing %d bytes to the file %s: %s",
+					num_warn_bytes, record_file->filename, strerror(errno));
 			return -1;
 		}
     }
 
+	return num_warn_bytes;
+}
+
+#define ROUND_UP(num, divisor) ((divisor) * (((num) + (divisor) - 1) / (divisor)))
+#define ROUND_DOWN(num, divisor) ((num) - (num) % (divisor))
+
+static int setup_mmapping(const struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file)
+{
+	assert(MAP_FAILED == record_file->mem_mapping);
+	assert(0 == record_file->mapping_len);
+
+	if (is_closed(record_file)) {
+		errno = EBADF;
+		return -1;
+	}
+
+	record_file->page_size = sysconf(_SC_PAGESIZE);
+	assert(record_file->page_size > 0);
+
+	record_file->mapping_len = ROUND_UP(
+			(conf->max_records_per_file + conf->max_records_per_file/4) * TRACE_RECORD_SIZE, record_file->page_size);
+	record_file->mem_mapping = mmap(NULL, record_file->mapping_len, PROT_READ|PROT_WRITE, MAP_SHARED, record_file->fd, 0);
+	if (MAP_FAILED == record_file->mem_mapping) {
+		syslog(LOG_USER|LOG_ERR, "Failed mmap with %lu, %d, %d, %d, %d",
+				record_file->mapping_len, PROT_READ|PROT_WRITE, MAP_SHARED, record_file->fd, 0);
+		return -1;
+	}
+
+	return 0;
+}
+
+static int reset_file(const struct trace_record_file *record_file) {
+	return ftruncate64(record_file->fd, record_file->records_written * TRACE_RECORD_SIZE);
+}
+
+int trace_dumper_write_via_mmapping(
+		const struct trace_dumper_configuration_s *conf,
+		struct trace_record_file *record_file,
+		const struct iovec *iov,
+		int iovcnt)
+{
+	if ((MAP_FAILED == record_file->mem_mapping) && (setup_mmapping(conf, record_file) < 0)) {
+			return -1;
+	}
+
+	off64_t bytes_written = record_file->records_written * TRACE_RECORD_SIZE;
+	size_t len = total_iovec_len(iov, iovcnt);
+	assert(0 == (len % TRACE_RECORD_SIZE));
+
+	if (len > 0) {
+		if (bytes_written + len > record_file->mapping_len) {
+			errno = EFBIG;
+			return -1;
+		}
+
+		int rc = posix_fallocate64(record_file->fd, bytes_written, len);
+		if (0 != rc) {
+			errno = rc;
+			syslog(LOG_USER|LOG_ERR, "Failed fallocate: %s", strerror(rc));
+			return -1;
+		}
+
+		void *write_start = (char *)(record_file->mem_mapping) + bytes_written;
+		assert((size_t)copy_iov_to_buffer(write_start, iov, iovcnt) == len);
+
+		//uintptr_t msync_base = ROUND_DOWN((uintptr_t) write_start, record_file->page_size);
+		assert(0 == (record_file->bytes_committed % record_file->page_size));
+		assert((size_t)bytes_written + len > record_file->bytes_committed);
+
+		size_t msync_len = bytes_written + len - record_file->bytes_committed;
+		/* TODO: Consider a threshold for calling msync */
+		if (msync((char *)(record_file->mem_mapping) + record_file->bytes_committed, msync_len, MS_ASYNC | MS_INVALIDATE) < 0) {
+			syslog(LOG_USER|LOG_ERR, "Failed msync: %s", strerror(errno));
+			reset_file(record_file);
+			return -1;
+		}
+
+		if (msync_len > (size_t)(record_file->page_size)) {
+			size_t madv_len = ROUND_DOWN(msync_len, record_file->page_size);
+			if (posix_madvise((char *)(record_file->mem_mapping) + record_file->bytes_committed, madv_len, MADV_DONTNEED) < 0) {
+				syslog(LOG_USER|LOG_ERR, "Failed posix_madvise: %s", strerror(errno));
+				reset_file(record_file);
+				return -1;
+			}
+
+			record_file->bytes_committed += madv_len;
+		}
+
+		record_file->records_written += len / TRACE_RECORD_SIZE;
+	}
+	return len;
+}
+
+int trace_dumper_flush_mmapping(struct trace_record_file *record_file, bool_t synchronous)
+{
+	if (MAP_FAILED == record_file->mem_mapping) {
+		assert(0 == record_file->mapping_len);
+	}
+	else {
+		assert(0 == (record_file->bytes_committed % record_file->page_size));
+		int flag = synchronous ? MS_SYNC : MS_ASYNC;
+
+		if (msync(
+				(char *)(record_file->mem_mapping) + record_file->bytes_committed,
+				record_file->records_written * TRACE_RECORD_SIZE - record_file->bytes_committed,
+				flag) < 0) {
+			return -1;
+		}
+
+		if (munmap(record_file->mem_mapping, record_file->mapping_len) < 0) {
+			return -1;
+		}
+
+		record_file->mem_mapping = MAP_FAILED;
+		record_file->mapping_len = 0;
+		record_file->page_size = 0;
+	}
 	return 0;
 }

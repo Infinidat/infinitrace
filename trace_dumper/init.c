@@ -27,6 +27,7 @@
 #include <syslog.h>
 #include <errno.h>
 #include <limits.h>
+#include <sys/mman.h>
 
 #include "../trace_user.h"
 #include "../opt_util.h"
@@ -47,6 +48,7 @@ static const char usage[] = {
     " -o  --online                          Show data from buffers as it arrives (slows performance)               \n" \
     " -n  --no-color                        Show online data without color                                         \n" \
     " -w  --write-to-file[filename]         Write log records to file                                              \n" \
+    " -l  --low-latency-write         	    Write to files in low-latency mode (which uses mmap)                   \n" \
     " -N  --notification-file[filename]     Write notifications (messages with severity > notification level) to a separate file\n" \
     " -L  --notification-level[level]       Specify minimum severity that will be written to the notification file (default: WARN)\n" \
     " -b  --logdir                          Specify the base log directory trace files are written to              \n" \
@@ -75,6 +77,7 @@ static const struct option longopts[] = {
     { "syslog", 0, 0, 's'},
     { "pid", required_argument, 0, 'p'},
     { "write-to-file", optional_argument, 0, 'w'},
+    { "low-latency-write", 0, 0, 'l'},
     { "notification-file",  optional_argument, 0, 'N'},
     { "notification-level", required_argument, 0, 'L'},
     { "quota-size", required_argument, 0, 'q'},
@@ -122,6 +125,9 @@ int parse_commandline(struct trace_dumper_configuration_s *conf, int argc, char 
             conf->write_to_file = 1;
             conf->fixed_output_filename = optarg;
             break;
+        case 'l':
+        	conf->low_latency_write = TRUE;
+        	break;
         case 'N':
             conf->write_notifications_to_file = 1;
             conf->fixed_notification_filename = optarg;
@@ -237,6 +243,10 @@ static int init_record_file(struct trace_record_file *record_file, size_t initia
 	record_file->fd = -1;
 	record_file->filename[0] = '\0';
 	record_file->records_written = 0;
+	record_file->bytes_committed = 0;
+	record_file->mem_mapping = MAP_FAILED;
+	record_file->mapping_len = 0;
+	record_file->page_size = 0;
 	record_file->iov_allocated_len = (initial_iov_len > 0U) ? initial_iov_len : (size_t) sysconf(_SC_IOV_MAX);
 	record_file->iov = calloc(record_file->iov_allocated_len, sizeof(struct iovec));
 	if (NULL == record_file->iov) {

@@ -205,6 +205,7 @@ enum trace_file_type {
 #define TRACE_FORMAT_VERSION_INTRODUCED_DEAD_PID_LIST (0xA2)
 
 #define TRACE_FORMAT_VERSION_INTRODUCED_LEVEL_CUSTOMIZATION (0xA3)
+#define TRACE_FORMAT_VERSION_INTRODUCED_LOW_LATENCY_WRITE   (0xA3)
 
  /* Information about user defined types */
 struct trace_type_definition {
@@ -261,7 +262,8 @@ struct trace_record {
 		struct trace_record_file_header {
 			unsigned char machine_id[TRACE_MACHINE_ID_SIZE];	/* machine hostname, truncated to TRACE_MACHINE_ID_SIZE - 1 characters */
             unsigned short format_version;						/* Revision of the file format */
-            unsigned char  reserved[6];
+            unsigned short flags;
+            unsigned char  reserved[4];
             unsigned int magic;		/* Should contain TRACE_MAGIC_FILE_HEADER */
 		} file_header;
 
@@ -372,6 +374,12 @@ enum trace_param_desc_flags {
      * A future version of the parser will display the value in describe_params mode (e.g. when displaying statistics)
      * instead of the type name */
     TRACE_PARAM_FLAG_CONST   = 0x40000,
+#endif
+};
+
+enum trace_file_header_flags {
+#if (TRACE_FORMAT_VERSION >= TRACE_FORMAT_VERSION_INTRODUCED_LOW_LATENCY_WRITE)
+	TRACE_FILE_HEADER_FLAG_LOW_LATENCY_MODE = 0x01,
 #endif
 };
 

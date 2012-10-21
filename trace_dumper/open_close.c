@@ -31,6 +31,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <sys/utsname.h>
+#include <sys/mman.h>
 
 #include "../trace_user.h"
 #include "filesystem.h"
@@ -64,6 +65,11 @@ static int trace_write_header(struct trace_dumper_configuration_s *conf, struct 
 	snprintf((char *)file_header->machine_id, sizeof(file_header->machine_id), "%s", ubuf.nodename);
     file_header->format_version = TRACE_FORMAT_VERSION;
     file_header->magic = TRACE_MAGIC_FILE_HEADER;
+
+    file_header->flags = 0;
+    if (conf->low_latency_write) {
+    	file_header->flags |= TRACE_FILE_HEADER_FLAG_LOW_LATENCY_MODE;
+    }
 
     rc = write_single_record(conf, record_file, &rec);
 	if (rc < 0) {
@@ -102,6 +108,10 @@ static int trace_open_file(struct trace_dumper_configuration_s *conf, struct tra
     char filename[sizeof(record_file->filename)];
 
     record_file->records_written = 0;
+    record_file->bytes_committed = 0;
+    record_file->mem_mapping = MAP_FAILED;
+    record_file->mapping_len = 0;
+    record_file->page_size = 0;
 
     assert(NULL != filename_spec);
     if (!autogen_filenames) { /* filename_spec specifies a full filename */
@@ -118,7 +128,9 @@ static int trace_open_file(struct trace_dumper_configuration_s *conf, struct tra
 
     INFO("Opening trace file:", filename);
     assert(is_closed(record_file));
-    record_file->fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
+    int mode = conf->low_latency_write ? O_RDWR : O_WRONLY;
+    record_file->fd = open(filename, mode | O_CREAT | O_TRUNC, 0644);
     if (record_file->fd < 0) {
     	syslog(LOG_ERR|LOG_USER, "Failed to open new trace file %s due to error %s", filename, strerror(errno));
         return -1;
@@ -216,10 +228,17 @@ bool_t is_closed(const struct trace_record_file *file) {
 static int close_file(struct trace_record_file *file) {
 	int rc = 0;
 	if (!is_closed(file)) {
-		rc = close(file->fd);
+		rc = trace_dumper_flush_mmapping(file, FALSE);
 		if (0 == rc) {
-			file->fd = -1;
+			rc = close(file->fd);
+			if (0 == rc) {
+				file->fd = -1;
+			}
 		}
+	}
+	else {
+		/* Make sure we're not leaking memory mappings */
+		assert(MAP_FAILED == file->mem_mapping);
 	}
 
 	return rc;
