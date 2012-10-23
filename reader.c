@@ -1,6 +1,10 @@
-#define _XOPEN_SOURCE
+#define _XOPEN_SOURCE 700
 
 #include <sys/mman.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -10,6 +14,8 @@
 #include <limits.h>
 #include <getopt.h>
 #include <sysexits.h>
+#include <dirent.h>
+#include <libgen.h>
 
 #include "parser.h"
 #include "list_template.h"
@@ -192,6 +198,141 @@ static int get_severity_level(const char* str) {
         exit_usage(NULL, invalid_severity_msg);
 }
 
+static void tokenize_cmdline(char* cmdline, int len, int* argc, char** argv,int MAX_ARGS)
+{
+    char* p;
+
+    *argc = 0;
+
+    argv[(*argc)++] = cmdline;
+
+    for (p = cmdline; p < cmdline + len; ++p) {
+        if (*p == '\0') {
+            argv[(*argc)++] = p + 1;
+        }
+        if (*argc >= MAX_ARGS) {
+            break;
+        }
+    }
+}
+
+static int get_active_workdir(char* workdir, int len, pid_t* pid)
+{
+    DIR *d;
+    int result = -1;
+    char tmp[PATH_MAX];
+    char cmdline[4096];
+    int fd;
+    int n;
+
+    d = opendir("/proc");
+    if (!d) {
+        return -1;
+    }
+
+    while (1) {
+        struct dirent *e;
+        e = readdir(d);
+        if (e == NULL) {
+            break;
+        }
+
+        if (atoi(e->d_name) <= 0) {
+            continue;
+        }
+
+        n = snprintf(tmp, sizeof(tmp), "/proc/%s/cmdline", e->d_name);
+        if (n <= 0 || n >= (int)sizeof(tmp)) {
+            continue;
+        }
+
+        fd = open(tmp, 0);
+        if (fd < 0) {
+            continue;
+        }
+        n = read(fd, cmdline, sizeof(cmdline));
+        close(fd);
+        if (n <= 0 || n >= (int)sizeof(cmdline) - 2) {
+            continue;
+        }
+    
+        cmdline[n] = cmdline[n + 1] = '\0';
+        
+        if (strcmp(basename(cmdline), "trace_dumper") != 0) {
+            continue;
+        }
+
+        char* argv[64];
+        int argc = 0;
+        tokenize_cmdline(cmdline, n, &argc, argv, sizeof(argv) / sizeof(argv[0]));
+
+        int i;
+        for (i = 0; i < argc - 1; ++i) {
+            if (strcmp(argv[i], "-b") == 0) {
+                *pid = atoi(e->d_name);
+                n = snprintf(workdir, len, "%s", argv[i + 1]);
+                if (n > 0 && n < len) {
+                    result = 0;
+                }
+                goto out;
+            }
+        }
+    }
+
+out:
+    closedir(d);
+
+    return result;
+}
+
+static int get_active_tracefile(char* filename, int len)
+{
+    char workdir[PATH_MAX];
+    DIR *d;
+    int rc;
+    int result = -1;
+    int n;
+    time_t latest = 0;
+    struct stat stat_buf;
+    pid_t pid;
+
+    rc = get_active_workdir(workdir, sizeof(workdir), &pid);
+    if (rc == -1) {
+        return result;
+    }
+
+    d = opendir(workdir);
+    if (!d) {
+        return result;
+    }
+
+    while (1) {
+        struct dirent *e;
+        e = readdir(d);
+        if (e == NULL) {
+            break;
+        }
+        
+        if (fstatat(dirfd(d), e->d_name, &stat_buf, 0) != 0) {
+            continue;
+        }
+
+        if (latest < stat_buf.st_mtime) {
+            latest = stat_buf.st_mtime;
+            n = snprintf(filename, len, "%s/%s", workdir, e->d_name);
+            if (n <= 0 || n >= len) {
+                result = -1;
+            } else {
+                result = 0;
+            }
+        }
+    }
+
+    closedir(d);
+
+    return result;
+}
+
 static int parse_command_line(struct trace_reader_conf *conf, int argc, const char **argv)
 {
     int o;
@@ -311,7 +452,7 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
             {
                 filter_t * f = new_filter_t();
                 char* equal = NULL ; 
-        #define OR_MAYBE(C) if (! equal ) equal = rindex(optarg, C)
+        #define OR_MAYBE(C) if (! equal ) equal = strrchr(optarg, C)
                 OR_MAYBE('=');
                 OR_MAYBE('>');
                 OR_MAYBE('<');
@@ -372,6 +513,17 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
 
     unsigned long filename_index = optind;
     conf->files_to_process = argv + (int)filename_index;
+
+    if (NULL == *(conf->files_to_process)) {
+        static char filename[PATH_MAX];
+        static const char* args[2] = { filename, NULL };
+        int rc = get_active_tracefile(filename, sizeof(filename));
+
+        if (rc == 0) {
+            conf->files_to_process = (const char**)args;
+        }
+    }
+
     if (NULL == *(conf->files_to_process))
     	exit_usage(NULL, "Must specify input files");
 

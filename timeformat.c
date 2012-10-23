@@ -48,6 +48,28 @@ static long long atoll_n(const char* str, int n) {
     return ret;
 }
 
+#if defined(_BSD_SOURCE) || defined(_SVID_SOURCE)
+/* we have timegm() */
+#else
+/* poor man's timegm(): */
+time_t timegm(struct tm *tm)
+{
+    time_t ret;
+    char *tz;
+
+    tz = getenv("TZ");
+    setenv("TZ", "", 1);
+    tzset();
+    ret = mktime(tm);
+    if (tz) {
+        setenv("TZ", tz, 1);
+    } else {
+        unsetenv("TZ");
+    }
+    tzset();
+    return ret;
+}
+#endif
 
 #define SECOND (1000000000LL)
 
@@ -66,10 +88,8 @@ unsigned long long str_to_nano_seconds(const char* str) {
     if (len > 9 && all_digits(str)) {
         return atoll(str);
     }
-    time_t smartasses = 0;
-    struct tm t ;
-    memcpy(&t, gmtime(&smartasses), sizeof(t));
-    long long local_offs = mktime(&t);
+    struct tm t = { 0 };
+
     /* 2012/09/03 05:10:56 674869660 */
 
     /* date? */
@@ -77,17 +97,18 @@ unsigned long long str_to_nano_seconds(const char* str) {
         t.tm_year = atoll_n(str+0, 4) - 1900;
         t.tm_mon  = atoll_n(str+5, 2) - 1;
         t.tm_mday = atoll_n(str+8, 2);
-        str+= 10;
+        str += 10;
         NEXT_DIGIT;
     }
     if (len >= 8 && str[2] == ':' && str[5] == ':') {
         t.tm_hour = atoll_n(str+0, 2);
         t.tm_min  = atoll_n(str+3, 2);
         t.tm_sec  = atoll_n(str+6, 2);
-        str+=8;
+        str += 8;
         NEXT_DIGIT;
     }
-    return (SECOND * (mktime(&t) - local_offs)) + atoll_n(str, 9);
+
+    return (SECOND * (timegm(&t))) + atoll_n(str, 9);
 }
 
 static char cached_timestamp[100] ;

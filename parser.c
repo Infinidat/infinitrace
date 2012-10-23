@@ -33,6 +33,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include <errno.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
+#include <sys/poll.h>
 #include <assert.h>
 #include <stdarg.h>
 #include <sysexits.h>
@@ -157,18 +158,34 @@ static int my_strncpy(char* formatted_record, const char* source, int max_size)
     }
 }
 
-static int wait_for_data(trace_parser_t *parser)
+/*
+ * return value:
+ *    1: new data
+ *    0: timeout
+ *   -1: error
+ *
+ */
+static int wait_for_data(trace_parser_t *parser, int ms_timeout)
 {
 #ifdef _USE_INOTIFY_
-    fd_set read_fdset;
     struct inotify_event event;
-    while (TRUE) {
-        FD_ZERO(&read_fdset);
-        FD_SET(parser->inotify_fd, &read_fdset);
+    struct pollfd pollfd;
 
-        int rc = select(parser->inotify_fd + 1, &read_fdset, NULL, NULL, NULL);
+    pollfd.fd = parser->inotify_fd;
+
+    while (TRUE) {
+        pollfd.events = POLLIN;
+        pollfd.revents = 0;
+
+        int rc = poll(&pollfd, 1, ms_timeout);
         if (-1 == rc) {
-            return -1;
+            if (errno == EINTR)
+                continue;
+            else
+                return -1;
+        }
+        if (0 == rc) {
+            return 0;
         }
 
         rc = read(parser->inotify_fd, &event, sizeof(event));
@@ -177,12 +194,12 @@ static int wait_for_data(trace_parser_t *parser)
         }
 
         if (event.mask & IN_MODIFY) {
-            return 0;
+            return 1;
         }
     }
 #else
     sleep(1);
-    return 0;
+    return 1;
 #endif
 }
 
@@ -235,8 +252,8 @@ static int read_next_record(trace_parser_t *parser, struct trace_record *record)
 
         if (parser->wait_for_input) {
             parser->silent_mode = FALSE;
-            rc = wait_for_data(parser);
-            if (0 != rc) {
+            rc = wait_for_data(parser, -1);
+            if (-1 == rc) {
                 return -1;
             } else {
                 refresh_end_offset(parser);
@@ -1246,7 +1263,7 @@ static int process_dump_header_record(
             return -1;
         }
         
-        if (!match_record_dump_with_match_expression(filter, &tmp_record, buffer_context)) {
+        if (!(!parser->silent_mode && match_record_dump_with_match_expression(filter, &tmp_record, buffer_context))) {
             current_offset = TRACE_PARSER__seek(parser, buffer_chunk->records, SEEK_CUR);
             if (current_offset == -1) {
             	return -1;
@@ -1701,7 +1718,8 @@ static int process_single_record(
         case 0: /* We passed a complete record */
             complete_rec.buffer = buffer;
             complete_rec.record = complete_record;
-            if ((match_record_with_match_expression(filter, buffer, complete_record, iter) &&
+            if ((!parser->silent_mode &&
+                        match_record_with_match_expression(filter, buffer, complete_record, iter) &&
                  after_count_push(iter, complete_record->tid, parser->after_count)) ||
                 (after_count_pop (iter, complete_record->tid))) {
 
@@ -2398,7 +2416,7 @@ static void unmap_file(trace_parser_t *parser)
     parser->file_info.end_offset = 0;
 
     if (-1 != parser->inotify_descriptor) {
-    	assert(0 == inotify_rm_watch(parser->inotify_fd, parser->inotify_fd));
+    	assert(0 == inotify_rm_watch(parser->inotify_fd, parser->inotify_descriptor));
     	parser->inotify_descriptor = -1;
     }
 
