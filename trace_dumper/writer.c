@@ -352,6 +352,7 @@ int trace_dumper_write_via_mmapping(
 			return -1;
 		}
 
+		/* TODO: Introduce logic for waiting when the file-system is full, similar to trace_dumper_write_via_file_io() */
 		int rc = posix_fallocate64(record_file->fd, bytes_written, len);
 		if (0 != rc) {
 			errno = rc;
@@ -361,6 +362,16 @@ int trace_dumper_write_via_mmapping(
 
 		void *write_start = (char *)(record_file->mem_mapping) + bytes_written;
 		assert((size_t)copy_iov_to_buffer(write_start, iov, iovcnt) == len);
+
+		if (NULL != record_file->post_write_validator) {
+			record_file->validator_last_result = record_file->post_write_validator(write_start, len / TRACE_RECORD_SIZE, TRUE, record_file->validator_context);
+			if (record_file->validator_last_result < 0) {
+				syslog(LOG_USER|LOG_ERR, "Validation returned error result %d while writing to file %s",
+						record_file->validator_last_result, record_file->filename);
+				reset_file(record_file);
+				return record_file->validator_last_result;
+			}
+		}
 
 		//uintptr_t msync_base = ROUND_DOWN((uintptr_t) write_start, record_file->page_size);
 		assert(0 == (record_file->bytes_committed % record_file->page_size));
@@ -397,7 +408,7 @@ int trace_dumper_flush_mmapping(struct trace_record_file *record_file, bool_t sy
 	}
 	else {
 		assert(0 == (record_file->bytes_committed % record_file->page_size));
-		int flag = synchronous ? MS_SYNC : MS_ASYNC;
+		int flag = MS_INVALIDATE | (synchronous ? MS_SYNC : MS_ASYNC);
 
 		if (msync(
 				(char *)(record_file->mem_mapping) + record_file->bytes_committed,

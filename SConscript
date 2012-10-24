@@ -25,7 +25,7 @@ with TracesDisabled(xn_env) as untraced_env:
     xn_env.Alias('xn', lib)
 
 objs = [Object(target = S + '.o', source = S + '.c', CCFLAGS = optflags)  for S in 'trace_metadata_util', 'hashmap']
-srcs = xn_env.AutoSplit('''cached_file.c trace_parser.c''') + objs
+srcs = xn_env.AutoSplit('''cached_file.c trace_parser.c validator.c''') + objs
 xn_env.BuildStaticLibraries(target = 'tracereader', source = srcs, CCFLAGS = optflags)
 
 srcs = xn_env.AutoSplit('''timeformat.c parser.c''') + objs

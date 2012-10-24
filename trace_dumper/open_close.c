@@ -71,6 +71,7 @@ static int trace_write_header(struct trace_dumper_configuration_s *conf, struct 
     	file_header->flags |= TRACE_FILE_HEADER_FLAG_LOW_LATENCY_MODE;
     }
 
+    record_file->post_write_validator = NULL;
     rc = write_single_record(conf, record_file, &rec);
 	if (rc < 0) {
 		syslog(LOG_USER|LOG_ERR, "Failed to write to a data file %s due to error: %s", record_file->filename, strerror(errno));

@@ -300,7 +300,7 @@ struct trace_record {
 			/* Offset of the dump to which this chunk belongs */
 			unsigned int dump_header_offset;
 
-			/* Traced process time-stamp at which the chunk starts */
+			/* Time-stamp at which the dumper produced the record */
 			trace_ts_t ts;
 
 			/* Number of records in the chunk */

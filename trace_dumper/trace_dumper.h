@@ -29,6 +29,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "../bool.h"
 #include "../array_length.h"
 #include "../trace_lib.h"
+#include "../validator.h"
 
 #define COLOR_BOOL conf->color
 #include "../colors.h"
@@ -107,6 +108,9 @@ struct trace_record_file {
     long page_size;
     struct iovec *iov;
     size_t iov_allocated_len;
+    trace_post_write_validator post_write_validator;
+    void *validator_context;
+    int validator_last_result;
 };
 
 /* Values for the request_flags field of struct trace_dumper_configuration_s below */

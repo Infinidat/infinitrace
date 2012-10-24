@@ -245,6 +245,7 @@ static void init_dump_header(struct trace_dumper_configuration_s *conf, struct t
 
     (*total_written_records)++;
     dump_header_rec->rec_type = TRACE_REC_TYPE_DUMP_HEADER;
+    dump_header_rec->termination = (TRACE_TERMINATION_LAST | TRACE_TERMINATION_FIRST);
 	dump_header_rec->u.dump_header.prev_dump_offset = conf->last_flush_offset;
     dump_header_rec->ts = cur_ts;
 }
@@ -461,6 +462,7 @@ static unsigned add_warn_records_to_iov(
 	return iov_idx;
 }
 
+
 /* Iterate over all the mapped buffers and flush them. The result will be a new dump added to the file, with the
  * records flushed from every buffer that has data pending constituting a chunk.
  * A negative return value indicates an error. A non-negative return value indicates the total number of records still pending
@@ -477,6 +479,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
     unsigned int total_written_records = 0;
     int total_unflushed_records = 0;
     long lost_records = 0L;
+    int notification_records_invalidated = 0;
     int rc = 0;
 
 	cur_ts = trace_get_nsec_monotonic();
@@ -552,8 +555,20 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
         possibly_report_record_loss(conf, mapped_buffer, mapped_records, &deltas);
 
         if (conf->write_notifications_to_file && (mapped_records->imutab->severity_type >= (1U << conf->minimal_notification_severity))) {
+        	/* TODO: Implement a more clever validator that takes level thresholds into account. */
+    		conf->notification_file.post_write_validator = trace_typed_record_sequence_validator;
+    		conf->notification_file.validator_context = NULL;
+
 			unsigned int num_warn_iovecs = add_warn_records_to_iov(mapped_records, deltas.total, conf->minimal_notification_severity, &conf->notification_file);
 			trace_dumper_write_to_record_file(conf, &conf->notification_file, num_warn_iovecs);
+			if (conf->notification_file.validator_last_result < 0) {
+				syslog( LOG_USER|LOG_WARNING,
+						"Trace dumper's data validation found an unrecoverable error with code %d while writing notifications to the file %s",
+						conf->notification_file.validator_last_result, conf->notification_file.filename);
+			}
+			else {
+				notification_records_invalidated += conf->notification_file.validator_last_result;
+			}
         }
 
         if (conf->online && record_buffer_matches_online_severity(conf, mapped_records->imutab->severity_type)) {
@@ -575,9 +590,18 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 		dump_header_rec.u.dump_header.total_dump_size = total_written_records - 1;
 		dump_header_rec.u.dump_header.first_chunk_offset = conf->record_file.records_written + 1;
 
+		conf->record_file.post_write_validator = trace_dump_validator;
+		conf->record_file.validator_context = NULL;
 		rc = possibly_write_iovecs_to_disk(conf, num_iovecs, total_written_records, cur_ts);
 		if (rc < 0) {
 			return rc;
+		}
+
+		if ((conf->record_file.validator_last_result > 0) || (notification_records_invalidated > 0)) {
+			syslog( LOG_USER|LOG_WARNING,
+					"Trace dumper has had to invalidate %d record(s) from trace record file %s, and %d record(s) from the notification file %s, which had been overrun while writing.",
+					conf->record_file.validator_last_result, conf->record_file.filename,
+					notification_records_invalidated, conf->notification_file.filename);
 		}
 	}
     return total_unflushed_records;

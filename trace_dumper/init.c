@@ -247,6 +247,8 @@ static int init_record_file(struct trace_record_file *record_file, size_t initia
 	record_file->mem_mapping = MAP_FAILED;
 	record_file->mapping_len = 0;
 	record_file->page_size = 0;
+	record_file->post_write_validator = NULL;
+	record_file->validator_context = NULL;
 	record_file->iov_allocated_len = (initial_iov_len > 0U) ? initial_iov_len : (size_t) sysconf(_SC_IOV_MAX);
 	record_file->iov = calloc(record_file->iov_allocated_len, sizeof(struct iovec));
 	if (NULL == record_file->iov) {

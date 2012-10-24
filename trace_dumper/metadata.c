@@ -74,6 +74,10 @@ static int trace_dump_metadata(struct trace_dumper_configuration_s *conf, struct
     int rc;
 
     mapped_buffer->metadata.metadata_payload_record.ts = trace_get_nsec();
+
+    /* TODO: write a validator for metadata. */
+    record_file->post_write_validator = NULL;
+
     rc = write_metadata_header_start(conf, record_file, mapped_buffer);
     if (0 != rc) {
         return -1;
