@@ -2555,7 +2555,7 @@ protected:
         whitelistExceptions = false;
         for (unsigned i = 0, e = args.size(); i != e; ++i) {
             if (args[i].compare("disable-function-tracing") == 0) {
-                printf("GREAT\n");
+                // printf("GREAT\n");
                 whitelistExceptions = true;
             }
         }
