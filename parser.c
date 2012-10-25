@@ -868,7 +868,10 @@ static int format_typed_params(
                 GET_PDATA_VAL(unsigned int);
                 const char* name = get_type_name(context, param->type_name, _val);
                 SAY_COL(out, BLUE_B);
-                SAY_S  (out, name ? name : "< ?enum>");
+                if (name)
+                    SAY_S  (out, name);
+                else
+                    SAY_F  (out, "<enum:%d>", _val);
             }
         } break;
         
