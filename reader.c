@@ -39,7 +39,7 @@ struct trace_reader_conf {
     int tail;
     int no_color;
     int hex;
-    int show_field_names;
+    int hide_field_names;
     int show_trace_file;
     int hide_funtion_name;
     int nanoseconds_ts;
@@ -76,24 +76,24 @@ static const char usage[] =
  -h, --help              : Display this help message \n\
  \n\
     Displays: \n\
- -N  --no-color          : Disable colored output \n\
- -O  --show-field-names  : Show field names for all trace records \n\
+ -N  --no-color          : Disable ansii colors (big output is also a little faster) \n\
  -X  --hex               : Display all numeric values in hexadecimal \n\
- -F  --hide-function     : As the name implies, avoid displaying function names \n\
- -L  --show-trace-file   : Display faked log messages with trace's file name \n\
- -E  --hide-timestamp    : Hide timestamp and process name/id (mnemonic - Empty) \n\
- -M  --compact-traces    : Compact trace output \n\
- -P  --nano-timestamp    : Print timestamps as raw nano-seconds-since-Epoch units \n\
  -Q  --quota-max [num]   : Show no more than [num] traces (technicaly it's a filter, but 'gimme a break) \n\
  -A  --after     [num]   : Show [num] traces of the same thread after each hit (TBD: -B/C) \n\
+ -F  --no-function       : Avoid displaying function names \n\
+ -O  --no-field-names    : Avoid displaying field names at named variables \n\
+ -L  --show-trace-file   : Display faked log messages with trace's file name \n\
+ -E  --no-timestamp      : Avoid displaying timestamp, process name/id (mnemonic - EMPty) \n\
+ -M  --compact-traces    : Compact trace output \n\
+ -P  --nano-timestamp    : Print timestamps as raw nano-seconds-since-Epoch units \n\
  \n\
     Filters: \n\
- -l  --level  [severity] : Show records from severity and up. Int value or " TRACE_LEVELS_STR " (DEFAULT: TRIO) \n\
  -t  --time   [time]     : Used once or twice to set a time range. [time] may be nanoseconds int, or time format string \n\
- -g  --grep   [str]      : Show records whose constant string contains [str] \n\
- -c  --strcmp [str]      : Show records whose constant string exact-matches [str] (faster than -g, useful to filter MODULE)\n\
- -v  --value  [num ]     : Show records with int value equal to [num] \n\
- -v  --value  [name=num] : Show records with specific name field [name] equal to [num] (as name apears with -O) \n\
+ -l  --level  [severity] : Match: severity and up. Int value or " TRACE_LEVELS_STR " (DEFAULT: TRIO) \n\
+ -g  --grep   [str]      : Match: constant string contains [str] \n\
+ -c  --strcmp [str]      : Match: constant string exact-matches [str] (faster than -g, useful to filter MODULE)\n\
+ -v  --value  [num ]     : Match: int value equal to [num] \n\
+ -v  --value  [name=num] : Match: specific name field [name] equal to [num] (as name apears with -O) \n\
  -u  --value2 [num] or [name=num] : similar to -v \n\
  -w  --value3 [num] or [name=num] : similar to -v and -u \n\
  -z  --fuzzy  [??? ]     : - If [???] looks like a number, similar to -v [num], else similar to -g [str] \n\
@@ -126,11 +126,11 @@ static const struct option longopts[] = {
     { "print-stats"     , 0, 0, 's'},
     { "tail"            , 0, 0, 'i'},
 
-    { "show-field-name" , 0, 0, 'O'},
-    { "hide-function"   , 0, 0, 'F'},
+    { "no-field-name"   , 0, 0, 'O'},
+    { "no-function"     , 0, 0, 'F'},
 	{ "no-color"        , 0, 0, 'N'},
     { "hex"             , 0, 0, 'X'},
-    { "hide-timestamp"  , 0, 0, 'E'},
+    { "no-timestamp"    , 0, 0, 'E'},
     { "show-trace-file" , 0, 0, 'L'},
     { "compact-trace"   , 0, 0, 'M'},
     { "nano-timestamp"  , 0, 0, 'P'},
@@ -360,7 +360,7 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
 			break;
 
         case 'O':
-            conf->show_field_names = TRUE;
+            conf->hide_field_names = TRUE;
             break;
         case 'F':
             conf->hide_funtion_name = TRUE;
@@ -565,7 +565,7 @@ static void set_parser_params(struct trace_reader_conf *conf, trace_parser_t *pa
     parser->show_timestamp     = ! conf->empty_timestamp;
     parser->color              = ! conf->no_color;
     parser->indent             = conf->severity_level <= TRACE_SEV_FUNC_TRACE;
-    parser->show_field_names   = conf->show_field_names;
+    parser->hide_field_names   = conf->hide_field_names;
     parser->show_function_name = ! conf->hide_funtion_name; 
     parser->compact_traces     = conf->compact_trace;
     parser->always_hex         = conf->hex;

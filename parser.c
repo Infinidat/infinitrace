@@ -758,7 +758,7 @@ static int format_typed_params(
 
         if (param->flags & TRACE_PARAM_FLAG_NAMED_PARAM) {
             if (trace_kind == TRACE_LOG_DESCRIPTOR_KIND_FUNC_ENTRY ||
-                parser->show_field_names) {
+                ! parser->hide_field_names) {
                 SAY_COL(out, WHITE_B);
                 SAY_S  (out, param->param_name);
                 SAY_S  (out, "=");

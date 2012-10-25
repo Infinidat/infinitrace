@@ -188,7 +188,7 @@ typedef struct trace_parser {
     bool_t silent_mode;
     int inotify_fd;
     int inotify_descriptor;
-    int show_field_names;
+    int hide_field_names;
     int show_function_name;
     struct trace_record_matcher_spec_s record_filter;
     unsigned int ignored_records_count;
