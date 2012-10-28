@@ -322,6 +322,10 @@ static int get_active_tracefile(char* filename, int len)
             continue;
         }
 
+        if (!S_ISREG(stat_buf.st_mode)) {
+            continue;
+        }
+
         if (latest < stat_buf.st_mtime) {
             latest = stat_buf.st_mtime;
             n = snprintf(filename, len, "%s/%s", workdir, e->d_name);
