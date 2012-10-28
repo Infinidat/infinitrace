@@ -246,6 +246,7 @@ static void init_dump_header(struct trace_dumper_configuration_s *conf, struct t
     dump_header_rec->termination = (TRACE_TERMINATION_LAST | TRACE_TERMINATION_FIRST);
 	dump_header_rec->u.dump_header.prev_dump_offset = conf->last_flush_offset;
     dump_header_rec->ts = cur_ts;
+    dump_header_rec->u.dump_header.records_previously_discarded = conf->record_file.records_discarded;
 }
 
 /* Initialize the buffer chunk header and set-up the iovec for the no wrap-around case. */
@@ -268,7 +269,7 @@ static void init_buffer_chunk_record(struct trace_dumper_configuration_s *conf, 
     (*bd)->prev_chunk_offset = mapped_records->last_flush_offset;
     (*bd)->dump_header_offset = conf->last_flush_offset;
     (*bd)->ts = cur_ts;
-    (*bd)->lost_records = deltas->lost;
+    (*bd)->lost_records = deltas->lost + mapped_records->num_records_discarded;
     (*bd)->records = deltas->total;
     (*bd)->severity_type = mapped_records->imutab->severity_type;
 
@@ -285,46 +286,59 @@ static void init_buffer_chunk_record(struct trace_dumper_configuration_s *conf, 
     (*iovec)->iov_len = TRACE_RECORD_SIZE * deltas->up_to_buf_end;
 }
 
-
-static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *conf, unsigned int num_iovecs, unsigned int total_written_records, trace_ts_t cur_ts)
+static void advance_mapped_record_counters(struct trace_dumper_configuration_s *conf)
 {
     int i;
     int rid;
     struct trace_mapped_buffer *mapped_buffer = NULL;
     struct trace_mapped_records *mapped_records = NULL;
+
+	for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
+		mapped_records->mutab->latest_flushed_ts = mapped_records->next_flush_ts;
+        mapped_records->current_read_record = mapped_records->next_flush_record;
+		mapped_records->last_flush_offset = mapped_records->next_flush_offset;
+	}
+}
+
+static void reset_discarded_record_counters(struct trace_dumper_configuration_s *conf)
+{
+    int i;
+    int rid;
+    struct trace_mapped_buffer *mapped_buffer = NULL;
+    struct trace_mapped_records *mapped_records = NULL;
+
+	for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
+		mapped_records->num_records_discarded = 0;
+	}
+
+	conf->record_file.records_discarded = 0;
+}
+
+static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *conf, unsigned int num_iovecs, unsigned int total_written_records, trace_ts_t cur_ts)
+{
     if (num_iovecs > 1) {
     	assert(num_iovecs >= 3);  /* Should have at least dump and chunk headers and some data */
         conf->last_flush_offset = conf->record_file.records_written;
 		conf->prev_flush_ts = cur_ts;
 		conf->next_flush_ts = cur_ts + conf->ts_flush_delta;
 
-        int ret = -1;
-        if (conf->low_latency_write) {
-        	for_each_mapped_buffer(i, mapped_buffer) {
-				if (0 != mprotect(mapped_buffer->records_buffer_base_address, mapped_buffer->records_buffer_size, PROT_READ)) {
-					syslog(LOG_ERR|LOG_USER, "mprotect READ failed for %lu bytes starting at %p due to %s",
-							mapped_buffer->records_buffer_size, mapped_buffer->records_buffer_base_address, strerror(errno));
-					return -1;
-				}
-        	}
-
-        	ret = trace_dumper_write_via_mmapping(conf, &conf->record_file, conf->flush_iovec, num_iovecs);
-
-        	for_each_mapped_buffer(i, mapped_buffer) {
-				if (0 != mprotect(mapped_buffer->records_buffer_base_address, mapped_buffer->records_buffer_size, PROT_READ|PROT_WRITE)) {
-					syslog(LOG_ERR|LOG_USER, "mprotect RW failed for %lu bytes starting at %p due to %s",
-							mapped_buffer->records_buffer_size, mapped_buffer->records_buffer_base_address, strerror(errno));
-					return -1;
-				}
-        	}
-        }
-        else {
-        	ret = trace_dumper_write(conf, &conf->record_file, conf->flush_iovec, num_iovecs, FALSE);
-        }
-
+        int ret = trace_dumper_write(conf, &conf->record_file, conf->flush_iovec, num_iovecs, FALSE);
 		if ((unsigned int)ret != (total_written_records * sizeof(struct trace_record))) {
 			if (ret < 0) {
-				syslog(LOG_ERR|LOG_USER, "Had error %s (%d) while writing records", strerror(errno), errno);
+				if (EAGAIN != errno) {
+					syslog(LOG_ERR|LOG_USER, "Had error %s (%d) while writing records", strerror(errno), errno);
+				}
+				else {
+				    int i;
+				    int rid;
+				    struct trace_mapped_buffer *mapped_buffer = NULL;
+				    struct trace_mapped_records *mapped_records = NULL;
+
+					for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
+						assert(mapped_records->current_read_record <= mapped_records->next_flush_record);
+						mapped_records->num_records_discarded += (mapped_records->next_flush_record - mapped_records->current_read_record);
+					}
+				}
 			}
 			else {
 				syslog(LOG_ERR|LOG_USER, "Wrote only %d records out of %u requested", (ret / (int)sizeof(struct trace_record)), total_written_records);
@@ -332,11 +346,7 @@ static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *co
             return -1;
 		}
         
-		for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
-			mapped_records->mutab->latest_flushed_ts = mapped_records->next_flush_ts;
-			mapped_records->current_read_record = mapped_records->next_flush_record;
-			mapped_records->last_flush_offset = mapped_records->next_flush_offset;
-		}
+		advance_mapped_record_counters(conf);
 	}
 
     return 0;
@@ -469,7 +479,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 {
     struct trace_mapped_buffer *mapped_buffer = NULL;
     struct trace_mapped_records *mapped_records = NULL;
-    unsigned long long cur_ts;
+    trace_ts_t cur_ts;
     struct trace_record dump_header_rec;
     struct iovec *iovec;
     unsigned int num_iovecs = 0;
@@ -479,8 +489,10 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
     long lost_records = 0L;
     int notification_records_invalidated = 0;
     int rc = 0;
+    trace_record_counter_t min_remaining = TRACE_RECORD_BUFFER_RECS;
 
 	cur_ts = get_nsec_monotonic();
+
 	bool_t premature_call = (cur_ts < conf->next_flush_ts);
 	if (!premature_call) {
 		init_dump_header(conf, &dump_header_rec, cur_ts, &iovec, &num_iovecs, &total_written_records);
@@ -551,6 +563,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 		mapped_records->next_flush_record = mapped_records->current_read_record + deltas.total;
 
         possibly_report_record_loss(conf, mapped_buffer, mapped_records, &deltas);
+        min_remaining = MIN(min_remaining, (trace_record_counter_t)(deltas.remaining_before_loss));
 
         if (conf->write_notifications_to_file && (mapped_records->imutab->severity_type >= (1U << conf->minimal_notification_severity))) {
         	/* TODO: Implement a more clever validator that takes level thresholds into account. */
@@ -586,21 +599,32 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 
 	if (!premature_call) {
 		dump_header_rec.u.dump_header.total_dump_size = total_written_records - 1;
+		trace_dumper_update_written_record_count(&conf->notification_file);
+		trace_dumper_update_written_record_count(&conf->record_file);
 		dump_header_rec.u.dump_header.first_chunk_offset = conf->record_file.records_written + 1;
 
 		conf->record_file.post_write_validator = trace_dump_validator;
 		conf->record_file.validator_context = NULL;
 		rc = possibly_write_iovecs_to_disk(conf, num_iovecs, total_written_records, cur_ts);
 		if (rc < 0) {
+			if (EAGAIN == errno) {
+				advance_mapped_record_counters(conf);
+				rc = total_unflushed_records;	/* We had to discard records, but we consider them to be successfully written in this context. */
+			}
 			return rc;
 		}
 
 		if ((conf->record_file.validator_last_result > 0) || (notification_records_invalidated > 0)) {
 			syslog( LOG_USER|LOG_WARNING,
-					"Trace dumper has had to invalidate %d record(s) from trace record file %s, and %d record(s) from the notification file %s, which had been overrun while writing.",
+					"Trace dumper has had to invalidate %d record(s) from trace record file %s, and %d record(s) from the notification file %s, which had been overrun while writing."
+					" remaining records: %lu",
 					conf->record_file.validator_last_result, conf->record_file.filename,
-					notification_records_invalidated, conf->notification_file.filename);
+					notification_records_invalidated, conf->notification_file.filename,
+					min_remaining);
 		}
+
+		/* The latest chunk written has successfully output information about any discarded records, so reset the counters. */
+		reset_discarded_record_counters(conf);
 	}
     return total_unflushed_records;
 }

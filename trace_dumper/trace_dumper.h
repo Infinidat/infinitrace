@@ -66,6 +66,8 @@ struct trace_mapped_records {
     trace_ts_t 	 next_flush_ts;
     trace_record_counter_t next_flush_record;
     unsigned int next_flush_offset;
+
+    trace_record_counter_t num_records_discarded;
     struct trace_record buffer_dump_record;
 };
 
@@ -98,14 +100,14 @@ struct trace_mapped_buffer {
 #define TRACE_FILE_MAX_RECORDS_PER_CHUNK       0x10000
 #define TRACE_FILE_IMMEDIATE_FLUSH_THRESHOLD	(TRACE_FILE_MAX_RECORDS_PER_CHUNK / 2)
 
+struct trace_output_mmap_info;  /* See writer.h for its full definition */
+
 struct trace_record_file {
     unsigned long records_written;
-    unsigned long bytes_committed;
     char filename[0x100];
     int fd;
-    void *mem_mapping;
-    size_t mapping_len;
-    long page_size;
+    struct trace_output_mmap_info *mapping_info;
+    trace_record_counter_t records_discarded;
     struct iovec *iov;
     size_t iov_allocated_len;
     trace_post_write_validator post_write_validator;
@@ -176,9 +178,10 @@ struct trace_dumper_configuration_s {
 
     const char *quota_specification;
     long long max_records_per_logdir;
-    unsigned long long max_records_per_file;
-    unsigned long long max_records_per_second;
-    int stopping;
+    trace_record_counter_t max_records_per_file;
+    trace_record_counter_t max_records_per_second;
+    trace_record_counter_t max_records_pending_write_via_mmap;
+    bool_t stopping;
 	struct trace_record_file record_file;
 	struct trace_record_file notification_file;
 	unsigned int last_flush_offset;

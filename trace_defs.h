@@ -287,6 +287,9 @@ struct trace_record {
 
 			/* Offset of the first chunk header in the dump */
             unsigned int first_chunk_offset;
+
+            /* Number of records discarded since the last dump. */
+            trace_record_counter_t records_previously_discarded;
 		} dump_header;
 
 		/* Payload for TRACE_REC_TYPE_BUFFER_CHUNK */

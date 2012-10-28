@@ -48,7 +48,7 @@ static const char usage[] = {
     " -o  --online                          Show data from buffers as it arrives (slows performance)               \n" \
     " -n  --no-color                        Show online data without color                                         \n" \
     " -w  --write-to-file[filename]         Write log records to file                                              \n" \
-    " -l  --low-latency-write         	    Write to files in low-latency mode (which uses mmap)                   \n" \
+    " -l  --low-latency-write[queue length] Write to files in low-latency mode (which uses mmap), optionally specifying maximum number of records on write queue\n" \
     " -N  --notification-file[filename]     Write notifications (messages with severity > notification level) to a separate file\n" \
     " -L  --notification-level[level]       Specify minimum severity that will be written to the notification file (default: WARN)\n" \
     " -b  --logdir                          Specify the base log directory trace files are written to              \n" \
@@ -77,7 +77,7 @@ static const struct option longopts[] = {
     { "syslog", 0, 0, 's'},
     { "pid", required_argument, 0, 'p'},
     { "write-to-file", optional_argument, 0, 'w'},
-    { "low-latency-write", 0, 0, 'l'},
+    { "low-latency-write", optional_argument, 0, 'l'},
     { "notification-file",  optional_argument, 0, 'N'},
     { "notification-level", required_argument, 0, 'L'},
     { "quota-size", required_argument, 0, 'q'},
@@ -101,7 +101,8 @@ int parse_commandline(struct trace_dumper_configuration_s *conf, int argc, char 
     char shortopts[MAX_SHORT_OPTS_LEN(ARRAY_LENGTH(longopts))];
     short_opts_from_long_opts(shortopts, longopts);
 
-    int o;
+    long long numarg = -1LL;
+    int o = 0;
     while ((o = getopt_long(argc, argv, shortopts, longopts, 0)) != EOF) {
 		switch (o) {
 		case 'h':
@@ -127,6 +128,12 @@ int parse_commandline(struct trace_dumper_configuration_s *conf, int argc, char 
             break;
         case 'l':
         	conf->low_latency_write = TRUE;
+        	if (optarg && trace_get_number(optarg, &numarg) && (numarg > 0)) {
+        		conf->max_records_pending_write_via_mmap = (trace_record_counter_t) numarg;
+        	}
+        	else {
+        		conf->max_records_pending_write_via_mmap = ULONG_MAX;
+        	}
         	break;
         case 'N':
             conf->write_notifications_to_file = 1;
@@ -224,7 +231,7 @@ static int set_quota(struct trace_dumper_configuration_s *conf)
     }
 
     if (trace_quota_is_enabled(conf)) {
-    	syslog(LOG_USER|LOG_INFO, "Trace dumper quota is set to %lld records per log directory, in %llu record files",
+    	syslog(LOG_USER|LOG_INFO, "Trace dumper quota is set to %lld records per log directory, in %lu record files",
     			conf->max_records_per_logdir, conf->max_records_per_file);
     }
 
@@ -243,10 +250,7 @@ static int init_record_file(struct trace_record_file *record_file, size_t initia
 	record_file->fd = -1;
 	record_file->filename[0] = '\0';
 	record_file->records_written = 0;
-	record_file->bytes_committed = 0;
-	record_file->mem_mapping = MAP_FAILED;
-	record_file->mapping_len = 0;
-	record_file->page_size = 0;
+	record_file->mapping_info = NULL;
 	record_file->post_write_validator = NULL;
 	record_file->validator_context = NULL;
 	record_file->iov_allocated_len = (initial_iov_len > 0U) ? initial_iov_len : (size_t) sysconf(_SC_IOV_MAX);
@@ -329,6 +333,12 @@ int init_dumper(struct trace_dumper_configuration_s *conf)
 
     if (set_quota(conf) != 0) {
         return EX_IOERR;
+    }
+
+    if (conf->low_latency_write) {
+    	syslog(LOG_USER|LOG_INFO,
+    			"Trace dumper is writing records in low latency mode using memory mappings, with a maximum queue length of %lu (0x%lX) records",
+    			conf->max_records_pending_write_via_mmap, conf->max_records_pending_write_via_mmap);
     }
 
     return 0;

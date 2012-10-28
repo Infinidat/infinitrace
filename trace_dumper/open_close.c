@@ -109,10 +109,7 @@ static int trace_open_file(struct trace_dumper_configuration_s *conf, struct tra
     char filename[sizeof(record_file->filename)];
 
     record_file->records_written = 0;
-    record_file->bytes_committed = 0;
-    record_file->mem_mapping = MAP_FAILED;
-    record_file->mapping_len = 0;
-    record_file->page_size = 0;
+    record_file->mapping_info = NULL;
 
     assert(NULL != filename_spec);
     if (!autogen_filenames) { /* filename_spec specifies a full filename */
@@ -167,7 +164,9 @@ int rotate_trace_file_if_necessary(struct trace_dumper_configuration_s *conf)
 		}
     }
 
-    if (conf->record_file.records_written < conf->max_records_per_file) {
+    /* TODO: Close the notification file when its size exceeds the limit. */
+
+    if (trace_dumper_record_file_state_is_ok(&conf->record_file) && (conf->record_file.records_written < conf->max_records_per_file)) {
         return 0;
     }
 
@@ -237,9 +236,12 @@ static int close_file(struct trace_record_file *file) {
 			}
 		}
 	}
-	else {
+
+	if (0 == rc) {
+		assert(is_closed(file));
+
 		/* Make sure we're not leaking memory mappings */
-		assert(MAP_FAILED == file->mem_mapping);
+		assert(NULL == file->mapping_info);
 	}
 
 	return rc;

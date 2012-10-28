@@ -61,9 +61,18 @@ enum trace_severity trace_str_to_severity_case_insensitive(const char *s)
 	TRACE_SEVERITY_DEF
 
 #undef COMP_FUNC
+	long long num;
+	bool_t is_num = trace_get_number(s, &num);
+
+	if (is_num && (num >= TRACE_SEV_INVALID) && (num <= TRACE_SEV__MAX)) {
+		return (enum trace_severity) num;
+	}
 
 	return TRACE_SEV_INVALID;
 }
+
+#undef TRACE_SEV_X
+
 
 bool_t trace_get_number(const char* str, long long *num) { /* home made atoll / strtoll */
     if (! (str && *str)) return FALSE;
@@ -96,4 +105,4 @@ bool_t trace_get_number(const char* str, long long *num) { /* home made atoll / 
     return TRUE;
 }
 
-#undef TRACE_SEV_X
+
