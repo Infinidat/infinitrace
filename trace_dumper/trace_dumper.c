@@ -36,6 +36,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "../trace_parser.h"
 #include "../min_max.h"
 #include "../array_length.h"
+#include "../trace_clock.h"
 #include <syslog.h>
 #include <time.h>
 #include <sys/mman.h>
@@ -72,18 +73,15 @@ static void severity_type_to_str(unsigned int severity_type, char *severity_str,
     }
 }
 
-static trace_ts_t trace_get_nsec_monotonic()
+static trace_ts_t get_nsec_monotonic()
 {
-	struct timespec now;
-	int rc = clock_gettime(CLOCK_MONOTONIC, &now);
-	if (0 != rc) {
+	const trace_ts_t now = trace_get_nsec_monotonic();
+	if ((trace_ts_t) -1 == now) {
 		syslog(LOG_ERR|LOG_USER, "Trace dumper has failed to read system time because of the following error: %s", strerror(errno));
-		return (trace_ts_t) -1;
 	}
 
-	return now.tv_nsec + TRACE_SECOND * now.tv_sec;
+	return now;
 }
-
 
 static void dump_online_statistics(const struct trace_dumper_configuration_s *conf)
 {
@@ -142,7 +140,7 @@ static void possibly_dump_online_statistics(struct trace_dumper_configuration_s 
 {
     static const unsigned long long STATS_DUMP_DELTA = TRACE_SECOND * 3;
 
-	trace_ts_t current_time = trace_get_nsec_monotonic();
+	trace_ts_t current_time = get_nsec_monotonic();
     if (! (conf->dump_online_statistics && current_time > conf->next_stats_dump_ts)) {
         return;
     }
@@ -482,7 +480,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
     int notification_records_invalidated = 0;
     int rc = 0;
 
-	cur_ts = trace_get_nsec_monotonic();
+	cur_ts = get_nsec_monotonic();
 	bool_t premature_call = (cur_ts < conf->next_flush_ts);
 	if (!premature_call) {
 		init_dump_header(conf, &dump_header_rec, cur_ts, &iovec, &num_iovecs, &total_written_records);
@@ -614,7 +612,7 @@ static void handle_overwrite(struct trace_dumper_configuration_s *conf)
         return;
     }
     
-    unsigned long long current_time = trace_get_nsec_monotonic();
+    unsigned long long current_time = get_nsec_monotonic();
     DEBUG("Checking overrwrite. Wrote", conf->record_file.records_written - conf->last_overwrite_test_record_count,
           "records in a second. Minimal severity is now", conf->minimal_allowed_severity);
     if (current_time - conf->last_overwrite_test_time < TRACE_SECOND) {
@@ -648,7 +646,7 @@ static void handle_overwrite(struct trace_dumper_configuration_s *conf)
 static int do_housekeeping_if_necessary(struct trace_dumper_configuration_s *conf)
 {
 	static const trace_ts_t HOUSEKEEPING_INTERVAL = 10000000; /* 10ms */
-	const trace_ts_t now = trace_get_nsec_monotonic();
+	const trace_ts_t now = get_nsec_monotonic();
 
 
 	if (now < conf->next_housekeeping_ts) {

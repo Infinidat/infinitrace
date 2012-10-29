@@ -1,7 +1,7 @@
 CFLAGS=-I. -c -Wall -g -std=gnu99 -fPIC -O2
 LIBTRACE_OBJS=trace_metadata_util.o cached_file.o trace_parser.o halt.o hashmap.o validator.o
-LIBTRACEUSER_OBJS=trace_metadata_util.o trace_user.o halt.o
-LIBTRACEUTIL_OBJS=opt_util.o trace_str_util.o
+LIBTRACEUSER_OBJS=trace_metadata_util.o trace_user.o halt.o trace_clock.o
+LIBTRACEUTIL_OBJS=opt_util.o trace_str_util.o trace_clock.o
 DUMPER_OBJS=trace_dumper/trace_dumper.o trace_dumper/filesystem.o trace_dumper/writer.o trace_dumper/buffers.o trace_dumper/init.o trace_dumper/open_close.o trace_dumper/metadata.o trace_user_stubs.o
 
 TARGET_PLATFORM=$(shell gcc -v 2>&1|fgrep Target|cut -d':' -d' ' -f2|cut -d'-' -f 2,3)

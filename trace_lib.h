@@ -32,30 +32,20 @@ extern "C" {
 #define TRACE_STATIC_DATA_REGION_NAME_FMT  TRACE_SHM_ID "%d" TRACE_STATIC_SUFFIX
 
 
-#include "trace_defs.h"
+#include "trace_clock.h"
 #include "macros.h"
-#include <sys/syscall.h>
-#include <time.h>    
-#include <string.h>
-
+#include <stdlib.h>
+#include <sys/types.h>
 #ifdef __repr__
 #undef __repr__
 #endif
-    
-#define __repr__ _trace_represent(unsigned int *buf_left, struct trace_record *_record, struct trace_record **__record_ptr, unsigned char **typed_buf, enum trace_severity __severity)
-#if !defined(_UNISTD_H) && defined(__linux__)
-#ifdef __cplusplus     
-    extern long int syscall (long int __sysno, ...) throw ();
-#else
-    extern long int syscall(long int __sysno, ...);
-#endif
-#endif    
 
-#define _O_RDONLY	00000000   
+/* Modify __repr__method declarations and definitions to use the argument list required by the trace runtime. */
+#define __repr__ _trace_represent(unsigned int *buf_left, struct trace_record *_record, struct trace_record **__record_ptr, unsigned char **typed_buf, enum trace_severity __severity)
 
 extern struct trace_buffer *current_trace_buffer;
 
-/* Identifiers that are created by the liner script (see ldwrap.py) and mark the beginning and end of data-structure arrays inserted
+/* Identifiers that are created by the linker script (see ldwrap.py) and mark the beginning and end of data-structure arrays inserted
  * by the instrumentation mechanism */
 extern struct trace_log_descriptor __static_log_information_start;
 extern struct trace_log_descriptor __static_log_information_end;
@@ -66,58 +56,33 @@ extern __thread unsigned short trace_current_nesting;
 
 /* An interface that the traced process can use at runtime to limit the severity of trace messages that will
  * be written to shared memory. */
-extern const struct trace_runtime_control *p_trace_runtime_control;
+extern const struct trace_runtime_control *const p_trace_runtime_control;
 
+static inline enum trace_severity trace_runtime_control_get_default_min_sev(void)
+{
+	return p_trace_runtime_control->default_min_sev;
+}
 /* Set the default severity threshold which can be overridden for the current thread */
 enum trace_severity trace_runtime_control_set_default_min_sev(enum trace_severity sev);
 
-/* Reset all per-subsystem thresholds and set the range of allowed subsytem IDs */
+/* Reset all per-subsystem thresholds and set the range of allowed subsystem IDs */
 int trace_runtime_control_set_subsystem_range(int low, int high);
 
 int trace_runtime_control_set_sev_threshold_for_subsystem(int subsystem_id, enum trace_severity sev);
 static inline enum trace_severity trace_runtime_control_get_sev_threshold_for_subsystem(int subsystem_id)
 {
-	if (NULL == p_trace_runtime_control->thresholds) {
-		return TRACE_SEV_INVALID;
-	}
-	TRACE_ASSERT((subsystem_id >= p_trace_runtime_control->subsystem_range[0]) && (subsystem_id <= p_trace_runtime_control->subsystem_range[1]));
-	return p_trace_runtime_control->thresholds[subsystem_id - p_trace_runtime_control->subsystem_range[0]];
+	return (NULL == p_trace_runtime_control->thresholds) ? TRACE_SEV_INVALID :
+			p_trace_runtime_control->thresholds[subsystem_id - p_trace_runtime_control->subsystem_range[0]];
 }
+
+/* Obtaining process and thread ids. */
+trace_pid_t trace_get_tid(void);
+trace_pid_t trace_get_pid(void);
 
 /* Allow the global default severity threshold to be overridden for the current thread by setting trace_thread_severity_threshold
  * to a value other than TRACE_SEV_INVALID */
 extern __thread enum trace_severity trace_thread_severity_threshold;
-
 /*** Supporting inline functions used by the trace code that that ccwrap.py injects into the source files ***/
-
-#ifdef __linux__
-
-static inline unsigned short int trace_get_pid(void)
-{
-    static __thread int pid_cache = 0;
-    if (pid_cache)
-		return pid_cache;
-	pid_cache = syscall(__NR_getpid);
-	return pid_cache;
-}
-    
-static inline unsigned short int trace_get_tid(void)
-{
-    static __thread int tid_cache = 0;
-    if (tid_cache)
-		return tid_cache;
-	tid_cache = syscall(__NR_gettid);
-	return tid_cache;
-}
-    
-static inline trace_ts_t trace_get_nsec(void)
-{
-     struct timespec tv;
-     clock_gettime(CLOCK_REALTIME, &tv);
-     return ((unsigned long long) tv.tv_sec * 1000000000) + tv.tv_nsec;
-}
-
-#endif
 
 static inline void trace_increment_nesting_level(void)
 {

@@ -21,6 +21,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include <sys/types.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <assert.h>
@@ -41,14 +42,32 @@ struct trace_buffer *current_trace_buffer = NULL;
 __thread unsigned short trace_current_nesting;
 __thread enum trace_severity trace_thread_severity_threshold = TRACE_SEV_INVALID;
 
-static struct trace_runtime_control runtime_control = 
+
+/* Runtime support functions for obtaining information from the system */
+trace_pid_t trace_get_tid(void)
+ {
+   static __thread pid_t tid_cache = 0;
+   if (! tid_cache) {
+	   tid_cache = syscall(__NR_gettid);
+   }
+	return (trace_pid_t) tid_cache;
+}
+
+trace_pid_t trace_get_pid(void)
+{
+	/* No use doing our own caching for process-id, since glibc already does it for us in a fork-safe way (see the man page) */
+    return (trace_pid_t) getpid();
+}
+
+
+static struct trace_runtime_control runtime_control =
 {
 	TRACE_SEV_INVALID,
 	{0, 0},
 	NULL
 };
 
-const struct trace_runtime_control *p_trace_runtime_control = &runtime_control;
+const struct trace_runtime_control *const p_trace_runtime_control = &runtime_control;
 
 enum trace_severity trace_runtime_control_set_default_min_sev(enum trace_severity sev)
 {
