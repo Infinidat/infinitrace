@@ -155,13 +155,11 @@ static int process_records(int fd)
 			break;
 		}
 
-		if (! (TRACE_TERMINATION_FIRST & rec.termination)) {
-			continue;
-		}
-
 		if (TRACE_REC_TYPE_TYPED == rec.rec_type) {
-			validate_timestamp(&rec);
-			data_records++;
+			if (TRACE_TERMINATION_FIRST & rec.termination) {
+				validate_timestamp(&rec);
+				data_records++;
+			}
 			continue;
 		}
 
@@ -174,12 +172,15 @@ static int process_records(int fd)
 		case TRACE_REC_TYPE_METADATA_PAYLOAD:
 			if (rec.termination & TRACE_TERMINATION_LAST) {
 				printf("n=%lu: \tEnd of metadata block of %u records for pid=%u\n", record_num, metadata_len, rec.pid);
+				metadata_len = 0;
 			}
 			else metadata_len++;
 			break;
 
 		case TRACE_REC_TYPE_METADATA_HEADER:
-			printf("n=%lu: \tStart of %u byte metadata block for pid=%u\n", record_num, rec.u.metadata.metadata_size_bytes, rec.pid);
+			printf("n=%lu: \tStart of %u byte (%u records) metadata block for pid=%u\n",
+					record_num, rec.u.metadata.metadata_size_bytes,
+					(rec.u.metadata.metadata_size_bytes + TRACE_RECORD_PAYLOAD_SIZE - 1) / TRACE_RECORD_PAYLOAD_SIZE, rec.pid);
 			metadata_len = 0;
 			break;
 
