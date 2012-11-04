@@ -495,7 +495,10 @@ static int accumulate_metadata(trace_parser_t *parser, const struct trace_record
         context->metadata_log_desciptor_size = get_log_descriptor_size(parser->file_info.format_version);
         context->descriptors = (struct trace_log_descriptor *) context->metadata->data;
         context->types = (struct trace_type_definition *) ((char *) context->metadata->data + context->metadata_log_desciptor_size * context->metadata->log_descriptor_count);
-        my_strncpy(context->name, context->metadata->name, sizeof(context->name));
+        if (strcmp(context->metadata->name, "xn-infinidat-core") == 0)
+            my_strncpy(context->name, "core", sizeof(context->name));
+        else
+            my_strncpy(context->name, context->metadata->name, sizeof(context->name));
         // context->name[sizeof(context->name) - 1] = '\0';
 
         if (0 != init_types_hash(context)) {
@@ -1016,9 +1019,11 @@ static int TRACE_PARSER__format_typed_record(
     // SAY_COL(out, ANSI_RESET);
     SAY_S  (out, ": ");
 
+    /*
     if (parser->indent)
         for (int i = 4*MAX(record->nesting, 0); i; i--)
             SAY_C  (out, ' ');
+    */
 
     int bytes_processed = 0;
     if (context)
