@@ -525,11 +525,19 @@ int trace_dumper_flush_mmapping(struct trace_record_file *record_file, bool_t sy
 		int rc = 0;
 		record_file->mapping_info->writing_complete = TRUE;
 
+		const char *action = NULL;
 		if (synchronous) {
 			rc = pthread_join(record_file->mapping_info->tid, NULL);
+			action = "Joined";
 		}
 		else {
 			rc = pthread_detach(record_file->mapping_info->tid);
+			action = "Detached";
+		}
+
+		if (0 != record_file->mapping_info->lasterr) {
+			syslog(LOG_WARNING|LOG_USER, "%s the worker thread for the file %s, which reported lasterr=%d (%s)",
+					action, record_file->filename, record_file->mapping_info->lasterr, strerror(record_file->mapping_info->lasterr));
 		}
 
 		if (0 != rc) {

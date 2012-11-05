@@ -144,6 +144,11 @@ bool_t trace_quota_is_enabled(const struct trace_dumper_configuration_s *conf)
 	return conf->max_records_per_logdir < LLONG_MAX;
 }
 
+static bool_t file_should_be_closed(const struct trace_dumper_configuration_s *conf, const struct trace_record_file *record_file)
+{
+	return (record_file->records_written >= conf->max_records_per_file) || ! trace_dumper_record_file_state_is_ok(record_file);
+}
+
 int rotate_trace_file_if_necessary(struct trace_dumper_configuration_s *conf)
 {
     int rc;
@@ -166,11 +171,13 @@ int rotate_trace_file_if_necessary(struct trace_dumper_configuration_s *conf)
 
     /* TODO: Close the notification file when its size exceeds the limit. */
 
-    if (trace_dumper_record_file_state_is_ok(&conf->record_file) && (conf->record_file.records_written < conf->max_records_per_file)) {
-        return 0;
+    if (file_should_be_closed(conf, &conf->record_file)) {
+        close_record_file(conf);
     }
 
-    close_record_file(conf);
+    if (file_should_be_closed(conf, &conf->notification_file)) {
+		close_notification_file(conf);
+	}
 
     /* Reopen journal file */
     rc = open_trace_file_if_necessary(conf);
@@ -242,6 +249,11 @@ static int close_file(struct trace_record_file *file) {
 
 		/* Make sure we're not leaking memory mappings */
 		assert(NULL == file->mapping_info);
+	}
+	else {
+		assert(! is_closed(file));
+		syslog(LOG_USER|LOG_ERR, "Trace dumper had error %d (%s) while trying to close the file %s",
+				errno, strerror(errno), file->filename);
 	}
 
 	return rc;
