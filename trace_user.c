@@ -85,7 +85,7 @@ int trace_runtime_control_set_sev_threshold_for_subsystem(int subsystem_id, enum
 		return -1;
 	}
 
-	runtime_control.thresholds[subsystem_id - p_trace_runtime_control->thresholds[0]] = sev;
+	runtime_control.thresholds[subsystem_id - runtime_control.subsystem_range[0]] = sev;
 	return 0;
 }
 
