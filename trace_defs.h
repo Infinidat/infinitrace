@@ -231,6 +231,7 @@ typedef unsigned short int trace_pid_t;
 
 /* Time-stamps and time intervals in nano-seconds */
 typedef unsigned long long trace_ts_t;
+#define TRACE_TIMESTAMP_FMT_STRING "%llu"
 
 struct trace_record {
 	/* 20 bytes header */

@@ -464,6 +464,32 @@ free_mapping_info:
 	return -1;
 }
 
+static void init_record_timestamps(struct trace_record_file *record_file) {
+	memset(&record_file->ts, 0, sizeof(record_file->ts));
+}
+
+static int log_dumper_performance_if_necessary(struct trace_record_file *record_file, size_t n_bytes)
+{
+	int rc = 0;
+	if (is_perf_logging_file_open(record_file)) {
+		const size_t n_recs_pending = (NULL == record_file->mapping_info) ? 0 : num_records_pending(record_file->mapping_info);
+		const struct trace_record_io_timestamps *const ts = &record_file->ts;
+		rc = fprintf(record_file->perf_log_file,
+				"\"%s\", "
+				TRACE_TIMESTAMP_FMT_STRING ", %lu, "
+				TRACE_TIMESTAMP_FMT_STRING ", "
+				TRACE_TIMESTAMP_FMT_STRING ", %lu\n",
+				trace_record_file_basename(record_file),
+				ts->started_memcpy,
+				n_bytes,
+				ts->finished_memcpy - ts->started_memcpy,
+				ts->finished_validation - ts->started_validation,
+				n_recs_pending);
+	}
+
+	return MIN(rc, 0);
+}
+
 int trace_dumper_write_via_mmapping(
 		const struct trace_dumper_configuration_s *conf,
 		struct trace_record_file *record_file,
@@ -492,6 +518,8 @@ int trace_dumper_write_via_mmapping(
 			return -1;
 		}
 
+		init_record_timestamps(record_file);
+
 		/* TODO: Introduce logic for waiting when the file-system is full, similar to trace_dumper_write_via_file_io() */
 		int rc = posix_fallocate64(record_file->fd, bytes_written, len);
 		if (0 != rc) {
@@ -502,10 +530,14 @@ int trace_dumper_write_via_mmapping(
 		}
 
 		struct trace_record *write_start = record_file->mapping_info->base + record_file->mapping_info->records_written;
+		record_file->ts.started_memcpy = trace_get_nsec();
 		assert((size_t)copy_iov_to_buffer(write_start, iov, iovcnt) == len);
+		record_file->ts.finished_memcpy = trace_get_nsec();
 
 		if (NULL != record_file->post_write_validator) {
+			record_file->ts.started_validation = trace_get_nsec();
 			record_file->validator_last_result = record_file->post_write_validator(write_start, len / TRACE_RECORD_SIZE, TRUE, record_file->validator_context);
+			record_file->ts.finished_validation = trace_get_nsec();
 			if (record_file->validator_last_result < 0) {
 				syslog(LOG_USER|LOG_ERR, "Validation returned error result %d while writing to file %s",
 						record_file->validator_last_result, record_file->filename);
@@ -515,6 +547,7 @@ int trace_dumper_write_via_mmapping(
 		}
 
 		record_file->mapping_info->records_written += len / TRACE_RECORD_SIZE;
+		log_dumper_performance_if_necessary(record_file, len);
 	}
 	return len;
 }

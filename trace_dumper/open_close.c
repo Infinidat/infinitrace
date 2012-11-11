@@ -20,6 +20,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/types.h>
 #include <errno.h>
 #include <syslog.h>
@@ -84,6 +85,9 @@ static int trace_write_header(struct trace_dumper_configuration_s *conf, struct 
 	return 0;
 }
 
+#define DUMP_FILE_SUFFIX ".dump"
+#define DUMP_FILE_SUFFIX_LEN (sizeof(DUMP_FILE_SUFFIX) - 1)
+
 static void generate_file_name(char *filename, const struct trace_dumper_configuration_s *conf, const char *filename_base)
 {
 	const size_t name_len = sizeof(conf->record_file.filename);
@@ -91,7 +95,7 @@ static void generate_file_name(char *filename, const struct trace_dumper_configu
 
 	if (trace_quota_is_enabled(conf)) {
 		/* The quota code parses the file names to get their creation time, so we have to preserve the format. */
-		snprintf(filename, name_len, "%s/trace.%llu.dump", filename_base, now_ms);
+		snprintf(filename, name_len, "%s/trace.%llu" DUMP_FILE_SUFFIX, filename_base, now_ms);
 	}
 	else {
 		struct tm now_tm;
@@ -99,8 +103,44 @@ static void generate_file_name(char *filename, const struct trace_dumper_configu
 		gmtime_r(&now_sec, &now_tm);
 		int len = snprintf(filename, name_len, "%s/trace.", filename_base);
 		len += strftime(filename + len, name_len - len, "%F--%H-%M-%S--", &now_tm);
-		snprintf(filename + len, name_len - len, "%02llu.dump", (now_ms % 1000) / 10);
+		snprintf(filename + len, name_len - len, "%02llu" DUMP_FILE_SUFFIX, (now_ms % 1000) / 10);
 	}
+}
+
+bool_t is_perf_logging_file_open(struct trace_record_file *record_file)
+{
+	if (NULL == record_file->perf_log_file) {
+		return FALSE;
+	}
+
+	int saved_errno = errno;
+	long rc = ftell(record_file->perf_log_file);
+	if (-1L == rc) {
+		if (EBADF == errno) { /* The file is not open yet */
+			errno = saved_errno;
+		}
+		else {  /* Some other, unexpected error occurred */
+			syslog(LOG_USER|LOG_WARNING, "Error trying to check the state of the performance logging file: %s", strerror(errno));
+		}
+		return FALSE;
+	}
+
+	assert(rc >= 0L);
+	return TRUE;
+}
+
+static int open_perf_logging_file(struct trace_record_file *record_file, const char *filename)
+{
+	record_file->perf_log_file = fopen(filename, "wt");
+	if (NULL == record_file->perf_log_file) {
+		return -1;
+	}
+
+	if (EOF == fputs("\"Filename\", \"ts\", \"num bytes\", \"memcpy duration\", \"validation duration\", \"records pending\"\n", record_file->perf_log_file)) {
+		fclose(record_file->perf_log_file);
+		return -1;
+	}
+	return 0;
 }
 
 static int trace_open_file(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, const char *filename_spec, bool_t autogen_filenames)
@@ -121,7 +161,19 @@ static int trace_open_file(struct trace_dumper_configuration_s *conf, struct tra
     	if (trace_create_dir_if_necessary(filename_spec) < 0) {
     		return -1;
     	}
+
     	generate_file_name(filename, conf, filename_spec);
+
+    	if ((conf->log_performance_to_file) && !is_perf_logging_file_open(record_file)) {
+    		static const char perf_log_suffix[] =  "_perf_log.csv";
+    		size_t len = strlen(filename) - DUMP_FILE_SUFFIX_LEN;
+    		char *perf_log_filename = alloca(len + sizeof(perf_log_suffix));
+    		memcpy(perf_log_filename, filename, len);
+    		strcpy(perf_log_filename + len, perf_log_suffix);
+    		if (0 != open_perf_logging_file(record_file, perf_log_filename)) {
+    			syslog(LOG_USER|LOG_ERR, "Failed writing to the performance logging file due to %s", strerror(errno));
+    		}
+    	}
     }
 
     INFO("Opening trace file:", filename);
@@ -226,6 +278,16 @@ int open_trace_file_if_necessary(struct trace_dumper_configuration_s *conf)
 	}
 
     return rc;
+}
+
+const char *trace_record_file_basename(const struct trace_record_file *record_file)
+{
+	const char *last_slash = strrchr(record_file->filename, '/');
+	if (NULL != last_slash) {
+		return last_slash + 1;
+	}
+
+	return record_file->filename;
 }
 
 bool_t is_closed(const struct trace_record_file *file) {

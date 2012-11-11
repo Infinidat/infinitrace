@@ -20,6 +20,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #ifndef TRACE_DUMPER_H_
 #define TRACE_DUMPER_H_
 
+#include <stdio.h>
 #include <sys/uio.h>
 
 #include "../bool.h"
@@ -101,6 +102,12 @@ struct trace_mapped_buffer {
 #define TRACE_FILE_IMMEDIATE_FLUSH_THRESHOLD	(TRACE_FILE_MAX_RECORDS_PER_CHUNK / 2)
 
 struct trace_output_mmap_info;  /* See writer.h for its full definition */
+struct trace_record_io_timestamps {
+	trace_ts_t started_memcpy;
+	trace_ts_t finished_memcpy;
+	trace_ts_t started_validation;
+	trace_ts_t finished_validation;
+};
 
 struct trace_record_file {
     unsigned long records_written;
@@ -113,6 +120,8 @@ struct trace_record_file {
     trace_post_write_validator post_write_validator;
     void *validator_context;
     int validator_last_result;
+    FILE *perf_log_file;
+    struct trace_record_io_timestamps ts;
 };
 
 /* Values for the request_flags field of struct trace_dumper_configuration_s below */
@@ -166,6 +175,7 @@ struct trace_dumper_configuration_s {
     unsigned int error_online;
     unsigned int syslog;
     unsigned int log_details;
+    bool_t		 log_performance_to_file;
     bool_t	     low_latency_write;
     trace_ts_t 	 start_time;
     unsigned int no_color_specified;

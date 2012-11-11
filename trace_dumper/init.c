@@ -20,6 +20,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 #include <getopt.h>
 #include <signal.h>
@@ -60,6 +61,7 @@ static const char usage[] = {
     " -s  --syslog                          In online mode, write the entries to syslog instead of displaying them \n" \
     " -q  --quota-size [bytes/percent]      Specify the total number of bytes that may be taken up by trace files  \n" \
     " -r  --record-write-limit [records]    Specify maximal amount of records that can be written per-second (unlimited if not specified)  \n" \
+    " -I  --instrument[option]               Turn on one of the dumper's instrumentation options. Available option values: time_writes \n"     \
     " -v  --dump-online-statistics          Dump buffer statistics \n"
     "\n"};
 
@@ -82,6 +84,7 @@ static const struct option longopts[] = {
     { "notification-level", required_argument, 0, 'L'},
     { "quota-size", required_argument, 0, 'q'},
     { "record-write-limit", required_argument, 0, 'r'},
+    { "--instrument", required_argument, 0, 'I'},
     { "dump-online-statistics", 0, 0, 'v'},
 
 	{ 0, 0, 0, 0}
@@ -170,6 +173,15 @@ int parse_commandline(struct trace_dumper_configuration_s *conf, int argc, char 
         case 'e':
             conf->error_online = 1;
             break;
+        case 'I':
+        	if (0 == strcasecmp(optarg, "time_writes")) {
+        		conf->log_performance_to_file = 1;
+        	}
+        	else {
+        		fprintf(stderr, "Unrecognized trace dumper instrumentation option: %s", optarg);
+        		return -1;
+        	}
+        	break;
         case 'v':
             conf->dump_online_statistics = 1;
             break;
@@ -253,6 +265,7 @@ static int init_record_file(struct trace_record_file *record_file, size_t initia
 	record_file->mapping_info = NULL;
 	record_file->post_write_validator = NULL;
 	record_file->validator_context = NULL;
+	record_file->perf_log_file = NULL;
 	record_file->iov_allocated_len = (initial_iov_len > 0U) ? initial_iov_len : (size_t) sysconf(_SC_IOV_MAX);
 	record_file->iov = calloc(record_file->iov_allocated_len, sizeof(struct iovec));
 	if (NULL == record_file->iov) {

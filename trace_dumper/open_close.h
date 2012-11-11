@@ -34,6 +34,10 @@ int close_record_file(struct trace_dumper_configuration_s *conf);
 int close_notification_file(struct trace_dumper_configuration_s *conf);
 int close_all_files(struct trace_dumper_configuration_s *conf);
 
+bool_t is_perf_logging_file_open(struct trace_record_file *record_file);
+
+const char *trace_record_file_basename(const struct trace_record_file *record_file);
+
 /* Functions for performing file operations be performed asynchronously. See enum trace_request_flags for the supported operations.
  * The handling of the requested operations word is thread safe. */
 
