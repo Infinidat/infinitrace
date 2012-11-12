@@ -18,6 +18,8 @@
    limitations under the License.
  */
 
+#define _LARGEFILE64_SOURCE
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -297,11 +299,15 @@ bool_t is_closed(const struct trace_record_file *file) {
 static int close_file(struct trace_record_file *file) {
 	int rc = 0;
 	if (!is_closed(file)) {
+		trace_dumper_update_written_record_count(file);
 		rc = trace_dumper_flush_mmapping(file, FALSE);
 		if (0 == rc) {
-			rc = close(file->fd);
+			rc = ftruncate64(file->fd, TRACE_RECORD_SIZE * file->records_written);
 			if (0 == rc) {
-				file->fd = -1;
+				rc = close(file->fd);
+				if (0 == rc) {
+					file->fd = -1;
+				}
 			}
 		}
 	}

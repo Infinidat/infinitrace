@@ -446,6 +446,13 @@ static int setup_mmapping(const struct trace_dumper_configuration_s *conf, struc
 		goto free_mapping_info;
 	}
 	record_file->mapping_info->mapping_len_bytes = len;
+
+	if (0 != ftruncate64(record_file->fd, record_file->mapping_info->mapping_len_bytes)) {
+		syslog(LOG_USER|LOG_ERR, "Failed to truncate the file %s to %lu bytes due to %s",
+				record_file->filename, record_file->mapping_info->mapping_len_bytes, strerror(errno));
+		goto unmap_file;
+	}
+
 	int rc = pthread_create(&record_file->mapping_info->tid, NULL, msync_mmapped_data, record_file->mapping_info);
 	if (0 != rc) {
 		goto errno_from_pthread;
@@ -456,7 +463,10 @@ static int setup_mmapping(const struct trace_dumper_configuration_s *conf, struc
 /* Clean-up in case of errors */
 errno_from_pthread:
 	errno = rc;
+
+unmap_file:
 	assert(0 == munmap(record_file->mapping_info->base, record_file->mapping_info->mapping_len_bytes));
+	ftruncate(record_file->fd, 0);
 
 free_mapping_info:
 	free(record_file->mapping_info);
@@ -502,13 +512,14 @@ int trace_dumper_write_via_mmapping(
 	assert(MAP_FAILED != record_file->mapping_info->base);
 	assert(0 != record_file->mapping_info->tid);
 
-	off64_t bytes_written = record_file->mapping_info->records_written * TRACE_RECORD_SIZE;
+	size_t bytes_written = record_file->mapping_info->records_written * TRACE_RECORD_SIZE;
 	size_t len = total_iovec_len(iov, iovcnt);
 	assert(0 == (len % TRACE_RECORD_SIZE));
 	assert(len <= INT_MAX);
 
 	if (len > 0) {
-		if (bytes_written + len > record_file->mapping_info->mapping_len_bytes) {
+		size_t new_size = bytes_written + len;
+		if (new_size > record_file->mapping_info->mapping_len_bytes) {
 			errno = EFBIG;
 			return -1;
 		}
@@ -519,15 +530,6 @@ int trace_dumper_write_via_mmapping(
 		}
 
 		init_record_timestamps(record_file);
-
-		/* TODO: Introduce logic for waiting when the file-system is full, similar to trace_dumper_write_via_file_io() */
-		int rc = posix_fallocate64(record_file->fd, bytes_written, len);
-		if (0 != rc) {
-			errno = rc;
-			syslog(LOG_USER|LOG_ERR, "Failed to increase the file %s from %ld by %lu using posix_fallocate due to %s",
-					record_file->filename, bytes_written, len, strerror(rc));
-			return -1;
-		}
 
 		struct trace_record *write_start = record_file->mapping_info->base + record_file->mapping_info->records_written;
 		record_file->ts.started_memcpy = trace_get_nsec();
