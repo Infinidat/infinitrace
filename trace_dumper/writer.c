@@ -521,31 +521,37 @@ int trace_dumper_write_via_mmapping(
 
 int trace_dumper_flush_mmapping(struct trace_record_file *record_file, bool_t synchronous)
 {
-	if (NULL != record_file->mapping_info) {
+	struct trace_output_mmap_info *mapping_info = record_file->mapping_info;
+	if (NULL != mapping_info) {
 		int rc = 0;
-		record_file->mapping_info->writing_complete = TRUE;
+		pthread_t worker_tid = mapping_info->tid;
+		int lasterr = mapping_info->lasterr;
+
+		record_file->mapping_info = NULL;
+		mapping_info->writing_complete = TRUE;
+		mapping_info = NULL;
 
 		const char *action = NULL;
 		if (synchronous) {
-			rc = pthread_join(record_file->mapping_info->tid, NULL);
-			action = "Joined";
+			rc = pthread_join(worker_tid, NULL);
+			action = "joining";
 		}
 		else {
-			rc = pthread_detach(record_file->mapping_info->tid);
-			action = "Detached";
+			rc = pthread_detach(worker_tid);
+			action = "detaching";
 		}
 
-		if (0 != record_file->mapping_info->lasterr) {
-			syslog(LOG_WARNING|LOG_USER, "%s the worker thread for the file %s, which reported lasterr=%d (%s)",
-					action, record_file->filename, record_file->mapping_info->lasterr, strerror(record_file->mapping_info->lasterr));
+		if (0 != lasterr) {
+			syslog(LOG_WARNING|LOG_USER, "Found lasterr=%d (%s) found while %s the worker thread for the file %s. ",
+					lasterr, strerror(lasterr), action, record_file->filename);
 		}
 
 		if (0 != rc) {
+			syslog(LOG_WARNING|LOG_USER, "Error %d (%s) encountered while %s the worker thread for the file %s.",
+					rc, strerror(rc), action, record_file->filename);
 			errno = rc;
 			return -1;
 		}
-
-		record_file->mapping_info = NULL;
 	}
 	return 0;
 }
