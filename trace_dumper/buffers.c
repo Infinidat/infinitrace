@@ -362,9 +362,42 @@ static bool_t process_exists(unsigned short pid) {
 }
 
 
+static void check_discarded_buffer(const struct trace_mapped_buffer *mapped_buffer)
+{
+	struct trace_records_mutable_metadata mutab;
+	memcpy(&mutab, (const void *)(mapped_buffer->mapped_records->mutab), sizeof(mutab));
+	const volatile struct trace_record *last_rec = &mapped_buffer->mapped_records->records[mutab.last_committed_record & mapped_buffer->mapped_records->imutab->max_records_mask];
+
+	bool_t buffer_was_active = (-1UL != mutab.last_committed_record);
+	trace_pid_t pid = mapped_buffer->pid;
+	const char * proc_name = mapped_buffer->name;
+
+	if (mapped_buffer->dead) {
+		assert(mutab.last_committed_record + 1UL == mapped_buffer->mapped_records->next_flush_record);
+		assert(mutab.last_committed_record + 1UL == mapped_buffer->mapped_records->current_read_record);
+		if (buffer_was_active) {
+			assert(mutab.latest_flushed_ts == last_rec->ts);
+		}
+	}
+
+	if (buffer_was_active) {
+		if (! (last_rec->termination & TRACE_TERMINATION_LAST)) {
+			syslog(LOG_USER|LOG_WARNING, "While discarding the buffer for %s (pid %d) found that the last record number %lu was untermintated",
+					proc_name, pid, mutab.last_committed_record);
+		}
+	}
+
+	trace_record_counter_t uncommitted_records = mutab.current_record - mutab.last_committed_record - 1;
+	if (uncommitted_records > 0) {
+		syslog(LOG_USER|LOG_WARNING, "The process %s (pid %d) has died leaving %lu records allocated but not committed",
+				proc_name, pid, uncommitted_records);
+	}
+}
+
 void discard_buffer(struct trace_dumper_configuration_s *conf, struct trace_mapped_buffer *mapped_buffer)
 {
     INFO("Discarding pid", mapped_buffer->pid, mapped_buffer->name);
+    check_discarded_buffer(mapped_buffer);
     free_metadata(&mapped_buffer->metadata);
 
     int rc = munmap(mapped_buffer->metadata.base_address, mapped_buffer->metadata.size);
