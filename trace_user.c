@@ -44,7 +44,7 @@ __thread enum trace_severity trace_thread_severity_threshold = TRACE_SEV_INVALID
 
 
 /* Runtime support functions for obtaining information from the system */
-trace_pid_t trace_get_tid(void)
+static trace_pid_t trace_get_tid(void)
  {
    static __thread pid_t tid_cache = 0;
    if (! tid_cache) {
@@ -53,7 +53,7 @@ trace_pid_t trace_get_tid(void)
 	return (trace_pid_t) tid_cache;
 }
 
-trace_pid_t trace_get_pid(void)
+static trace_pid_t trace_get_pid(void)
 {
 	/* No use doing our own caching for process-id, since glibc already does it for us in a fork-safe way (see the man page) */
     return (trace_pid_t) getpid();
@@ -64,7 +64,9 @@ static struct trace_runtime_control runtime_control =
 {
 	TRACE_SEV_INVALID,
 	{0, 0},
-	NULL
+	NULL,
+	64,
+	3
 };
 
 const struct trace_runtime_control *const p_trace_runtime_control = &runtime_control;
@@ -121,6 +123,22 @@ int trace_runtime_control_set_subsystem_range(int low, int high)
 
 /* Runtime support functions called when writing traces to shared-memory */
 
+static inline void set_current_trace_buffer_ptr(struct trace_buffer *trace_buffer_ptr)
+{
+    current_trace_buffer = trace_buffer_ptr;
+}
+
+int trace_runtime_control_configure_buffer_allocation(unsigned initial_records_per_trace, unsigned records_array_increase_factor)
+{
+	if ((initial_records_per_trace < 1) || (records_array_increase_factor < 2)) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	runtime_control.initial_records_per_trace     = initial_records_per_trace;
+	runtime_control.records_array_increase_factor = records_array_increase_factor;
+	return 0;
+}
 
 static struct trace_records *trace_get_records(enum trace_severity severity)
 {
@@ -138,25 +156,9 @@ static struct trace_records *trace_get_records(enum trace_severity severity)
 	}
 }
 
-
-/* TODO: Consider allowing an option for lossless tracing. */
-struct trace_record *trace_get_record(enum trace_severity severity, trace_generation_t *generation)
+static inline trace_generation_t trace_get_generation(trace_record_counter_t record_num, const struct trace_records_immutable_metadata *imutab)
 {
-
-	struct trace_record *record;
-	trace_record_counter_t record_index;
-	struct trace_records *records = trace_get_records(severity);
-
-	/* To implement lossless mode: Make sure we don't overwrite data beyond
-	   records->imutab.latest_flush_ts */
-
-    record_index = __sync_fetch_and_add(&records->mutab.current_record, 1);
-    *generation = (trace_generation_t) (record_index >> records->imutab.max_records_shift);
-    record_index &= records->imutab.max_records_mask;
-
-    struct trace_records_immutable_metadata mu = records->imutab;
-	record = &records->records[record_index % mu.max_records];
-	return record;
+	return (trace_generation_t)(record_num >> imutab->max_records_shift);
 }
 
 static inline int trace_compare_generation(trace_generation_t a, trace_generation_t b)
@@ -179,38 +181,9 @@ static inline int trace_compare_generation(trace_generation_t a, trace_generatio
 	return 0;
 }
 
-void trace_commit_record(struct trace_record *target_record, const struct trace_record *source_record, enum trace_severity severity)
+
+static void update_last_committed_record(struct trace_records *records, trace_record_counter_t new_index)
 {
-	/* Check for malformed records. */
-	TRACE_ASSERT((0 == (source_record->termination & TRACE_TERMINATION_FIRST)) || (source_record->u.typed.log_id != -1U));
-
-	/* One would expect to be able to extract the severity value from the source record. Unfortunately for some records the severity value
-	 * written inside the record differs from the one used to place it. See IBOX15-133 for further details. */
-	struct trace_records *records = trace_get_records(severity);
-
-	/* If generation > 0 we assume the buffer should contain valid data, so perform some validity checks */
-	if (source_record->generation > 0) {
-		/* If the target record already contains a newer record by another thread, silently discard the trace data. */
-		if (trace_compare_generation(source_record->generation, target_record->generation) > 0) {
-			__sync_fetch_and_add(&records->mutab.records_silently_discarded, 1);
-			return;
-		}
-
-		/* Check if another thread had already committed the exact same record. */
-		else TRACE_ASSERT(source_record->generation != target_record->generation);
-	}
-	__builtin_memcpy(target_record, source_record, sizeof(*source_record));
-
-	/* Only records that terminate a sequence should be marked as committed. */
-	if ((TRACE_TERMINATION_LAST & source_record->termination) == 0) {
-		return;
-	}
-
-	unsigned record_pos = target_record - records->records;
-	TRACE_ASSERT(record_pos < records->imutab.max_records);
-
-	trace_record_counter_t new_index = ((trace_record_counter_t)(source_record->generation) << records->imutab.max_records_shift) + record_pos;
-
 	__sync_synchronize();
 
 	trace_record_counter_t expected_value;
@@ -241,11 +214,96 @@ void trace_commit_record(struct trace_record *target_record, const struct trace_
 }
 
 
+void trace_commit_records(
+		struct trace_record *source_records,
+		size_t n_records,
+		enum trace_severity severity)
+{
+	TRACE_ASSERT(n_records > 0);
+	TRACE_ASSERT(NULL != source_records);
+
+	const trace_ts_t  ts  = trace_get_nsec();
+	const trace_pid_t pid = trace_get_pid();
+	const trace_pid_t tid = trace_get_tid();
+
+	struct trace_records *const records = trace_get_records(severity);
+	TRACE_ASSERT((1U << severity) & records->imutab.severity_type);
+
+
+	/* TODO: Consider allowing an option for lossless tracing. */
+	const trace_record_counter_t base_index = __sync_fetch_and_add(&records->mutab.current_record, n_records);
+
+	size_t i;
+	for (i = 0; i < n_records; i++) {
+		source_records[i].termination = (i > 0) ? 0 : TRACE_TERMINATION_FIRST;
+		if (n_records - 1 == i) {
+			source_records[i].termination |= TRACE_TERMINATION_LAST;
+		}
+		/* TODO: This could be a good place to pre-fetch the next trace record using e.g. __builtin_prefetch */
+		source_records[i].ts = ts;
+		source_records[i].pid = pid;
+		source_records[i].tid = tid;
+		source_records[i].severity = severity;
+		source_records[i].rec_type = TRACE_REC_TYPE_TYPED;
+
+		const trace_record_counter_t record_index = base_index + i;
+		source_records[i].generation = trace_get_generation(record_index, &records->imutab);
+		struct trace_record *target = records->records + (record_index & records->imutab.max_records_mask);
+
+		/* TODO: Consider writing a custom copy function using _mm_stream_si128 or similar. This will avoid needless thrashing of the CPU cache on writes. */
+		memcpy(target, source_records + i, sizeof(*target));
+	}
+
+	update_last_committed_record(records, base_index + n_records - 1);
+}
+
+struct trace_record *trace_realloc_records_array(struct trace_record *records, unsigned int* n_records, const struct trace_record *initial_array)
+{
+	assert(runtime_control.records_array_increase_factor > 1);
+	if ((NULL == records) || (NULL == n_records)) {
+		errno = EFAULT;
+		return NULL;
+	}
+
+	if (*n_records < 1) {
+		errno = EINVAL;
+		return NULL;
+	}
+
+	const size_t old_size = TRACE_RECORD_SIZE * *n_records;
+	const size_t new_size = old_size * runtime_control.records_array_increase_factor;
+	struct trace_record *new_records = NULL;
+
+	if (records == initial_array) {  /* The data is in an array allocated on the stack */
+		new_records = malloc(new_size);
+		if (NULL != new_records) {
+			memcpy(new_records, records, old_size);
+		}
+	}
+	else {
+		new_records = realloc(records, new_size);
+	}
+
+	if (NULL != new_records) {
+		*n_records = new_size;
+		return new_records;
+	}
+	else {
+		return records;
+	}
+}
+
+void trace_free_records_array(struct trace_record *records, const struct trace_record *initial_array)
+{
+	if (records != initial_array) {  /* A record buffer had been dynamically allocated */
+		free(records);
+	}
+}
 
 
 #define ALLOC_STRING(dest, source)                      \
     do {                                                \
-    unsigned int str_size = __builtin_strlen(source) + 1;   \
+    const size_t str_size = __builtin_strlen(source) + 1;   \
     __builtin_memcpy(*string_table, source, str_size); \
     dest = *string_table;                               \
     *string_table += str_size;      \

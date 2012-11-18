@@ -1899,7 +1899,7 @@ static int dumper_event_handler(trace_parser_t *parser, enum trace_parser_event_
         return 0;
     }
 
-    char formatted_record[4096];
+    char formatted_record[8192];
     struct parser_complete_typed_record *complete_typed_record = (struct parser_complete_typed_record *) event_data;
     int  formatted_len = TRACE_PARSER__format_typed_record(parser, complete_typed_record->buffer, complete_typed_record->record, formatted_record, sizeof(formatted_record));
     if (formatted_len < 0) {

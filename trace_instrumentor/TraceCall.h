@@ -171,14 +171,14 @@ TraceParam(llvm::raw_ostream &out, DiagnosticsEngine &_Diags, ASTContext &_ast, 
         return os.str();
     }
 
-    bool isEnum() {
+    bool isEnum() const {
         if (flags & TRACE_PARAM_FLAG_ENUM) {
             return true;
         } else {
             return false;
         }
     }
-    bool isSimple() {
+    bool isSimple() const {
         if (flags & (TRACE_PARAM_FLAG_ENUM | TRACE_PARAM_FLAG_NUM_8 | TRACE_PARAM_FLAG_NUM_16 | TRACE_PARAM_FLAG_NUM_32 | TRACE_PARAM_FLAG_NUM_64) && !(flags & TRACE_PARAM_FLAG_VARRAY)) {
             return true;
         } else {
@@ -186,7 +186,7 @@ TraceParam(llvm::raw_ostream &out, DiagnosticsEngine &_Diags, ASTContext &_ast, 
         }
     }
 
-    bool isVarString() {
+    bool isVarString() const {
         if (flags & TRACE_PARAM_FLAG_STR) {
             return true;
         } else {
@@ -194,7 +194,7 @@ TraceParam(llvm::raw_ostream &out, DiagnosticsEngine &_Diags, ASTContext &_ast, 
         }
     }
 
-    bool isBuffer() {
+    bool isBuffer() const {
         if (flags & TRACE_PARAM_FLAG_VARRAY) {
             return true;
         } else {
@@ -266,26 +266,26 @@ private:
     bool prepareSingleTraceParam(const Expr *trace_param, TraceParam &parsed_trace_param);
     void replaceExpr(const Expr *expr, std::string replacement);
 
-    std::string getSeverity();
-    std::string getSeverityExpr();
+    std::string getSeverity() const;
+    std::string getSeverityExpr() const;
     std::string getTypeDefinitionExternDeclratations();
-    std::string genMIN(std::string &a, std::string &b);
+    static std::string genMIN(const std::string &a, const std::string &b);
     
-    std::string initializeIntermediateTypedRecord(const std::string& deref_operator);
-    std::string initializeOpeningTypedRecord(const std::string& deref_operator);
+    std::string initializeIntermediateTypedRecord(const std::string& deref_operator) const;
+    std::string initializeOpeningTypedRecord(const std::string& deref_operator) const;
 
     std::string constlength_writeSimpleValue(std::string &expression, std::string &type_name, bool is_pointer, bool is_reference, unsigned int size, unsigned int *buf_left);
-    std::string constlength_commitAndAllocateRecord(unsigned int *buf_left);
-    std::string constlength_getRecord();
+    std::string constlength_goToNextRecord(unsigned int *buf_left) const;
     std::string constlength_initializeTypedRecord(unsigned int *buf_left);
-    std::string constlength_commitRecord();
 
     std::string varlength_writeSimpleValue(std::string &expression, std::string &type_name, bool is_pointer, bool is_reference);
-    std::string varlength_commitAndAllocateRecord();
-    std::string varlength_getRecord();
+    std::string varlength_goToNextRecord() const;
     std::string varlength_initializeTypedRecord();
-    std::string varlength_commitRecord();
-    bool constantSizeTrace();
+
+    std::string allocRecordArray() const;
+    std::string advanceRecordArrayIdx() const;
+    std::string commitRecords() const;
+    bool constantSizeTrace() const;
     void unknownTraceParam(const Expr *trace_param);
 
 

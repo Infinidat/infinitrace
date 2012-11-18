@@ -41,7 +41,9 @@ extern "C" {
 #endif
 
 /* Modify __repr__method declarations and definitions to use the argument list required by the trace runtime. */
-#define __repr__ _trace_represent(unsigned int *buf_left, struct trace_record *_record, struct trace_record **__record_ptr, unsigned char **typed_buf, enum trace_severity __severity)
+#define __repr__ _trace_represent( \
+		unsigned int *__buf_left, unsigned char **__typed_buf, \
+		struct trace_record* __records, const struct trace_record *__records_initial_array, unsigned int& __rec_idx, unsigned int& __records_array_len)
 
 extern struct trace_buffer *current_trace_buffer;
 
@@ -51,8 +53,15 @@ extern struct trace_log_descriptor __static_log_information_start;
 extern struct trace_log_descriptor __static_log_information_end;
 extern struct trace_type_definition *__type_information_start;
 
-/* Function call nesting level for function trace display */
-extern __thread unsigned short trace_current_nesting; 
+
+/* Used to control at runtime what data will be written to the trace */
+struct trace_runtime_control {
+	enum trace_severity default_min_sev; /* Minimum severity for reporting. Per-subsystem definitions take precedence over it */
+	int  subsystem_range[2];
+	enum trace_severity *thresholds;
+	unsigned initial_records_per_trace;
+	unsigned records_array_increase_factor;
+};
 
 /* An interface that the traced process can use at runtime to limit the severity of trace messages that will
  * be written to shared memory. */
@@ -75,13 +84,15 @@ static inline enum trace_severity trace_runtime_control_get_sev_threshold_for_su
 			p_trace_runtime_control->thresholds[subsystem_id - p_trace_runtime_control->subsystem_range[0]];
 }
 
-/* Obtaining process and thread ids. */
-trace_pid_t trace_get_tid(void);
-trace_pid_t trace_get_pid(void);
+int trace_runtime_control_configure_buffer_allocation(unsigned initial_records_per_trace, unsigned records_array_increase_factor);
 
 /* Allow the global default severity threshold to be overridden for the current thread by setting trace_thread_severity_threshold
  * to a value other than TRACE_SEV_INVALID */
 extern __thread enum trace_severity trace_thread_severity_threshold;
+
+/* Function call nesting level for function trace display */
+extern __thread unsigned short trace_current_nesting;
+
 /*** Supporting inline functions used by the trace code that that ccwrap.py injects into the source files ***/
 
 static inline void trace_increment_nesting_level(void)
@@ -153,20 +164,20 @@ struct trace_buffer {
     } u;
 };
 
-static inline void set_current_trace_buffer_ptr(struct trace_buffer *trace_buffer_ptr)
-{
-    current_trace_buffer = trace_buffer_ptr;
-}
+/* Runtime support functions used by the auto-generated code inserted during trace instrumentation. Using them otherwise is not recommended, as they may change. */
 
-static inline trace_generation_t trace_get_generation(trace_record_counter_t record_num, const struct trace_records_immutable_metadata *imutab)
-{
-	return (trace_generation_t)(record_num >> imutab->max_records_shift);
-}
+/* Fill-in some of the record fields (termination, severity, pid, tid, timestamp and generation) and write them as a contiguous sequence. */
+void trace_commit_records(
+		struct trace_record *source_records,
+		size_t n_records,
+		enum trace_severity severity);
 
-struct trace_record *trace_get_record(enum trace_severity severity, trace_generation_t *generation);
-void trace_commit_record(struct trace_record *target_record, const struct trace_record *source_record, enum trace_severity severity);
+/* Handle allocation of a temporary array to hold the records in case the amount of records allocated on the stack is insufficient */
+struct trace_record *trace_realloc_records_array(struct trace_record *records, unsigned int* n_records, const struct trace_record *initial_array);
+void trace_free_records_array(struct trace_record *records, const struct trace_record *initial_array);
 
 #ifdef __cplusplus
 }
 #endif
 #endif /* __TRACE_LIB_H__ */
+
