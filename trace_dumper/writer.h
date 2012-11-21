@@ -30,15 +30,17 @@ struct trace_output_mmap_info {
 	volatile trace_record_counter_t records_written;
 	volatile bool_t writing_complete;
     pthread_t tid;
-    long page_size;
+    size_t preferred_write_bytes;
 
-    /* Fields writable only by the worker thread */
+    /* Fields writable only by the worker thread (except initialization) */
     volatile trace_record_counter_t records_committed;
     volatile int lasterr;
+    trace_ts_t next_flush_ts;
 
     /* Initialized by the main thread, deleted by the worker thread */
 	struct trace_record *base;
     size_t mapping_len_bytes;
+    const struct trace_dumper_configuration_s *global_conf;
  };
 
 size_t total_iovec_len(const struct iovec *iov, int iovcnt);

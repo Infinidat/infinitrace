@@ -290,6 +290,8 @@ int init_dumper(struct trace_dumper_configuration_s *conf)
     /* TODO: Make these configurable */
     conf->notifications_subdir = "warn";
     conf->log_details = FALSE;
+    conf->max_flush_interval = 3 * TRACE_SECOND;
+    conf->preferred_flush_bytes = 1U << 16;
 
     if ((! conf->fixed_output_filename) && (trace_create_dir_if_necessary(conf->logs_base) != 0)) {
         return EX_CANTCREAT;

@@ -41,7 +41,6 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 
 // The threshold stands at about 60 MBps
 #define OVERWRITE_THRESHOLD_PER_SECOND (1000000)
-#define TRACE_SECOND (1000000000ULL)
 #define RELAXATION_BACKOFF (TRACE_SECOND * 10)
 
 struct trace_mapped_metadata {
@@ -201,6 +200,11 @@ struct trace_dumper_configuration_s {
     trace_ts_t ts_flush_delta;
     trace_ts_t next_stats_dump_ts;
     trace_ts_t next_housekeeping_ts;
+
+    /* Parameters used to size and time calls to msync() in low-latency mode */
+    trace_ts_t max_flush_interval;
+    size_t     preferred_flush_bytes;
+
     struct trace_parser parser;
     BufferFilter filtered_buffers;
     MappedBuffers mapped_buffers;

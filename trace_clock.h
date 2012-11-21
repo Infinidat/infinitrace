@@ -26,6 +26,14 @@ Written by: Yitzik Casapu
 
 #include "trace_defs.h"
 
+/* Constants for time durations.
+ * Note: Using defines and not an enum, since enumerations with values too large to be represented using 32 bits are not portable */
+#define TRACE_SECOND (1000000000LL)
+#define TRACE_MINUTE (TRACE_SECOND * 60)
+#define TRACE_HOUR   (TRACE_MINUTE * 60)
+#define TRACE_DAY    (TRACE_HOUR * 24)
+#define TRACE_YEAR   (TRACE_DAY * 365)
+
 trace_ts_t trace_get_nsec(void);
 trace_ts_t trace_get_nsec_monotonic(void);
 

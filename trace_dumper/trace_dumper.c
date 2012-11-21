@@ -621,6 +621,8 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 					conf->record_file.validator_last_result, conf->record_file.filename,
 					notification_records_invalidated, conf->notification_file.filename,
 					min_remaining);
+			conf->record_file.validator_last_result = 0;
+			notification_records_invalidated = 0;
 		}
 
 		/* The latest chunk written has successfully output information about any discarded records, so reset the counters. */

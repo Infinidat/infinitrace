@@ -48,6 +48,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "colors.h"
 #include "string.h"
 #include "trace_str_util.h"
+#include "trace_clock.h"
 
 CREATE_LIST_IMPLEMENTATION(BufferParseContextList, struct trace_parser_buffer_context)
 CREATE_LIST_IMPLEMENTATION(RecordsAccumulatorList, struct trace_record_accumulator)
@@ -57,12 +58,6 @@ CREATE_LIST_IMPLEMENTATION(RecordsAccumulatorList, struct trace_record_accumulat
 #else
 #define MAX_ULLONG     18446744073709551615ULL
 #endif
-
-#define TRACE_SECOND (1000000000)
-#define TRACE_MINUTE (TRACE_SECOND * 60)
-#define TRACE_HOUR   (TRACE_MINUTE * 60)
-#define TRACE_DAY    (TRACE_HOUR * 24)
-#define TRACE_YEAR   (TRACE_DAY * 365)
 
 static int my_strncpy(char* formatted_record, const char* source, int max_size) {
     // Heaven knows why, but this is much faster than strncpy
