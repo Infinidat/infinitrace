@@ -43,6 +43,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include <assert.h>
 #include "../trace_lib.h"
 #include "../trace_user.h"
+#include "../trace_str_util.h"
 #include "trace_dumper.h"
 #include "filesystem.h"
 #include "writer.h"
@@ -50,12 +51,6 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "init.h"
 #include "open_close.h"
 #include "metadata.h"
-
-#define TRACE_SEV_X(v, str) [v] = #str,
-static const char *sev_to_str[] = {
-	TRACE_SEVERITY_DEF
-};
-#undef TRACE_SEV_X
 
 static void severity_type_to_str(unsigned int severity_type, char *severity_str, unsigned int severity_str_size)
 {
@@ -67,7 +62,7 @@ static void severity_type_to_str(unsigned int severity_type, char *severity_str,
             if (!first_element) {
                 strncat(severity_str, ", ", severity_str_size);
             }
-            strncat(severity_str, sev_to_str[i], severity_str_size - 1 - strlen(severity_str));
+            strncat(severity_str, trace_severity_to_str_array[i], severity_str_size - 1 - strlen(severity_str));
             first_element = 0;
         }
     }
@@ -438,27 +433,44 @@ static unsigned add_warn_records_to_iov(
 	unsigned i;
 
 	for (i = 0; i < count; i+= recs_covered) {
-		const struct trace_record *rec = (const struct trace_record *)(&mapped_records->records[(start_idx + i) & mapped_records->imutab->max_records_mask]);
+		volatile const struct trace_record *rec = (const struct trace_record *)&mapped_records->records[(start_idx + i) & mapped_records->imutab->max_records_mask];
 		struct iovec *iov = increase_iov_if_necessary(record_file, iov_idx + 2);
 
 		if ((rec->termination & TRACE_TERMINATION_FIRST) &&
 			(TRACE_REC_TYPE_TYPED == rec->rec_type) &&
 			(rec->severity >= threshold_severity)) {
-				iov[iov_idx].iov_base = (void *)rec;
+				volatile const struct trace_record *const starting_rec = rec;
 				do {
 					/* In case of wrap-around within the record sequence for a single trace, start a new iovec */
-					if (__builtin_expect(rec == mapped_records->records + mapped_records->imutab->max_records, 0)) {
+					if (__builtin_expect(rec >= mapped_records->records + mapped_records->imutab->max_records, 0)) {
+						assert(rec == mapped_records->records + mapped_records->imutab->max_records);
 						recs_covered = mapped_records->imutab->max_records - (start_idx + i);
 						assert(recs_covered > 0);
 						iov[iov_idx].iov_len = sizeof(*rec) * recs_covered;
 						i+= recs_covered;
 						iov_idx++;
-						rec = (const struct trace_record *)(mapped_records->records);
+						rec = mapped_records->records;
 						iov[iov_idx].iov_base = (void *)rec;
 					}
 				} while (0 == ((rec++)->termination & TRACE_TERMINATION_LAST));
 
-				recs_covered = rec - (const struct trace_record *)(iov[iov_idx].iov_base);
+				recs_covered = rec - starting_rec;
+				if (((rec - 1)->ts != starting_rec->ts) || ((rec - 1)->tid != starting_rec->tid)) {
+					syslog(LOG_USER|LOG_NOTICE, "Was about to add a partial record of severity %s to the notification iov, at start_idx=%u, i=%u, recs_covered=%u, count=%u",
+							trace_severity_to_str_array[starting_rec->severity], start_idx, i, recs_covered, count);
+
+					/* TODO: If this condition is encountered we should wait briefly for the writing thread to finish writing.
+					Apparently this will mainly happen with extra long traces, not common in practice. */
+					continue;
+				}
+
+				if (i + recs_covered > count) {
+					syslog(LOG_USER|LOG_NOTICE, "Record scanning for notifications went beyond the specified count, at start_idx=%u, i=%u, recs_covered=%u, count=%u",
+												start_idx, i, recs_covered, count);
+					break;
+				}
+
+				iov[iov_idx].iov_base = (void *)starting_rec;
 				iov[iov_idx].iov_len = sizeof(*rec) * recs_covered;
 				iov_idx++;
 		}
