@@ -2260,7 +2260,7 @@ static void *mmap_grow(void* addr, long long size, long long new_size)
 {
     /* XXX: consider converting to mremap */
     void* new_addr = mmap(NULL, new_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    if (addr == MAP_FAILED) {
+    if (new_addr == MAP_FAILED) {
         return new_addr;
     }
 
