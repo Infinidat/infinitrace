@@ -28,7 +28,8 @@ Written by: Yitzik Casapu
 
 /* Constants for time durations.
  * Note: Using defines and not an enum, since enumerations with values too large to be represented using 32 bits are not portable */
-#define TRACE_SECOND (1000000000LL)
+#define TRACE_MS 	 (1000000LL)
+#define TRACE_SECOND (TRACE_MS * 1000)
 #define TRACE_MINUTE (TRACE_SECOND * 60)
 #define TRACE_HOUR   (TRACE_MINUTE * 60)
 #define TRACE_DAY    (TRACE_HOUR * 24)

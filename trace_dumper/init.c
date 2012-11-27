@@ -49,7 +49,11 @@ static const char usage[] = {
     " -o  --online                          Show data from buffers as it arrives (slows performance)               \n" \
     " -n  --no-color                        Show online data without color                                         \n" \
     " -w  --write-to-file[filename]         Write log records to file                                              \n" \
-    " -l  --low-latency-write[queue length] Write to files in low-latency mode (which uses mmap), optionally specifying maximum number of records on write queue\n" \
+    " -l  --low-latency-write[param=value]  Write to files in low-latency mode (which uses mmap), optionally specifying a parameter \n"
+    "                                       This option may recur multiple times with different parameters. Recognized parameters: \n" \
+    "                                           max_recs_pending:       Maximum number of records which haven't been confirmed to be committed to disk \n" \
+    "                                           write_size_bytes:       The dumper should attempt to write n byte blocks aligned to n byte boundaries \n" \
+    "                                           max_flush_interval_ms:  Maximum interval between flushes to disk (assuming there is data to be written) \n" \
     " -N  --notification-file[filename]     Write notifications (messages with severity > notification level) to a separate file\n" \
     " -L  --notification-level[level]       Specify minimum severity that will be written to the notification file (default: WARN)\n" \
     " -b  --logdir                          Specify the base log directory trace files are written to              \n" \
@@ -84,7 +88,7 @@ static const struct option longopts[] = {
     { "notification-level", required_argument, 0, 'L'},
     { "quota-size", required_argument, 0, 'q'},
     { "record-write-limit", required_argument, 0, 'r'},
-    { "--instrument", required_argument, 0, 'I'},
+    { "instrument", required_argument, 0, 'I'},
     { "dump-online-statistics", 0, 0, 'v'},
 
 	{ 0, 0, 0, 0}
@@ -99,12 +103,68 @@ void print_usage(const char *prog_name)
 
 #define DEFAULT_LOG_DIRECTORY "/mnt/logs/traces"
 
+static void init_compiled_in_defaults(struct trace_dumper_configuration_s *conf)
+{
+    /* TODO: Make the following parameters configurable at runtime. */
+    conf->notifications_subdir = "warn";
+    conf->log_details = FALSE;
+
+    /* Compiled-in defaults, can be overridden via the command-line */
+    conf->max_records_pending_write_via_mmap = ULONG_MAX;
+    conf->max_flush_interval = 1 * TRACE_SECOND;
+    conf->preferred_flush_bytes = 0; /* Use page size */
+}
+
+//static
+int parse_low_latency_mode_param(struct trace_dumper_configuration_s *conf, const char *arg)
+{
+	if (arg && *arg) {
+		long long value = -1;
+		const char *eq_sign = strchr(arg, '=');
+		if (NULL == eq_sign) {
+			return -1;
+		}
+
+		if (! trace_get_number(eq_sign + 1, &value)) {
+			return -1;
+		}
+
+		const size_t param_name_len = eq_sign - arg;
+
+#define is_param(s, param) ((sizeof(param) - 1 == param_name_len) && (0 == strncasecmp(s, param, param_name_len)))
+
+		if (is_param(arg, "max_recs_pending")) {
+			if (value > 0)
+				conf->max_records_pending_write_via_mmap = value;
+			else
+				return -1;
+		} else if (is_param(arg, "write_size_bytes")) {
+			if (value >= 0)
+				conf->preferred_flush_bytes = value;
+			else
+				return -1;
+		} else if (is_param(arg, "max_flush_interval_ms")) {
+			if (value >= 0)
+				conf->max_flush_interval = TRACE_MS * value;
+			else
+				return -1;
+		} else {
+			return -1;
+		}
+
+#undef is_param
+
+	}
+
+	return 0;
+}
+
 int parse_commandline(struct trace_dumper_configuration_s *conf, int argc, char **argv)
 {
     char shortopts[MAX_SHORT_OPTS_LEN(ARRAY_LENGTH(longopts))];
     short_opts_from_long_opts(shortopts, longopts);
+    init_compiled_in_defaults(conf);
 
-    long long numarg = -1LL;
     int o = 0;
     while ((o = getopt_long(argc, argv, shortopts, longopts, 0)) != EOF) {
 		switch (o) {
@@ -131,11 +191,9 @@ int parse_commandline(struct trace_dumper_configuration_s *conf, int argc, char 
             break;
         case 'l':
         	conf->low_latency_write = TRUE;
-        	if (optarg && trace_get_number(optarg, &numarg) && (numarg > 0)) {
-        		conf->max_records_pending_write_via_mmap = (trace_record_counter_t) numarg;
-        	}
-        	else {
-        		conf->max_records_pending_write_via_mmap = ULONG_MAX;
+        	if (parse_low_latency_mode_param(conf, optarg) < 0) {
+        		fprintf(stderr, "Bad low-latency parameter specification %s\n", optarg);
+        		return -1;
         	}
         	break;
         case 'N':
@@ -287,11 +345,6 @@ int init_dumper(struct trace_dumper_configuration_s *conf)
     if (! conf->logs_base) {
     	conf->logs_base = DEFAULT_LOG_DIRECTORY;
     }
-    /* TODO: Make these configurable */
-    conf->notifications_subdir = "warn";
-    conf->log_details = FALSE;
-    conf->max_flush_interval = 3 * TRACE_SECOND;
-    conf->preferred_flush_bytes = 1U << 16;
 
     if ((! conf->fixed_output_filename) && (trace_create_dir_if_necessary(conf->logs_base) != 0)) {
         return EX_CANTCREAT;
@@ -352,8 +405,10 @@ int init_dumper(struct trace_dumper_configuration_s *conf)
 
     if (conf->low_latency_write) {
     	syslog(LOG_USER|LOG_INFO,
-    			"Trace dumper is writing records in low latency mode using memory mappings, with a maximum queue length of %lu (0x%lX) records",
-    			conf->max_records_pending_write_via_mmap, conf->max_records_pending_write_via_mmap);
+    			"Trace dumper is writing records in low latency mode using memory mappings, with max_recs_pending=%lu (0x%lX), write_size_bytes=%lu (0x%lX), max_flush_interval_ms=%.3f sec",
+    			conf->max_records_pending_write_via_mmap, conf->max_records_pending_write_via_mmap,
+    			conf->preferred_flush_bytes, conf->preferred_flush_bytes,
+    			conf->max_flush_interval / (double) TRACE_SECOND);
     }
 
     return 0;
