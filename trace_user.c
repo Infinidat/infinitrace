@@ -184,16 +184,14 @@ static inline int trace_compare_generation(trace_generation_t a, trace_generatio
 
 static void update_last_committed_record(struct trace_records *records, trace_record_counter_t new_index)
 {
-	__sync_synchronize();
-
 	trace_record_counter_t expected_value;
-	trace_record_counter_t found_value;
+	trace_record_counter_t found_value = records->mutab.last_committed_record;
 
 	/* Update records->mutab.last_committed_record to the index of the current record, taking care not to overwrite a larger value.
 	 * It's possible that another thread has increased records->mutab.last_committed_record between the last statement and this point so
 	 * occasionally we might have to repeat this more than once.  */
 	do {
-		expected_value = records->mutab.last_committed_record;
+		expected_value = found_value;
 
 		/* Forego the update if another thread has committed a later record */
 #ifndef _LP64
@@ -209,7 +207,7 @@ static void update_last_committed_record(struct trace_records *records, trace_re
 				new_index);
 
 		/* Make absolutely sure that no other thread has committed the same record that we were working on */
-		TRACE_ASSERT((new_index != found_value) || (0 == new_index));
+		TRACE_ASSERT(new_index != found_value);
 	} while (found_value != expected_value);
 }
 
