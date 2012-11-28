@@ -252,10 +252,16 @@ void trace_commit_records(
 		memcpy(target, source_records + i, sizeof(*target));
 	}
 
+	trace_free_records_array();
 	update_last_committed_record(records, base_index + n_records - 1);
 }
 
-struct trace_record *trace_realloc_records_array(struct trace_record *records, unsigned int* n_records, const struct trace_record *initial_array)
+/* Functions for managing memory allocations on the heap while writing traces. This is seldom required, only when the amount of memory allocated on the stack in order to produce the
+ * trace is insufficient */
+
+static __thread struct trace_record *trace_records_dynamic_array = NULL;
+
+struct trace_record *trace_realloc_records_array(struct trace_record *const records, unsigned int *n_records)
 {
 	assert(runtime_control.records_array_increase_factor > 1);
 	if ((NULL == records) || (NULL == n_records)) {
@@ -270,34 +276,35 @@ struct trace_record *trace_realloc_records_array(struct trace_record *records, u
 
 	const size_t old_size = TRACE_RECORD_SIZE * *n_records;
 	const size_t new_size = old_size * runtime_control.records_array_increase_factor;
-	struct trace_record *new_records = NULL;
-
-	if (records == initial_array) {  /* The data is in an array allocated on the stack */
-		new_records = malloc(new_size);
-		if (NULL != new_records) {
-			memcpy(new_records, records, old_size);
-		}
-	}
-	else {
-		new_records = realloc(records, new_size);
-	}
+	struct trace_record *new_records = realloc(trace_records_dynamic_array, new_size);
 
 	if (NULL != new_records) {
+		if (NULL == trace_records_dynamic_array) {  /* The original data is in an array allocated on the stack */
+			memcpy(new_records, records, old_size);
+		}
+		else {
+			/* Make sure that records is either a pointer obtained through a previous call to this function or NULL */
+			TRACE_ASSERT((trace_records_dynamic_array == records) || (NULL == records));
+		}
 		*n_records = new_size;
+		trace_records_dynamic_array = new_records;
 		return new_records;
 	}
 	else {
-		return records;
+		/* The old array could not be increased, but it is still valid */
+		return records ? records : trace_records_dynamic_array;
 	}
 }
 
-void trace_free_records_array(struct trace_record *records, const struct trace_record *initial_array)
+void trace_free_records_array()
 {
-	if (records != initial_array) {  /* A record buffer had been dynamically allocated */
-		free(records);
+	if (NULL != trace_records_dynamic_array) {
+		free(trace_records_dynamic_array);
+		trace_records_dynamic_array = NULL;
 	}
 }
 
+/* Functions for creating the per traced process shared-memory areas at runtime. */
 
 #define ALLOC_STRING(dest, source)                      \
     do {                                                \

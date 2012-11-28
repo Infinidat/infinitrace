@@ -363,8 +363,7 @@ std::string TraceCall::getSeverity() const
 std::string TraceCall::commitRecords() const
 {
 	std::stringstream code;
-	code << "trace_commit_records(__records, __rec_idx + 1, " + getSeverityExpr() + ");";
-	code << "trace_free_records_array(__records, __records_initial_array); ";
+	code << "trace_commit_records(__records, __rec_idx + 1, " << getSeverityExpr() << "); ";
 	return code.str();
 }
 
@@ -475,7 +474,7 @@ std::string TraceCall::varlength_getTraceWriteExpression()
             start_record << varlength_writeSimpleValue(logid, _type_name, false, false);
             
             start_record << param.expression;
-            start_record << "(__buf_left, __typed_buf, __records, __records_initial_array, __rec_idx, __records_array_len);";
+            start_record << "(__buf_left, __typed_buf, __records, __rec_idx, __records_array_len);";
         }
      }
      
@@ -498,7 +497,7 @@ std::string TraceCall::advanceRecordArrayIdx() const
 {
 	std::stringstream code;
 	code << "if (++__rec_idx >= __records_array_len) { ";
-	code << "__records = trace_realloc_records_array(__records, &__records_array_len, __records_initial_array); ";
+	code << "__records = trace_realloc_records_array(__records, &__records_array_len); ";
 	// In case trace_realloc_records_array failed and did not increase the buffer, avoid overflowing the array, at the cost of some trace corruption
 	code << "__rec_idx = " << genMIN("__rec_idx", "__records_array_len - 1") << "; }";
 

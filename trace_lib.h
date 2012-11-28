@@ -40,10 +40,10 @@ extern "C" {
 #undef __repr__
 #endif
 
-/* Modify __repr__method declarations and definitions to use the argument list required by the trace runtime. */
+/* Modify __repr__ method declarations and definitions to use the argument list required by the trace runtime. */
 #define __repr__ _trace_represent( \
 		unsigned int *__buf_left, unsigned char **__typed_buf, \
-		struct trace_record* __records, const struct trace_record *__records_initial_array, unsigned int& __rec_idx, unsigned int& __records_array_len)
+		struct trace_record* __records, unsigned int& __rec_idx, unsigned int& __records_array_len)
 
 extern struct trace_buffer *current_trace_buffer;
 
@@ -173,8 +173,8 @@ void trace_commit_records(
 		enum trace_severity severity);
 
 /* Handle allocation of a temporary array to hold the records in case the amount of records allocated on the stack is insufficient */
-struct trace_record *trace_realloc_records_array(struct trace_record *records, unsigned int* n_records, const struct trace_record *initial_array);
-void trace_free_records_array(struct trace_record *records, const struct trace_record *initial_array);
+struct trace_record *trace_realloc_records_array(struct trace_record *const records, unsigned int* n_records);
+void trace_free_records_array();
 
 #ifdef __cplusplus
 }
