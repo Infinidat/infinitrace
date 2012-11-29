@@ -687,6 +687,7 @@ static int do_housekeeping_if_necessary(struct trace_dumper_configuration_s *con
 	static const trace_ts_t HOUSEKEEPING_INTERVAL = 10000000; /* 10ms */
 	const trace_ts_t now = get_nsec_monotonic();
 
+	apply_requested_file_operations(conf, TRACE_REQ_CLOSE_ALL_FILES | TRACE_REQ_DISCARD_ALL_BUFFERS);
 
 	if (now < conf->next_housekeeping_ts) {
 		return EAGAIN;
@@ -718,11 +719,20 @@ static int do_housekeeping_if_necessary(struct trace_dumper_configuration_s *con
     return rc;
 }
 
+static bool_t dumping_should_stop(struct trace_dumper_configuration_s *conf)
+{
+	if (conf->attach_to_pid && !has_mapped_buffers(conf)) {
+		conf->stopping = TRUE;
+	}
+
+	return conf->stopping;
+}
+
 static int dump_records(struct trace_dumper_configuration_s *conf)
 {
-    int rc;
+    int rc = 0;
     bool_t file_creation_err = FALSE;
-    while (1) {
+    while (! dumping_should_stop(conf)) {
         rc = rotate_trace_file_if_necessary(conf);
         if (0 != rc) {
         	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while rotating trace files.", strerror(errno));
@@ -730,10 +740,6 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
             break;
         }
 
-        if ((conf->stopping || conf->attach_to_pid) && !has_mapped_buffers(conf)) {
-            return 0;
-        }
-        
         rc = open_trace_file_if_necessary(conf);
         if (rc != 0) {
         	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while opening the trace file.", strerror(errno));
@@ -745,7 +751,7 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
         
         rc = trace_flush_buffers(conf);
         if (rc > TRACE_FILE_IMMEDIATE_FLUSH_THRESHOLD) {
-        	struct timespec ts = { 0, conf->ts_flush_delta };
+        	const struct timespec ts = { 0, conf->ts_flush_delta };
         	nanosleep(&ts, NULL);
         	continue;
         }
@@ -764,25 +770,31 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
         else assert(0 == rc);
     }
 
-    rc = errno;
-    syslog(LOG_USER|LOG_ERR, "trace_dumper: Error encountered while writing traces: %s.", strerror(rc));
-    ERR("Unexpected failure writing trace file:", strerror(rc));
-    switch (rc) {
-    case ENOMEM:
-    	return EX_SOFTWARE;
+    discard_all_buffers_immediately(conf);
 
-    case ENAMETOOLONG:
-    	return EX_USAGE;
+    if (rc < 0) {
+		rc = errno;
+		syslog(LOG_USER|LOG_ERR, "trace_dumper: Error encountered while writing traces: %s.", strerror(rc));
+		ERR("Unexpected failure writing trace file:", strerror(rc));
+		switch (rc) {
+		case ENOMEM:
+			return EX_SOFTWARE;
 
-    default:
-    	break;
+		case ENAMETOOLONG:
+			return EX_USAGE;
+
+		default:
+			break;
+		}
+
+		if (file_creation_err) {
+			return EX_CANTCREAT;
+		}
+
+		return EX_IOERR;
     }
 
-    if (file_creation_err) {
-    	return EX_CANTCREAT;
-    }
-
-    return EX_IOERR;
+    return 0;
 }
 
 

@@ -18,6 +18,7 @@
    limitations under the License.
  */
 
+#define _GNU_SOURCE
 #define _LARGEFILE64_SOURCE
 
 #include <stdlib.h>
@@ -182,7 +183,7 @@ static int trace_open_file(struct trace_dumper_configuration_s *conf, struct tra
     assert(is_closed(record_file));
 
     int mode = conf->low_latency_write ? O_RDWR : O_WRONLY;
-    record_file->fd = open(filename, mode | O_CREAT | O_TRUNC, 0644);
+    record_file->fd = TEMP_FAILURE_RETRY(open(filename, mode | O_CREAT | O_TRUNC, 0644));
     if (record_file->fd < 0) {
     	syslog(LOG_ERR|LOG_USER, "Failed to open new trace file %s due to error %s", filename, strerror(errno));
         return -1;
@@ -205,7 +206,7 @@ static bool_t file_should_be_closed(const struct trace_dumper_configuration_s *c
 
 int rotate_trace_file_if_necessary(struct trace_dumper_configuration_s *conf)
 {
-    int rc;
+    int rc = 0;
     if (!conf->write_to_file || conf->fixed_output_filename) {
         return 0;
     }
@@ -226,12 +227,17 @@ int rotate_trace_file_if_necessary(struct trace_dumper_configuration_s *conf)
     /* TODO: Close the notification file when its size exceeds the limit. */
 
     if (file_should_be_closed(conf, &conf->record_file)) {
-        close_record_file(conf);
+        rc |= close_record_file(conf);
     }
 
     if (file_should_be_closed(conf, &conf->notification_file)) {
-		close_notification_file(conf);
+		rc |= close_notification_file(conf);
 	}
+
+    if (0 != rc) {
+    	syslog(LOG_USER|LOG_ERR, "Had the following error while closing a trace file: %s", strerror(errno));
+    	return -1;
+    }
 
     /* Reopen journal file */
     rc = open_trace_file_if_necessary(conf);
@@ -296,11 +302,11 @@ bool_t is_closed(const struct trace_record_file *file) {
 	return file->fd < 0;
 }
 
-static int close_file(struct trace_record_file *file) {
+static int close_file(struct trace_record_file *file, bool_t wait_for_flush) {
 	int rc = 0;
 	if (!is_closed(file)) {
 		trace_dumper_update_written_record_count(file);
-		rc = trace_dumper_flush_mmapping(file, FALSE);
+		rc = trace_dumper_flush_mmapping(file, wait_for_flush);
 		if (0 == rc) {
 			rc = ftruncate64(file->fd, TRACE_RECORD_SIZE * file->records_written);
 			if (0 == rc) {
@@ -329,7 +335,7 @@ static int close_file(struct trace_record_file *file) {
 
 int close_record_file(struct trace_dumper_configuration_s *conf)
 {
-    int rc = close_file(&conf->record_file);
+    int rc = close_file(&conf->record_file, conf->stopping);
 
     if (is_closed(&conf->record_file)) {
 
@@ -353,7 +359,7 @@ int close_record_file(struct trace_dumper_configuration_s *conf)
 
 int close_notification_file(struct trace_dumper_configuration_s *conf)
 {
-	int rc = close_file(&conf->notification_file);
+	int rc = close_file(&conf->notification_file, conf->stopping);
 
 	if (is_closed(&conf->notification_file)) {
 		struct trace_mapped_buffer *mapped_buffer;
@@ -366,19 +372,22 @@ int close_notification_file(struct trace_dumper_configuration_s *conf)
 	return rc;
 }
 
-int close_all_files(struct trace_dumper_configuration_s *conf)
+static int close_timing_file_if_necessary(struct trace_record_file *file)
 {
 	int rc = 0;
-
-	if (conf->notification_file.fd >= 0) {
-		rc |= close_notification_file(conf);
+	if (NULL != file->perf_log_file) {
+		rc = fclose(file->perf_log_file);
+		if (0 == rc) {
+			file->perf_log_file = NULL;
+		}
 	}
-
-	if (conf->record_file.fd >= 0) {
-		rc |= close_record_file(conf);
-	}
-
 	return rc;
+}
+
+int close_all_files(struct trace_dumper_configuration_s *conf)
+{
+	request_file_operations(conf, TRACE_REQ_CLOSE_ALL_FILES);
+	return apply_requested_file_operations(conf, TRACE_REQ_CLOSE_ALL_FILES);
 }
 
 unsigned request_file_operations(struct trace_dumper_configuration_s *conf, unsigned op_flags)
@@ -391,12 +400,24 @@ int apply_requested_file_operations(struct trace_dumper_configuration_s *conf, u
 	int rc = 0;
 	unsigned flags = conf->request_flags & op_mask;
 
+	if (flags & TRACE_REQ_CLOSE_NOTIFICATION_FILE) {
+		rc |= close_notification_file(conf);
+	}
+
 	if (flags & TRACE_REQ_CLOSE_RECORD_FILE) {
 		rc |= close_record_file(conf);
 	}
 
-	if (flags & TRACE_REQ_CLOSE_NOTIFICATION_FILE) {
-		rc |= close_notification_file(conf);
+	if (flags & TRACE_REQ_CLOSE_NOTIFICATION_TIMING_FILE) {
+		rc |= close_timing_file_if_necessary(&conf->notification_file);
+	}
+
+	if (flags & TRACE_REQ_CLOSE_RECORD_TIMING_FILE) {
+		rc |= close_timing_file_if_necessary(&conf->record_file);
+	}
+
+	if (flags & TRACE_REQ_DISCARD_ALL_BUFFERS) {
+		discard_all_buffers_immediately(conf);
 	}
 
 	static const char snapshot_prefix[] = "snapshot.";

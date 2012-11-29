@@ -262,7 +262,7 @@ int trace_dumper_write_via_file_io(const struct trace_dumper_configuration_s *co
 
             	ERR("Only wrote", rc, "of", expected_bytes, "bytes, and got error", err, ". rewinding by the number of bytes written");
             	off64_t eof_pos = lseek64(record_file->fd, (off64_t)-rc, SEEK_CUR);
-            	if (ftruncate64(record_file->fd, eof_pos) < 0) { // TODO: Use TEMP_FAILURE_RETRY here
+            	if (TEMP_FAILURE_RETRY(ftruncate64(record_file->fd, eof_pos)) < 0) {
             		return -1;
             	}
 

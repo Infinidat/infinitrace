@@ -422,33 +422,56 @@ struct trace_dumper_configuration_s *trace_dumper_get_configuration()
 
 /* Signal handling */
 
-static void usr1_handler()
+static void normal_termination_handler(int sig, siginfo_t *info, void *params __attribute__((unused)))
 {
-	request_file_operations(&trace_dumper_configuration, TRACE_REQ_CLOSE_ALL_FILES);
+	syslog(LOG_USER|LOG_INFO, "Trace dumper has received signal %d (%s) from pid %d and will exit", sig, strsignal(sig), info->si_pid);
+	trace_dumper_configuration.stopping = TRUE;
+	request_file_operations(&trace_dumper_configuration, TRACE_REQ_CLOSE_ALL_FILES | TRACE_REQ_DISCARD_ALL_BUFFERS);
 }
 
-static void usr2_handler()
+static void sigusr_handler(int sig, siginfo_t *info __attribute__((unused)), void *params __attribute__((unused)))
 {
-	request_file_operations(&trace_dumper_configuration, TRACE_REQ_CLOSE_ALL_FILES | TRACE_REQ_RENAME_ALL_FILES);
+	unsigned op_flags = TRACE_REQ_CLOSE_ALL_FILES;
+	switch(sig) {
+	case SIGUSR1:
+		break;
+
+	case SIGUSR2:
+		op_flags |= TRACE_REQ_RENAME_ALL_FILES;
+		break;
+
+	default:
+		assert(0);
+		return;
+	}
+
+	request_file_operations(&trace_dumper_configuration, op_flags);
 }
 
 int set_signal_handling(void)
 {
+	static const int default_flags = SA_SIGINFO|SA_RESTART;
 	int rc = 0;
 	const struct {
 		int sig;
-		sig_t handler;
+		void (*handler)(int, siginfo_t *, void *);
+		int override_flags;
 	} sig_handlers[] = {
-		{ SIGUSR1, usr1_handler },
-		{ SIGUSR2, usr2_handler },
+		{ SIGUSR1, sigusr_handler, 0 },
+		{ SIGUSR2, sigusr_handler, 0 },
+		{ SIGTERM, normal_termination_handler, 0 },
 	};
 
 	unsigned i;
 	for (i = 0; i < ARRAY_LENGTH(sig_handlers); i++) {
-		if (SIG_ERR == signal(sig_handlers[i].sig, sig_handlers[i].handler)) {
+		struct sigaction act;
+		memset(&act, 0, sizeof(act));
+		act.sa_sigaction = sig_handlers[i].handler;
+		act.sa_flags = default_flags ^ sig_handlers[i].override_flags;
+		if (sigaction(sig_handlers[i].sig, &act, NULL) < 0) {
 			syslog(LOG_USER|LOG_ERR, "Failed to set the handler for signal %d (%s) due to error: %s",
 					sig_handlers[i].sig, strsignal(sig_handlers[i].sig), strerror(errno));
-			rc |= -1;
+					rc |= -1;
 		}
 	}
 

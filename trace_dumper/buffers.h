@@ -27,6 +27,7 @@ int attach_and_map_buffers(struct trace_dumper_configuration_s *conf);
 int map_new_buffers(struct trace_dumper_configuration_s *conf);
 int unmap_discarded_buffers(struct trace_dumper_configuration_s *conf);
 void discard_buffer(struct trace_dumper_configuration_s *conf, struct trace_mapped_buffer *mapped_buffer);
+void discard_all_buffers_immediately(struct trace_dumper_configuration_s *conf);
 void clear_mapped_records(struct trace_dumper_configuration_s *conf);
 bool_t has_mapped_buffers(const struct trace_dumper_configuration_s *conf);
 void add_buffer_filter(struct trace_dumper_configuration_s *conf, char *buffer_name);

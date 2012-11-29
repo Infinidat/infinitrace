@@ -394,10 +394,9 @@ static void check_discarded_buffer(const struct trace_mapped_buffer *mapped_buff
 	}
 }
 
-void discard_buffer(struct trace_dumper_configuration_s *conf, struct trace_mapped_buffer *mapped_buffer)
+/* Immediately discard all the dumper resources for a buffer regardless of whether or not the traced process has ended. */
+static void discard_buffer_unconditionally(struct trace_mapped_buffer *mapped_buffer)
 {
-    INFO("Discarding pid", mapped_buffer->pid, mapped_buffer->name);
-    check_discarded_buffer(mapped_buffer);
     free_metadata(&mapped_buffer->metadata);
 
     int rc = munmap(mapped_buffer->metadata.base_address, mapped_buffer->metadata.size);
@@ -431,8 +430,17 @@ void discard_buffer(struct trace_dumper_configuration_s *conf, struct trace_mapp
 	else {
 		syslog(LOG_USER|LOG_WARNING, "Error closing records for buffer %s: %s", mapped_buffer->name, strerror(errno));
 	}
+}
 
-    rc = delete_shm_files(mapped_buffer->pid);
+/* Discard all the dumper resources the trace buffer of a process that has ended. */
+void discard_buffer(struct trace_dumper_configuration_s *conf, struct trace_mapped_buffer *mapped_buffer)
+{
+    INFO("Discarding pid", mapped_buffer->pid, mapped_buffer->name);
+    check_discarded_buffer(mapped_buffer);
+
+    discard_buffer_unconditionally(mapped_buffer);
+
+    int rc = delete_shm_files(mapped_buffer->pid);
     if (0 != rc) {
     	syslog(LOG_USER|LOG_WARNING, "Error deleting shm files for buffer %s, pid %u: %s", mapped_buffer->name, mapped_buffer->pid, strerror(errno));
     }
@@ -466,6 +474,19 @@ void discard_buffer(struct trace_dumper_configuration_s *conf, struct trace_mapp
     if (0 == buffers_remaining) {
     	close_all_files(conf);
     }
+}
+
+void discard_all_buffers_immediately(struct trace_dumper_configuration_s *conf)
+{
+	int i;
+	struct trace_mapped_buffer *mapped_buffer;
+	for_each_mapped_buffer(i, mapped_buffer) {
+		discard_buffer_unconditionally(mapped_buffer);
+	}
+
+	clear_mapped_records(conf);
+	close_all_files(conf);
+	return;
 }
 
 int unmap_discarded_buffers(struct trace_dumper_configuration_s *conf)
