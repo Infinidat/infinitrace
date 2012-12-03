@@ -1,5 +1,7 @@
 #define _XOPEN_SOURCE 700
 
+#include "platform.h"
+
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -62,13 +64,25 @@ struct trace_reader_conf {
     filter_t * filter_tid;
 };
 
+#ifdef  _USE_PROC_FS_
+#define _ENABLE_ACTIVE_FILE_INFERENCE_
+#endif
+
 
 #define TRACE_SEV_X(ignored, sev) "/" #sev
 #define TRACE_LEVELS_STR "FUNC" TRACE_SEVERITY_DEF
 
 
 static const char usage[] =
-    "Usage: %s [params] file[s]\n\
+    "Usage: %s [params] "
+#ifdef _ENABLE_ACTIVE_FILE_INFERENCE_
+		"["
+#endif
+		"file(s)"
+#ifdef _ENABLE_ACTIVE_FILE_INFERENCE_
+		"]"
+#endif
+		"\n\
     Actions:\n\
      (DEFAULT ACTION)    : Dump contents of trace file \n\
  -s  --print-stats       : Print per-log occurrence count \n\
@@ -114,7 +128,11 @@ static const char usage[] =
  '-c CACHE -v a_lba=1442'                means 'CACHE && lba(1442)' \n\
  '-c CACHE -v a_lba=1442' -v a_lba=1444' means 'CACHE && (lba(1442) || lab(1444))' \n\
  \"-v 'vu<4' -w 'vu>1' -Q20 \"           same as '-v vu=2 -v -Q20' \n\
-\n";
+\n"
+#ifdef _ENABLE_ACTIVE_FILE_INFERENCE_
+		"\nIf the trace-file to be displayed is not specified the reader will attempt to detect it automatically\n"
+#endif
+ ;
     //    " -u  --function  [func]     Show only records generated from function [func] 
 
 static const char invalid_severity_msg[] = "Severity format may be a number, or " TRACE_LEVELS_STR;
