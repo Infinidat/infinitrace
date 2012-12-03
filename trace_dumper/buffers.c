@@ -35,6 +35,7 @@
 #include "../bool.h"
 #include "../trace_lib.h"
 #include "../trace_user.h"
+#include "../trace_clock.h"
 #include "trace_dumper.h"
 #include "metadata.h"
 #include "open_close.h"

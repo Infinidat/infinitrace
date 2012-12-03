@@ -15,8 +15,8 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
    limitations under the License.
 ***/
 
-#ifndef __MACROS_H__
-#define __MACROS_H__
+#ifndef __TRACE_MACROS_H__
+#define __TRACE_MACROS_H__
 
 
 /* A custom ASSERT macro. If Infinidat's custom assert is present use it.
@@ -40,4 +40,4 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 
 #define REPORT_ERROR_RETURN(ret_val) ERR(__func__, "() (in", __FILE__, ":", __LINE__,") returned", (ret_val));
 #define REPORT_AND_RETURN(ret_val) if (0 != (ret_val)) { REPORT_ERROR_RETURN(ret_val); } return ret_val;
-#endif
+#endif  /* __TRACE_MACROS_H__ */

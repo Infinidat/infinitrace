@@ -25,6 +25,7 @@
 #include "timeformat.h"
 #include "trace_str_util.h"
 #include "opt_util.h"
+#include "file_naming.h"
 
 enum op_type_e {
     OP_TYPE_INVALID,
@@ -308,6 +309,7 @@ out:
     return result;
 }
 
+
 static int get_active_tracefile(char* filename, int len)
 {
     char workdir[PATH_MAX];
@@ -336,6 +338,10 @@ static int get_active_tracefile(char* filename, int len)
             break;
         }
         
+        if (! trace_is_valid_file_name(e->d_name)) {
+        	continue;
+        }
+
         if (fstatat(dirfd(d), e->d_name, &stat_buf, 0) != 0) {
             continue;
         }

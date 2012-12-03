@@ -30,10 +30,11 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include <string.h>
 #include <libgen.h>
 
-#include "macros.h"
+#include "trace_macros.h"
 #include "trace_lib.h"
 #include "trace_user.h"
 #include "trace_metadata_util.h"
+#include "trace_clock.h"
 #include "bool.h"
 #include "halt.h"
 

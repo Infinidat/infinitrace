@@ -16,7 +16,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 ***/
 
 #include "bool.h"
-#include "macros.h"
+#include "trace_macros.h"
 #include "array_length.h"
 #include <string.h>
 #include <pthread.h>

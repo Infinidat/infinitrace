@@ -31,9 +31,8 @@ extern "C" {
 #define TRACE_DYNAMIC_DATA_REGION_NAME_FMT TRACE_SHM_ID "%d" TRACE_DYNAMIC_SUFFIX
 #define TRACE_STATIC_DATA_REGION_NAME_FMT  TRACE_SHM_ID "%d" TRACE_STATIC_SUFFIX
 
-
-#include "trace_clock.h"
-#include "macros.h"
+#include "trace_defs.h"
+#include "trace_macros.h"
 #include <stdlib.h>
 #include <sys/types.h>
 #ifdef __repr__

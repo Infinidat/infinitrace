@@ -15,9 +15,11 @@
 #include "../bool.h"
 #include "../trace_lib.h"
 #include "../trace_user.h"
+#include "../file_naming.h"
 #include "trace_dumper.h"
 #include "writer.h"
 #include "filesystem.h"
+
 
 long long get_file_size(const char *filename)
 {
@@ -42,19 +44,9 @@ static long long free_bytes_in_fs(const char *mnt)
     return vfs.f_bsize * vfs.f_bfree;
 }
 
-
-static bool_t is_trace_file(const char *filename)
-{
-    if (strncmp(filename, TRACE_FILE_PREFIX, strlen(TRACE_FILE_PREFIX)) != 0) {
-          return FALSE;
-    } else {
-        return TRUE;
-    }
-}
-
 static int get_trace_file_timestamp(const char *filename)
 {
-    if (!is_trace_file(filename)) {
+    if (!trace_is_valid_file_name(filename)) {
         return -1;
     }
 
@@ -156,7 +148,7 @@ long long total_records_in_logdir(const char *logdir)
             goto Exit;
         }
 
-        if (!is_trace_file(ent->d_name)) {
+        if (!trace_is_valid_file_name(ent->d_name)) {
             continue;
         }
         char full_filename[0x100];

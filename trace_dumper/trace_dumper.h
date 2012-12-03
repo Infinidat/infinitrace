@@ -89,9 +89,6 @@ struct trace_mapped_buffer {
     trace_ts_t process_time;
 };
 
-
-#define TRACE_FILE_PREFIX "trace."
-
 #define TRACE_METADATA_IOVEC_SIZE  (2*(MAX_METADATA_SIZE/TRACE_RECORD_PAYLOAD_SIZE+1))
 
 #define TRACE_PREFERRED_FILE_MAX_RECORDS_PER_FILE        0x1000000
@@ -163,7 +160,9 @@ struct trace_dumper_configuration_s {
     const char *attach_to_pid;
     int should_quit;
     unsigned int request_flags;
+#ifdef SEVERITY_FILTER_LEN
     struct trace_record_matcher_spec_s severity_filter[SEVERITY_FILTER_LEN];
+#endif
     unsigned int header_written;
     unsigned int write_to_file;
     unsigned int write_notifications_to_file;

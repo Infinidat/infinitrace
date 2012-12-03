@@ -6,6 +6,8 @@
  */
 
 #include <time.h>
+#include <sys/time.h>
+#include <assert.h>
 #include "trace_clock.h"
 
 static trace_ts_t trace_get_nsec_from_clk(clockid_t clk_id)
@@ -27,4 +29,17 @@ trace_ts_t trace_get_nsec(void)
 trace_ts_t trace_get_nsec_monotonic(void)
 {
 	return trace_get_nsec_from_clk(CLOCK_MONOTONIC);
+}
+
+trace_ts_t trace_get_walltime_ns(void)
+{
+    struct timeval tv;
+    assert(0 == gettimeofday(&tv, NULL));
+
+    return 1000ULL * ((((trace_ts_t)tv.tv_sec) * 1000000ULL) + tv.tv_usec);
+}
+
+unsigned long long trace_get_walltime_ms(void)
+{
+	return trace_get_walltime_ns() / TRACE_MS;
 }

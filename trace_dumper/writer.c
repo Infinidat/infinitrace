@@ -35,6 +35,7 @@
 
 #include "../trace_user.h"
 #include "../min_max.h"
+#include "../trace_clock.h"
 #include "filesystem.h"
 #include "writer.h"
 #include "open_close.h"

@@ -25,6 +25,7 @@
 #include "../trace_defs.h"
 #include "../trace_lib.h"
 #include "../trace_user.h"
+#include "../trace_clock.h"
 #include "trace_dumper.h"
 #include "writer.h"
 #include "metadata.h"

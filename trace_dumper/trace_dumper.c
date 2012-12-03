@@ -807,7 +807,7 @@ static int op_dump_records(struct trace_dumper_configuration_s *conf)
         return EX_NOINPUT;
     }
 
-    conf->start_time = trace_get_walltime();
+    conf->start_time = trace_get_walltime_ns();
     return dump_records(conf);
 }
 

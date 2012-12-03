@@ -27,7 +27,6 @@
 int rotate_trace_file_if_necessary(struct trace_dumper_configuration_s *conf);
 int open_trace_file_if_necessary(struct trace_dumper_configuration_s *conf);
 bool_t trace_quota_is_enabled(const struct trace_dumper_configuration_s *conf);
-unsigned long long trace_get_walltime(void);
 
 bool_t is_closed(const struct trace_record_file *file);
 int close_record_file(struct trace_dumper_configuration_s *conf);

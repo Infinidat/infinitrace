@@ -33,6 +33,7 @@
 #include "../trace_user.h"
 #include "../opt_util.h"
 #include "../trace_str_util.h"
+#include "../trace_clock.h"
 #include "trace_dumper.h"
 #include "filesystem.h"
 #include "buffers.h"

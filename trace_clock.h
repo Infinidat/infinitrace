@@ -24,6 +24,7 @@ Written by: Yitzik Casapu
 #ifndef TRACE_CLOCK_H_
 #define TRACE_CLOCK_H_
 
+#include <unistd.h>
 #include "trace_defs.h"
 
 /* Constants for time durations.
@@ -37,5 +38,7 @@ Written by: Yitzik Casapu
 
 trace_ts_t trace_get_nsec(void);
 trace_ts_t trace_get_nsec_monotonic(void);
+trace_ts_t trace_get_walltime_ns(void);
+unsigned long long trace_get_walltime_ms(void);
 
 #endif /* TRACE_CLOCK_H_ */

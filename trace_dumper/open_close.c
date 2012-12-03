@@ -31,26 +31,17 @@
 #include <alloca.h>
 #include <limits.h>
 #include <fcntl.h>
-#include <time.h>
 #include <sys/time.h>
 #include <unistd.h>
 #include <sys/utsname.h>
 #include <sys/mman.h>
 
 #include "../trace_user.h"
+#include "../file_naming.h"
 #include "filesystem.h"
 #include "open_close.h"
 #include "writer.h"
 #include "buffers.h"
-
-
-unsigned long long trace_get_walltime(void)
-{
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-
-    return (((unsigned long long)tv.tv_sec) * 1000000) + tv.tv_usec;
-}
 
 static int trace_write_header(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file)
 {
@@ -88,26 +79,14 @@ static int trace_write_header(struct trace_dumper_configuration_s *conf, struct 
 	return 0;
 }
 
-#define DUMP_FILE_SUFFIX ".dump"
-#define DUMP_FILE_SUFFIX_LEN (sizeof(DUMP_FILE_SUFFIX) - 1)
+static const size_t TRACE_FILE_SUFFIX_LEN = sizeof(TRACE_FILE_SUFFIX) - 1;
 
-static void generate_file_name(char *filename, const struct trace_dumper_configuration_s *conf, const char *filename_base)
+static int generate_file_name(char *filename, const struct trace_dumper_configuration_s *conf, const char *filename_base)
 {
-	const size_t name_len = sizeof(conf->record_file.filename);
-	unsigned long long now_ms = trace_get_walltime() / 1000;
+	/* The quota code parses the file names to get their creation time, so we have to preserve the old format it expects. */
+	const bool_t human_readable = ! trace_quota_is_enabled(conf);
 
-	if (trace_quota_is_enabled(conf)) {
-		/* The quota code parses the file names to get their creation time, so we have to preserve the format. */
-		snprintf(filename, name_len, "%s/trace.%llu" DUMP_FILE_SUFFIX, filename_base, now_ms);
-	}
-	else {
-		struct tm now_tm;
-		time_t now_sec = now_ms / 1000UL;
-		gmtime_r(&now_sec, &now_tm);
-		int len = snprintf(filename, name_len, "%s/trace.", filename_base);
-		len += strftime(filename + len, name_len - len, "%F--%H-%M-%S--", &now_tm);
-		snprintf(filename + len, name_len - len, "%02llu" DUMP_FILE_SUFFIX, (now_ms % 1000) / 10);
-	}
+	return trace_generate_file_name(filename, filename_base, sizeof(conf->record_file.filename), human_readable);
 }
 
 bool_t is_perf_logging_file_open(struct trace_record_file *record_file)
@@ -169,7 +148,7 @@ static int trace_open_file(struct trace_dumper_configuration_s *conf, struct tra
 
     	if ((conf->log_performance_to_file) && !is_perf_logging_file_open(record_file)) {
     		static const char perf_log_suffix[] =  "_perf_log.csv";
-    		size_t len = strlen(filename) - DUMP_FILE_SUFFIX_LEN;
+    		size_t len = strlen(filename) - TRACE_FILE_SUFFIX_LEN;
     		char *perf_log_filename = alloca(len + sizeof(perf_log_suffix));
     		memcpy(perf_log_filename, filename, len);
     		strcpy(perf_log_filename + len, perf_log_suffix);

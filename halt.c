@@ -19,7 +19,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include <unistd.h>
 #include <syslog.h>
 
-#include "macros.h"
+#include "trace_macros.h"
 #include "halt.h"
 #include <stdio.h>
 

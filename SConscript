@@ -12,7 +12,7 @@ with TracesDisabled(xn_env) as untraced_env:
     lib = untraced_env.XnStaticLibrary(target = 'traces', source = srcs, CCFLAGS = optflags)
     untraced_env.Alias('xn', lib)
 
-    srcs = untraced_env.AutoSplit('''opt_util.c trace_str_util.c trace_clock_untraced.c''')
+    srcs = untraced_env.AutoSplit('''opt_util.c trace_str_util.c trace_clock_untraced.c file_naming.c''')
     lib = untraced_env.XnStaticLibrary(target = 'trace_util', source = srcs, CCFLAGS = optflags)
     untraced_env.Alias('xn', lib)
 
