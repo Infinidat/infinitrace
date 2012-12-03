@@ -124,7 +124,8 @@ struct trace_records_mutable_metadata {
 	/* Once a record has been written next_committed_record is updated atomically. */
 	trace_atomic_t last_committed_record;
 
-	volatile unsigned int records_misplaced;
+	/* Next record to be written by the dumper. */
+	trace_atomic_t next_flush_record;
 
 	/* Last record time-stamp that was written by the dumper. */
 	trace_ts_t latest_flushed_ts;

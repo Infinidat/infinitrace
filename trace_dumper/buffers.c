@@ -250,7 +250,7 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
         mapped_records->mutab = &unmapped_trace_buffer->u._all_records[i].mutab;
         mapped_records->imutab = &unmapped_trace_buffer->u._all_records[i].imutab;
         mapped_records->last_flush_offset = 0;
-        mapped_records->current_read_record = 0;
+        mapped_records->current_read_record = mapped_records->mutab->next_flush_record;
     }
 
     INFO("new process joined" ,"pid =", new_mapped_buffer->pid, "name =", new_mapped_buffer->name);

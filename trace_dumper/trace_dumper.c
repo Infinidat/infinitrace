@@ -292,6 +292,7 @@ static void advance_mapped_record_counters(struct trace_dumper_configuration_s *
 		mapped_records->mutab->latest_flushed_ts = mapped_records->next_flush_ts;
         mapped_records->current_read_record = mapped_records->next_flush_record;
 		mapped_records->last_flush_offset = mapped_records->next_flush_offset;
+		mapped_records->mutab->next_flush_record = mapped_records->current_read_record;
 	}
 }
 
