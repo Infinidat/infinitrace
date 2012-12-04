@@ -117,10 +117,14 @@ struct trace_records_mutable_metadata {
 	 * wants to write, thus reserving them and guaranteeing that no other thread could reserve them. */
 	trace_atomic_t current_record;
 
+	/* A counter of the total number of (not necessarily consecutive) records written */
+	trace_atomic_t num_records_written;
+
 	volatile unsigned int records_silently_discarded;
 	volatile unsigned int records_with_invalid_sev;
 
-	/* Once a record has been written next_committed_record is updated atomically. */
+	/* The latest record in relation to which all prior records can be assumed to be committed.
+	 * Note that in practice there could be cases when prior records have not yet been committed, and they remain to be resolved. */
 	trace_atomic_t last_committed_record;
 
 	/* Next record to be written by the dumper. */

@@ -4,8 +4,11 @@
 #include <pthread.h>
 #include <sched.h>
 #include <time.h>
+#include <signal.h>
+#include <assert.h>
 #include "common/traces/trace_defs.h"
 #include "common/traces/trace_user.h"
+#include "common/traces/array_length.h"
 
 const int  n_threads = 64;
 const int  n_thread_iters = 200000;
@@ -75,13 +78,36 @@ static void *do_log(void *)
     return 0;
 }
 
+static void fatal_signal_handler(int signal)
+{
+	pid_t pid = getpid();
+	FATAL("Dumper stress process", pid, "was killed by", signal, strsignal(signal));
+	raise(signal);
+	return;
+}
+
+static void register_fatal_sig_handlers(void)
+{
+	static const int fatal_signals[] = { SIGABRT, SIGSEGV, SIGBUS, SIGILL };
+	for (unsigned i = 0; i < ARRAY_LENGTH(fatal_signals); i++) {
+		struct sigaction act;
+		memset(&act, 0, sizeof(act));
+		act.sa_handler = fatal_signal_handler;
+		act.sa_flags = SA_RESETHAND;
+		assert(0 == sigaction(fatal_signals[i], &act, NULL));
+	}
+
+	return;
+}
+
 int main(void) {
 	pthread_t threads[n_threads];
 
 	fprintf(stderr, "Running %d threads each running %d iterations with %luns intervals,%s yielding CPU\n",
 			n_threads, n_thread_iters, interval_ns, yield_cpu ? "" : " not");
 
-	sleep(2);
+	register_fatal_sig_handlers();
+	sleep(1);
 
 	for(int i =  0; i < n_threads; i++) {
 		pthread_create(&threads[i], 0 , do_log, 0);

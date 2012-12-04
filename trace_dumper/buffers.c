@@ -27,6 +27,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <signal.h>
 #include <fcntl.h>
 #include <dirent.h>
 #include <errno.h>
@@ -96,24 +97,53 @@ bool_t is_dynamic_log_data_shm_region(const char *shm_name)
     }
 }
 
+static bool_t process_exists(pid_t pid) {
+	int saved_errno = errno;
+	if (0 == kill(pid, 0)) {
+		return TRUE;
+	}
 
-static int stat_pid(unsigned short pid, struct stat *stat_buf)
+	switch (errno) {
+	case EPERM:
+		errno = saved_errno;
+		return TRUE;
+
+	case ESRCH:
+		errno = saved_errno;
+		break;
+
+	default:
+		syslog(LOG_USER|LOG_ERR, "Failed to check for the existence of pid %d due to %s", pid, strerror(errno));
+		break;
+	}
+
+	return FALSE;
+}
+
+static int stat_pid(pid_t pid, struct stat *stat_buf)
 {
     char filename[0x100];
     snprintf(filename, sizeof(filename), "/proc/%d", pid);
     return stat(filename, stat_buf);
 }
 
-static int get_process_time(unsigned short pid, unsigned long long *curtime)
+static int get_process_time(pid_t pid, trace_ts_t *curtime)
 {
+	if (NULL == curtime) {
+		errno = EFAULT;
+		return -1;
+	}
+
     struct stat stat_buf;
     int rc = stat_pid(pid, &stat_buf);
     if (0 != rc) {
-    	REPORT_AND_RETURN(-1);
+    	if (ENOENT == errno) {
+    		errno = ESRCH;
+    	}
+    	return -1;
     }
 
-    *curtime = stat_buf.st_ctim.tv_sec * 1000000000ULL;
-    *curtime += stat_buf.st_ctim.tv_nsec;
+    *curtime = stat_buf.st_ctim.tv_sec * TRACE_SECOND + stat_buf.st_ctim.tv_nsec;
     return 0;
 }
 
@@ -228,12 +258,17 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
     new_mapped_buffer->pid = (trace_pid_t) pid;
     new_mapped_buffer->metadata_dumped = FALSE;
     new_mapped_buffer->notification_metadata_dumped = FALSE;
-    unsigned long long process_time;
+    trace_ts_t process_time;
     rc = get_process_time(pid, &process_time);
     if (0 != rc) {
-        rc = 0;
-        WARN("Process", pid, "no longer exists");
-        process_time = 0;
+    	if (ESRCH == errno) {
+    		rc = 0;
+    		WARN("Process", pid, "no longer exists");
+    	}
+    	else {
+    		syslog(LOG_USER|LOG_WARNING, "Faield to get the process time for pid %d due to %s", pid, strerror(errno));
+    	}
+    	process_time = 0;
     }
 
     new_mapped_buffer->process_time = process_time;
@@ -349,19 +384,6 @@ exit:
     closedir(dir);
     return 0;
 }
-
-static bool_t process_exists(unsigned short pid) {
-    struct stat buf;
-    char filename[0x100];
-    snprintf(filename, sizeof(filename), "/proc/%d", pid);
-    int rc = stat(filename, &buf);
-    if (0 == rc) {
-        return TRUE;
-    } else {
-        return FALSE;
-    }
-}
-
 
 static void check_discarded_buffer(const struct trace_mapped_buffer *mapped_buffer)
 {
@@ -490,12 +512,24 @@ void discard_all_buffers_immediately(struct trace_dumper_configuration_s *conf)
 	return;
 }
 
+/* Mark all the records written as committed, so that any records that may have been written, even if incomplete, will be flushed.
+ * This is especially important if the traced process dies due to a fatal signal. */
+static void adjust_buffer_for_final_dumping(struct trace_mapped_buffer *mapped_buffer)
+{
+	int i;
+	for (i = 0; i < TRACE_BUFFER_NUM_RECORDS; i++) {
+		volatile struct trace_records_mutable_metadata *mutab =  mapped_buffer->mapped_records[i].mutab;
+		mutab->last_committed_record = mutab->current_record - 1;
+	}
+}
+
 int unmap_discarded_buffers(struct trace_dumper_configuration_s *conf)
 {
     int i;
     struct trace_mapped_buffer *mapped_buffer;
     for_each_mapped_buffer(i, mapped_buffer) {
         if (!process_exists(mapped_buffer->pid)) {
+        	adjust_buffer_for_final_dumping(mapped_buffer);
             mapped_buffer->dead = 1;
         }
     }

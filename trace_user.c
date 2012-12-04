@@ -254,7 +254,13 @@ void trace_commit_records(
 	}
 
 	trace_free_records_array();
-	update_last_committed_record(records, base_index + n_records - 1);
+
+	/* Check that it is at least possible that all the records that were in the process of being written at the time were started have been written by now.
+	 * Note that the condition below doesn't guarantee that they have in fact been written. An algorithm that can ascertain that remains to be developed. */
+	const trace_record_counter_t records_written = __sync_fetch_and_add(&records->mutab.num_records_written, n_records);
+	if (records_written >= base_index) {
+		update_last_committed_record(records, base_index + n_records - 1);
+	}
 }
 
 /* Functions for managing memory allocations on the heap while writing traces. This is seldom required, only when the amount of memory allocated on the stack in order to produce the
@@ -620,6 +626,7 @@ static void init_records_immutable_data(struct trace_records *records, unsigned 
 static void init_record_mutable_data(struct trace_records *recs)
 {
 	recs->mutab.current_record = 0;
+	recs->mutab.num_records_written = 0;
 	recs->mutab.last_committed_record = -1UL;
 	memset(recs->records, TRACE_SEV_INVALID, sizeof(recs->records[0]));
 	TRACE_ASSERT(recs->imutab.max_records > 0);
