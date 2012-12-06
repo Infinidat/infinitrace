@@ -52,25 +52,30 @@ static const Type *get_expr_type(const Expr *expr)
     return expr->getType().getCanonicalType().split().first;
 }
 
- std::string castTo(LangOptions const& langOpts, std::string orig_expr, std::string cast_type)
- {
-     if (langOpts.CPlusPlus == 1) {
+static inline bool isCPlusPlus(LangOptions const& langOpts)
+{
+	return langOpts.CPlusPlus == 1;
+}
+
+static inline std::string castTo(LangOptions const& langOpts, const std::string& orig_expr, const std::string& cast_type)
+{
+     if (isCPlusPlus(langOpts)) {
          return "reinterpret_cast<" + cast_type + ">(" + orig_expr + ")";
      } else {
          return "(" + cast_type + ") (" + orig_expr + ")";
      }
  }
 
-std::string externGlobal(LangOptions const& langOpts)
+static inline std::string externGlobal(LangOptions const& langOpts)
 {
-	if (langOpts.CPlusPlus == 1) {
-		return "extern\"C\"";
+	if (isCPlusPlus(langOpts)) {
+		return "extern \"C\"";
 	} else {
 		return "extern";
 	}
 }
 
- std::string & replaceAll(
+static std::string& replaceAll(
      std::string &result, 
      const std::string& replaceWhat, 
      const std::string& replaceWithWhat)
@@ -374,7 +379,7 @@ std::string TraceCall::getSeverityExpr() const
     return getSeverity();
 }
 
-std::string TraceCall::varlength_initializeTypedRecord()
+std::string TraceCall::varlength_initializeTypedRecord() const
 {
     std::stringstream code;
     code << initializeOpeningTypedRecord(".");
@@ -383,7 +388,7 @@ std::string TraceCall::varlength_initializeTypedRecord()
     return code.str();
 }
 
-std::string TraceCall::constlength_initializeTypedRecord(unsigned int *buf_left)
+std::string TraceCall::constlength_initializeTypedRecord(unsigned int *buf_left) const
 {
     std::stringstream code;
     code << initializeOpeningTypedRecord(".");
@@ -504,6 +509,31 @@ std::string TraceCall::advanceRecordArrayIdx() const
 	return code.str();
 }
 
+std::string TraceCall::writeSimpleValueSrcDecl(const std::string &expression, const std::string &type_name, bool is_pointer, bool is_reference) const
+{
+	std::string src_type;
+	std::string src_init_expr;
+	const std::string ptr_type("volatile const void *");
+
+	if (is_pointer || is_reference) {
+		src_type = ptr_type;
+		std::string to_ptr(is_reference ? "&" : "");
+		src_init_expr = castTo(ast.getLangOptions(), to_ptr + expression, ptr_type);
+	}
+	else {
+		src_type = type_name;
+		src_init_expr = "(" + expression + ")";
+	}
+
+	std::stringstream union_init_expr;
+	union_init_expr << "union { ";
+	union_init_expr << src_type << " v; ";
+	union_init_expr << "unsigned char a[sizeof(" << src_type << ")]; ";
+	union_init_expr << "} const __src__ = { " << src_init_expr << " }; ";
+
+	return union_init_expr.str();
+}
+
 std::string TraceCall::varlength_getFullTraceWriteExpression()
 {
 	std::stringstream alloc_record;
@@ -531,27 +561,21 @@ std::string TraceCall::constlength_getFullTraceWriteExpression()
     return allocRecordArray() + start_record.str() + commitRecords();
 }
 
-std::string TraceCall::constlength_writeSimpleValue(std::string &expression, std::string &type_name, bool is_pointer, bool is_reference, unsigned int value_size, unsigned int *buf_left)
+std::string TraceCall::constlength_writeSimpleValue(const std::string &expression, const std::string &type_name, bool is_pointer, bool is_reference, unsigned int value_size, unsigned int *buf_left) const
 {
     std::stringstream serialized;
 
-    serialized << "{";
-    if (is_pointer) {
-        serialized << "volatile const void * __src__ =  " << castTo(ast.getLangOptions(), expression, "volatile const void *") << ";";
-    } else if (is_reference) {
-        serialized << "volatile const void * __src__ =  " << castTo(ast.getLangOptions(), "&" + expression, "volatile const void *") << ";";
-    } else {
-        serialized << type_name <<  " __src__ = (" << expression << ");";
-    }
+    serialized << "{ ";
+    serialized << writeSimpleValueSrcDecl(expression, type_name, is_pointer, is_reference);
     
     unsigned int copy_size = MIN(value_size, (*buf_left));
     const std::string payload_expr("__records[__rec_idx].u.payload");
-    serialized << "__builtin_memcpy((&" << payload_expr << "[" << TRACE_RECORD_PAYLOAD_SIZE - (*buf_left) << "]), &__src__," << copy_size << ");";
+    serialized << "__builtin_memcpy((&" << payload_expr << "[" << TRACE_RECORD_PAYLOAD_SIZE - (*buf_left) << "]), __src__.a," << copy_size << ");";
     (*buf_left) -= copy_size;
     if ((*buf_left) == 0) {
         if (copy_size) {
             serialized << constlength_goToNextRecord(buf_left);
-            serialized << "__builtin_memcpy(&" << payload_expr << ", " + castTo(ast.getLangOptions(), "(&__src__", "const char *") << "+ " << copy_size << "), " << value_size - copy_size << ");";
+            serialized << "__builtin_memcpy(&" << payload_expr << ", __src__.a + " << copy_size << ", " << value_size - copy_size << ");";
         }
         
         (*buf_left) -= value_size - copy_size;
@@ -561,31 +585,27 @@ std::string TraceCall::constlength_writeSimpleValue(std::string &expression, std
     return serialized.str();
 }
     
-std::string TraceCall::varlength_writeSimpleValue(std::string &expression, std::string &type_name, bool is_pointer, bool is_reference)
+std::string TraceCall::varlength_writeSimpleValue(const std::string &expression, const std::string &type_name, bool is_pointer, bool is_reference) const
 {
     std::stringstream serialized;
-    std::string expression_sizeof = "sizeof(__src__)";
+    std::string expression_sizeof = "sizeof(__src__.v)";
     std::string buf_left_str = "(*__buf_left)";
 
-    serialized << "{";
-    if (is_pointer) {
-        serialized << "volatile const void * __src__ =  " << castTo(ast.getLangOptions(), expression, "volatile const void *") << ";";
-    } else if (is_reference) {
-        serialized << "volatile const void * __src__ =  " << castTo(ast.getLangOptions(), "&" + expression, "volatile const void *") << ";";
-    } else {
-        serialized << type_name <<  " __src__ = (" << expression << ");";
-    }
+    serialized << "{ ";
+    serialized << writeSimpleValueSrcDecl(expression, type_name, is_pointer, is_reference);
     
     serialized << "unsigned int copy_size = " << genMIN(expression_sizeof, buf_left_str) << ";";
-    serialized << "__builtin_memcpy((*__typed_buf), &__src__, copy_size);";
+    serialized << "__builtin_memcpy((*__typed_buf), __src__.a, copy_size);";
     
     serialized << "(*__typed_buf) += copy_size;";
     serialized << "(*__buf_left) -= copy_size;";
     serialized << "if ((*__buf_left) == 0) {";
     serialized << varlength_goToNextRecord();
-    serialized << "__builtin_memcpy((*__typed_buf), " + castTo(ast.getLangOptions(), "&__src__", "const char *") + "+ copy_size, sizeof(__src__) - copy_size);";
-    serialized << "(*__typed_buf) += " << expression_sizeof << " - copy_size;";
-    serialized << "(*__buf_left) -= " << expression_sizeof << " - copy_size;";
+
+    std::string remaining_copy_expr = expression_sizeof + " - copy_size";
+    serialized << "__builtin_memcpy((*__typed_buf), __src__.a + copy_size, " << remaining_copy_expr << ");";
+    serialized << "(*__typed_buf) += " << remaining_copy_expr << ";";
+    serialized << "(*__buf_left) -= " << remaining_copy_expr << ";";
     serialized << "}}";
 
     return serialized.str();

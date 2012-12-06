@@ -271,12 +271,14 @@ static __thread struct trace_record *trace_records_dynamic_array = NULL;
 struct trace_record *trace_realloc_records_array(struct trace_record *const records, unsigned int *n_records)
 {
 	assert(runtime_control.records_array_increase_factor > 1);
-	if ((NULL == records) || (NULL == n_records)) {
+	if (NULL == n_records) {
 		errno = EFAULT;
 		return NULL;
 	}
 
-	if (*n_records < 1) {
+	/* Verify that records is either a pointer obtained through a previous call to this function or NULL */
+	const bool_t records_valid = (NULL == trace_records_dynamic_array) || (records == trace_records_dynamic_array);
+	if ((*n_records < 1) || ! records_valid)  {
 		errno = EINVAL;
 		return NULL;
 	}
@@ -285,22 +287,17 @@ struct trace_record *trace_realloc_records_array(struct trace_record *const reco
 	const size_t new_size = old_size * runtime_control.records_array_increase_factor;
 	struct trace_record *new_records = realloc(trace_records_dynamic_array, new_size);
 
-	if (NULL != new_records) {
-		if (NULL == trace_records_dynamic_array) {  /* The original data is in an array allocated on the stack */
-			memcpy(new_records, records, old_size);
-		}
-		else {
-			/* Make sure that records is either a pointer obtained through a previous call to this function or NULL */
-			TRACE_ASSERT((trace_records_dynamic_array == records) || (NULL == records));
-		}
-		*n_records = new_size;
-		trace_records_dynamic_array = new_records;
-		return new_records;
-	}
-	else {
+	if (NULL == new_records) {
 		/* The old array could not be increased, but it is still valid */
-		return records ? records : trace_records_dynamic_array;
+		return (NULL != records) ? records : trace_records_dynamic_array;
 	}
+
+	if ((NULL != records) && (NULL == trace_records_dynamic_array)) {  /* The original data is in an array allocated on the stack */
+		memcpy(new_records, records, old_size);
+	}
+	*n_records = new_size;
+	trace_records_dynamic_array = new_records;
+	return new_records;
 }
 
 void trace_free_records_array()

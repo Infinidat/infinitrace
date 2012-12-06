@@ -273,14 +273,15 @@ private:
     
     std::string initializeIntermediateTypedRecord(const std::string& deref_operator) const;
     std::string initializeOpeningTypedRecord(const std::string& deref_operator) const;
+    std::string writeSimpleValueSrcDecl(const std::string &expression, const std::string &type_name, bool is_pointer, bool is_reference) const;
 
-    std::string constlength_writeSimpleValue(std::string &expression, std::string &type_name, bool is_pointer, bool is_reference, unsigned int size, unsigned int *buf_left);
+    std::string constlength_writeSimpleValue(const std::string &expression, const std::string &type_name, bool is_pointer, bool is_reference, unsigned int size, unsigned int *buf_left) const;
     std::string constlength_goToNextRecord(unsigned int *buf_left) const;
-    std::string constlength_initializeTypedRecord(unsigned int *buf_left);
+    std::string constlength_initializeTypedRecord(unsigned int *buf_left) const;
 
-    std::string varlength_writeSimpleValue(std::string &expression, std::string &type_name, bool is_pointer, bool is_reference);
+    std::string varlength_writeSimpleValue(const std::string &expression, const std::string &type_name, bool is_pointer, bool is_reference) const;
     std::string varlength_goToNextRecord() const;
-    std::string varlength_initializeTypedRecord();
+    std::string varlength_initializeTypedRecord() const;
 
     std::string allocRecordArray() const;
     std::string advanceRecordArrayIdx() const;
