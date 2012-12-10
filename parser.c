@@ -165,8 +165,13 @@ static int my_strncpy(char* formatted_record, const char* source, int max_size)
  *   -1: error
  *
  */
-static int wait_for_data(trace_parser_t *parser, int ms_timeout)
+static int wait_for_data(trace_parser_t *parser, int ms_timeout __attribute__((unused)))
 {
+	if (parser->inotify_fd < 0) {
+		sleep(1);
+		return 1;
+	}
+
 #ifdef _USE_INOTIFY_
     struct inotify_event event;
     struct pollfd pollfd;
@@ -198,66 +203,101 @@ static int wait_for_data(trace_parser_t *parser, int ms_timeout)
         }
     }
 #else
-    sleep(1);
-    return 1;
+    assert(0);
+    return -1;
 #endif
 }
 
-static long long get_current_end_offset_from_fd(int fd)
+static off64_t get_current_end_offset_from_fd(int fd)
 {
-    off64_t size;
-    size = lseek64(fd, 0, SEEK_END);
-    if ((off64_t)-1 == size) {
-    	fprintf(stderr, "Failed to obtain end offset for fd %d due to error %s", fd, strerror(errno));
-        return -1LL;
-    }
+	struct stat st;
+	if (0 != fstat(fd, &st)) {
+		return (off64_t) -1;
+	}
 
-    return size;
+	const off64_t allocated_size = (off64_t) 512 * st.st_blocks;
+    return MIN(allocated_size, st.st_size);
 }
 
-static long long trace_end_offset(trace_parser_t *parser)
+
+static void *re_map(trace_parser_t *parser, off64_t new_end)
 {
-    off_t new_end = get_current_end_offset_from_fd(parser->file_info.fd);
-    if (new_end != parser->file_info.end_offset) {
 #ifdef _USE_MREMAP_
-        void *new_addr = mremap(parser->file_info.file_base, parser->file_info.end_offset, new_end, MREMAP_MAYMOVE);
+
+    return mremap(parser->file_info.file_base, parser->file_info.end_offset, new_end, MREMAP_MAYMOVE);
+
+#else
+
+	if (0 != munmap(parser->file_info.file_base, parser->file_info.end_offset)) {
+		return MAP_FAILED;
+	}
+	return mmap(NULL, new_end, PROT_READ, MAP_SHARED, parser->file_info.fd, 0);
+
+#endif
+}
+
+
+static off64_t trace_end_offset(trace_parser_t *parser)
+{
+    const off64_t new_end = get_current_end_offset_from_fd(parser->file_info.fd);
+    if (new_end != parser->file_info.end_offset) {
+    	assert(new_end > parser->file_info.end_offset);
+    	void *const new_addr = re_map(parser, new_end);
         if (!new_addr || MAP_FAILED == new_addr) {
             return -1;
         }
+
         parser->file_info.end_offset = new_end;
         parser->file_info.file_base = new_addr;
-#else
-        fprintf(stderr, "Could not increase memory mapping size since this platform doesn't have mremap()\n");
-        return -1;
-#endif
     }
 
     return new_end;
 }
 
-static void refresh_end_offset(trace_parser_t *parser)
+static inline bool_t record_has_null_header(const struct trace_record *rec)
 {
-    trace_end_offset(parser);
+	return 0 == *(__uint128_t *)rec;
 }
 
 static int read_next_record(trace_parser_t *parser, struct trace_record *record)
 {
-    int rc;
+	static bool_t printed_wait_msg = FALSE;
     while (TRUE) {
         if (parser->file_info.current_offset < parser->file_info.end_offset) {
-            memcpy(record, (unsigned char *) parser->file_info.file_base + (parser->file_info.current_offset), sizeof(*record));
+        	const struct trace_record *const src_rec = (const struct trace_record *) ((unsigned char *) parser->file_info.file_base + (parser->file_info.current_offset));
+        	if (parser->wait_for_input && record_has_null_header(src_rec)) {
+        		if (! printed_wait_msg) {
+        			fputs("Waiting for data ...", stderr);
+        			printed_wait_msg = TRUE;
+        		}
+        		sleep(1);
+        		fputc('.', stderr);
+        		continue;
+        	}
+
+            memcpy(record, src_rec, sizeof(*record));
             parser->file_info.current_offset += sizeof(*record);
             return 0;
         }
 
         if (parser->wait_for_input) {
             parser->silent_mode = FALSE;
-            rc = wait_for_data(parser, -1);
-            if (-1 == rc) {
+            switch(wait_for_data(parser, -1)) {
+            case -1:
                 return -1;
-            } else {
-                refresh_end_offset(parser);
-                continue;
+
+            case 0: /* No data */
+            	continue;
+
+            case 1: /* Data may have arrived */
+				if (trace_end_offset(parser) < (off64_t) 0) {
+					return -1;
+				}
+				continue;
+
+            default:
+				assert(0);
+				break;
             }
         } else {
             memset(record, 0, sizeof(*record));
@@ -272,7 +312,7 @@ static int read_next_record(trace_parser_t *parser, struct trace_record *record)
 
 void trace_parser_init(trace_parser_t *parser, trace_parser_event_handler_t event_handler, void *arg, enum trace_input_stream_type stream_type)
 {
-	/* Catch resource deallocation issues. This is only gauranteed to work if a single parser structure is used consistently. */
+	/* Catch resource deallocation issues. This is only guaranteed to work if a single parser structure is used consistently. */
 	static trace_parser_t *last_parser_used = NULL;
 	bool_t first_init = (parser != last_parser_used);
 	assert((MAP_FAILED == parser->file_info.file_base) || first_init);
@@ -2211,10 +2251,10 @@ int TRACE_PARSER__dump_statistics(trace_parser_t *parser)
     free_stats_pool(log_stats_pool);
     return 0;
 }
-
+#ifdef _USE_INOTIFY_
 static int init_inotify(trace_parser_t *parser, const char *filename)
 {
-#ifdef _USE_INOTIFY_
+
     int rc;
     rc = inotify_init();
     if (-1 == rc) {
@@ -2229,15 +2269,13 @@ static int init_inotify(trace_parser_t *parser, const char *filename)
 
     parser->inotify_descriptor = rc;
     return 0;
-#else
-    return -1;
-#endif
 }
+#endif
 
 /* Remove rlimits for virtual memory, which could prevent trace_reader from running */
 static int remove_limits(void)
 {
-    static const struct rlimit limit = { RLIM_INFINITY, RLIM_INFINITY };
+    const struct rlimit limit = { RLIM_INFINITY, RLIM_INFINITY };
     return setrlimit(RLIMIT_AS, &limit);
 }
 
@@ -2258,18 +2296,18 @@ static long long aligned_size(long long size)
 
 static void *mmap_grow(void* addr, long long size, long long new_size)
 {
-    /* XXX: consider converting to mremap */
+ #ifdef _USE_MREMAP_
+    return mremap(addr, size, new_size, MREMAP_MAYMOVE);
+#else
     void* new_addr = mmap(NULL, new_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    if (new_addr == MAP_FAILED) {
-        return new_addr;
-    }
-
-    if (addr) {
+    if ((new_addr != MAP_FAILED) && (addr)) {
         memcpy(new_addr, addr, size);
         munmap(addr, size);
     }
 
     return new_addr;
+
+#endif
 }
 
 static void *mmap_gzip(int fd, long long *input_size)
@@ -2460,16 +2498,6 @@ int TRACE_PARSER__from_file(trace_parser_t *parser, bool_t wait_for_input, const
     if (wait_for_input) {
         parser->silent_mode = TRUE;
         parser->wait_for_input = TRUE;
-        if (0 != init_inotify(parser, filename)) {
-        	fprintf(stderr, "Failed to set-up inotify"
-#ifdef _USE_INOTIFY_
-      "because of the following error: %s\n", strerror(errno)
-#else
-      "because it is unsupported on this platform"
-#endif
-        	);
-            return -1;
-        }
     }
 
     rc = mmap_file(parser, filename);
@@ -2495,8 +2523,10 @@ int TRACE_PARSER__from_file(trace_parser_t *parser, bool_t wait_for_input, const
     parser->file_info.format_version = file_header.u.file_header.format_version;
     switch (parser->file_info.format_version) {
     case 0xA3:
+    	parser->file_info.low_latency_mode = (0 != (file_header.u.file_header.flags & TRACE_FILE_HEADER_FLAG_LOW_LATENCY_MODE));
 #if VER_HAS_SEVERITY_DEF(0xA3)
     	FILL_SEV_MAPPING_FOR_VER(0xA3)
+    	/* No break - continue with the adjustments defined for earlier versions. */
 #endif
 
     case 0xA2:
@@ -2519,8 +2549,15 @@ int TRACE_PARSER__from_file(trace_parser_t *parser, bool_t wait_for_input, const
     	return -1;
     }
     
+#ifdef _USE_INOTIFY_
+    if (wait_for_input && ! parser->file_info.low_latency_mode && (0 != init_inotify(parser, filename))) {
+     	fprintf(stderr, "Failed to set-up inotify because of the following error: %s\n", strerror(errno));
+        return -1;
+    }
+#endif
+
     my_strncpy(parser->file_info.filename, filename, sizeof(parser->file_info.filename));    
-    my_strncpy(parser->file_info.machine_id, (char * ) file_header.u.file_header.machine_id, sizeof(parser->file_info.machine_id));
+    my_strncpy(parser->file_info.machine_id, (const char * ) file_header.u.file_header.machine_id, sizeof(parser->file_info.machine_id));
     return 0;
 }
 

@@ -68,6 +68,7 @@ struct trace_file_info {
     int fd;
     void *file_base;
     unsigned short format_version;
+    bool_t low_latency_mode;
 };
 
 enum trace_parser_event_e {
