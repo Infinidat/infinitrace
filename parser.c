@@ -254,6 +254,27 @@ static off64_t trace_end_offset(trace_parser_t *parser)
     return new_end;
 }
 
+static int adjust_offset_for_added_data(trace_parser_t *parser)
+{
+	int rc = wait_for_data(parser, -1);
+	if ((rc > 0) && (trace_end_offset(parser) < (off64_t) 0)) {
+		return -1;
+	}
+
+	return rc;
+}
+
+static void wait_and_inform_user(void)
+{
+	static bool_t printed_wait_msg = FALSE;
+	if (! printed_wait_msg) {
+		fputs("Waiting for data ...", stderr);
+		printed_wait_msg = TRUE;
+	}
+	sleep(1);
+	fputc('.', stderr);
+}
+
 static inline bool_t record_has_null_header(const struct trace_record *rec)
 {
 	return 0 == *(__uint128_t *)rec;
@@ -261,17 +282,11 @@ static inline bool_t record_has_null_header(const struct trace_record *rec)
 
 static int read_next_record(trace_parser_t *parser, struct trace_record *record)
 {
-	static bool_t printed_wait_msg = FALSE;
     while (TRUE) {
         if (parser->file_info.current_offset < parser->file_info.end_offset) {
         	const struct trace_record *const src_rec = (const struct trace_record *) ((unsigned char *) parser->file_info.file_base + (parser->file_info.current_offset));
         	if (parser->wait_for_input && record_has_null_header(src_rec)) {
-        		if (! printed_wait_msg) {
-        			fputs("Waiting for data ...", stderr);
-        			printed_wait_msg = TRUE;
-        		}
-        		sleep(1);
-        		fputc('.', stderr);
+        		wait_and_inform_user();
         		continue;
         	}
 
@@ -282,22 +297,8 @@ static int read_next_record(trace_parser_t *parser, struct trace_record *record)
 
         if (parser->wait_for_input) {
             parser->silent_mode = FALSE;
-            switch(wait_for_data(parser, -1)) {
-            case -1:
-                return -1;
-
-            case 0: /* No data */
-            	continue;
-
-            case 1: /* Data may have arrived */
-				if (trace_end_offset(parser) < (off64_t) 0) {
-					return -1;
-				}
-				continue;
-
-            default:
-				assert(0);
-				break;
+            if (adjust_offset_for_added_data(parser) < 0) {
+            	return -1;
             }
         } else {
             memset(record, 0, sizeof(*record));
@@ -2570,9 +2571,9 @@ void TRACE_PARSER__fini(trace_parser_t *parser)
     free_all_metadata(parser);
 }
 
-long long TRACE_PARSER__seek(trace_parser_t *parser, long long offset, int whence)
+off64_t TRACE_PARSER__seek(trace_parser_t *parser,off64_t offset, int whence)
 {
-    long long absolute_offset = offset * sizeof(struct trace_record);
+	off64_t absolute_offset = offset * sizeof(struct trace_record);
     if (parser->stream_type == TRACE_INPUT_STREAM_TYPE_NONSEEKABLE) {
     	errno = EINVAL;
         return -1;
@@ -2583,25 +2584,41 @@ long long TRACE_PARSER__seek(trace_parser_t *parser, long long offset, int whenc
         return -1;
     }
 
-    long long new_offset;
-    if (whence == SEEK_SET) {
-        new_offset = absolute_offset;
-    } else if (whence == SEEK_CUR) {
-        new_offset = parser->file_info.current_offset + absolute_offset;
-    } else if (whence == SEEK_END) {
-        new_offset = parser->file_info.end_offset + absolute_offset;
-    } else {
-        return -1;
+    off64_t new_offset;
+
+    switch (whence) {
+    case SEEK_SET:
+    	new_offset = absolute_offset;
+    	break;
+
+    case SEEK_CUR:
+    	new_offset = parser->file_info.current_offset + absolute_offset;
+    	break;
+
+    case SEEK_END:
+    	new_offset = parser->file_info.end_offset + absolute_offset;
+    	break;
+
+    default:
+    	errno = EINVAL;
+    	return -1;
     }
 
-    if (new_offset > parser->file_info.end_offset) {
-    	errno = ESPIPE;
-        return -1;
-    } else {
-        parser->buffer_dump_context.file_offset = new_offset / sizeof(struct trace_record);
-        parser->file_info.current_offset = new_offset;
-        return parser->buffer_dump_context.file_offset;
+
+    while (new_offset > parser->file_info.end_offset) {
+    	if (! parser->wait_for_input) {
+    		errno = ESPIPE;
+    		return -1;
+    	}
+
+    	if (adjust_offset_for_added_data(parser) < 0) {
+    		return -1;
+    	}
     }
+
+	parser->buffer_dump_context.file_offset = new_offset / sizeof(struct trace_record);
+	parser->file_info.current_offset = new_offset;
+	return parser->buffer_dump_context.file_offset;
 }
 
 /*

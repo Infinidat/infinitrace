@@ -205,8 +205,7 @@ int TRACE_PARSER__dump_all_metadata(trace_parser_t *parser);
 int TRACE_PARSER__dump(trace_parser_t *parser);
 int TRACE_PARSER__dump_statistics(trace_parser_t *parser);
 
-long long TRACE_PARSER__seek(trace_parser_t *parser, long long offset, int whence);
-unsigned long long TRACE_PARSER__seek_to_time(trace_parser_t *parser, unsigned long long ts, int *error_occurred);
+off64_t TRACE_PARSER__seek(trace_parser_t *parser, off64_t offset, int whence);
 
 
 #endif /* __TRACE_PARSER_H__ */
