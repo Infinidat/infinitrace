@@ -282,7 +282,7 @@ bool TraceParam::parseEnumTypeParam(const Expr *expr) {
     return true;
 }
 
-static bool traceCallReferenced(std::set<TraceCall *> &traces, std::string trace_name)
+static bool traceCallReferenced(const std::set<TraceCall *> &traces, const std::string& trace_name)
 {
     for (std::set<TraceCall *>::iterator i = traces.begin(); i != traces.end(); i++) {
         TraceCall *trace_call = *i;
@@ -294,14 +294,14 @@ static bool traceCallReferenced(std::set<TraceCall *> &traces, std::string trace
     return false;
 }
 
-std::string TraceCall::getTraceDeclaration()
+std::string TraceCall::getTraceDeclaration() const
 {
     std::stringstream params;
     std::string flags;
     std::string str;
     std::string param_name;
     for (unsigned int i = 0; i < args.size(); i++) {
-        TraceParam &param = args[i];
+        const TraceParam &param = args[i];
         param_name = "0";
         flags = param.stringifyTraceParamFlags();
         if (param.param_name.size() > 0) {
@@ -438,11 +438,11 @@ std::string TraceCall::genMIN(const std::string &a, const std::string &b)
     return code.str();
 }
 
-std::string TraceCall::varlength_getTraceWriteExpression()
+std::string TraceCall::varlength_getTraceWriteExpression() const
 {
     std::stringstream start_record;
      for (unsigned int i = 0; i < args.size(); i++) {
-        TraceParam &param = args[i];
+        const TraceParam &param = args[i];
 
         if (param.isSimple()) {
             start_record << varlength_writeSimpleValue(param.expression, param.type_name, param.is_pointer, param.is_reference);
@@ -534,7 +534,7 @@ std::string TraceCall::writeSimpleValueSrcDecl(const std::string &expression, co
 	return union_init_expr.str();
 }
 
-std::string TraceCall::varlength_getFullTraceWriteExpression()
+std::string TraceCall::varlength_getFullTraceWriteExpression() const
 {
 	std::stringstream alloc_record;
     alloc_record << "unsigned int _buf_left; ";
@@ -550,7 +550,7 @@ std::string TraceCall::varlength_getFullTraceWriteExpression()
     return alloc_record.str() + start_record.str() + commitRecords();
 }
 
-std::string TraceCall::constlength_getFullTraceWriteExpression()
+std::string TraceCall::constlength_getFullTraceWriteExpression() const
 {
     std::stringstream start_record;
     unsigned int buf_left = 0;
@@ -611,11 +611,11 @@ std::string TraceCall::varlength_writeSimpleValue(const std::string &expression,
     return serialized.str();
 }
 
-std::string TraceCall::constlength_getTraceWriteExpression(unsigned int *buf_left)
+std::string TraceCall::constlength_getTraceWriteExpression(unsigned int *buf_left) const
 {
     std::stringstream start_record;
     for (unsigned int i = 0; i < args.size(); i++) {
-        TraceParam &param = args[i];
+        const TraceParam &param = args[i];
         
         if (param.isSimple()) {
             start_record << constlength_writeSimpleValue(param.expression, param.type_name, param.is_pointer, param.is_reference, param.size, buf_left);
@@ -626,19 +626,20 @@ std::string TraceCall::constlength_getTraceWriteExpression(unsigned int *buf_lef
     return start_record.str();
 }
 
-std::string TraceCall::getExpansion() {
-    if (constantSizeTrace()) {
-        return getTraceDeclaration() + constlength_getFullTraceWriteExpression();
-    } else {
-        return getTraceDeclaration() + varlength_getFullTraceWriteExpression();
-    }
+std::string TraceCall::getExpansion() const {
+	return getTraceDeclaration() + getFullTraceWriteExpression();
+}
+
+std::string TraceCall::getFullTraceWriteExpression() const
+{
+	return constantSizeTrace() ? constlength_getFullTraceWriteExpression() : varlength_getFullTraceWriteExpression();
 }
 
 /* Expand a regular trace call */
 void TraceCall::expand()
 {
     std::string declaration = getTraceDeclaration();
-    std::string trace_write_expression = varlength_getFullTraceWriteExpression();
+    std::string trace_write_expression = getFullTraceWriteExpression();
     static const char sev_threshold_expr[] = "((TRACE_SEV_INVALID != trace_thread_severity_threshold) ? trace_thread_severity_threshold : trace_runtime_control_get_default_min_sev())";
     replaceExpr(call_expr, "{" + declaration + "if ((" + 
     	getSeverity() +  ">= " + sev_threshold_expr + ") && (current_trace_buffer != 0)){"  + trace_write_expression + "}}");
@@ -920,7 +921,7 @@ bool TraceParam::parseStringParam(const Expr *expr)
     return false;
 }
 
-void TraceCall::unknownTraceParam(const Expr *trace_param)
+void TraceCall::unknownTraceParam(const Expr *trace_param) const
 {
     Diags.Report(ast.getFullLoc(trace_param->getLocStart()), UnknownTraceParamDiag) << trace_param->getSourceRange();
 }

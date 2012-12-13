@@ -102,7 +102,7 @@ TraceParam(llvm::raw_ostream &out, DiagnosticsEngine &_Diags, ASTContext &_ast, 
         return *this;
     }
     
-    std::string stringifyTraceParamFlags()
+    std::string stringifyTraceParamFlags() const
     {
         std::stringstream trace_flags;
         trace_flags << "0";
@@ -235,10 +235,10 @@ TraceCall(llvm::raw_ostream &out, DiagnosticsEngine &_Diags, ASTContext &_ast, R
     void addTraceParam(TraceParam &param) { args.push_back(param); }
     void setSeverity(enum trace_severity _severity) { severity = _severity; }
     void setKind(const char *_kind) { kind = _kind; }
-    std::string getExpansion();
+    std::string getExpansion() const;
     void expand();
     void expandWithoutDeclaration();
-    std::string getTraceDeclaration();
+    std::string getTraceDeclaration() const;
     
     bool method_generated;
     std::string trace_call_name;
@@ -287,14 +287,13 @@ private:
     std::string advanceRecordArrayIdx() const;
     std::string commitRecords() const;
     bool constantSizeTrace() const;
-    void unknownTraceParam(const Expr *trace_param);
+    void unknownTraceParam(const Expr *trace_param) const;
 
-
-    std::string constlength_getTraceWriteExpression(unsigned int *buf_left);
-    std::string constlength_getFullTraceWriteExpression();
-
-    std::string varlength_getTraceWriteExpression();
-    std::string varlength_getFullTraceWriteExpression();
+    std::string getFullTraceWriteExpression() const;
+    std::string constlength_getTraceWriteExpression(unsigned int *buf_left) const;
+    std::string constlength_getFullTraceWriteExpression() const;
+    std::string varlength_getTraceWriteExpression() const;
+    std::string varlength_getFullTraceWriteExpression() const;
 };
 }
 
