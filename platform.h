@@ -1,5 +1,6 @@
 /***
-Copyright 2012 Yitzik Casapu <yitzikc [at] infinidat.com>
+Copyright 2012 infinidat
+   Written by Yitzik Casapu <yitzikc [at] infinidat.com>
    Sponsored by infinidat (http://infinidat.com)
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,9 +35,9 @@ Copyright 2012 Yitzik Casapu <yitzikc [at] infinidat.com>
 
 #endif
 
-#include <unistd.h>
-
 #ifdef _LARGEFILE_IS_DEFAULT_ /* Normal Posix API functions support 64-bit files, no need for special functions */
+
+#include <unistd.h>
 #define lseek64 lseek
 #define ftruncate64 ftruncate
 typedef off_t off64_t;
@@ -47,6 +48,12 @@ typedef off_t off64_t;
 #include <errno.h>
 #ifndef EFTYPE
 #define EFTYPE EPROTONOSUPPORT
+#endif
+
+/* MAP_ANON is recognized on both OS/X and Linux, however it is deprecated on Linux in favor of MAP_ANONYMOUS, which is not defined on OS/X. So we do our own aliasing in case it is missing */
+#include <sys/mman.h>
+#ifndef MAP_ANON
+#define MAP_ANON MAP_ANONYMOUS
 #endif
 
 #endif /* __PLATFORM_H__ */

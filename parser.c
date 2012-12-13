@@ -2295,12 +2295,21 @@ static long long aligned_size(long long size)
     return (size + page_size - 1) & ~(page_size - 1);
 }
 
-static void *mmap_grow(void* addr, long long size, long long new_size)
+static void *mmap_new_anon_mem(size_t size)
+{
+	return mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANON, -1, 0);
+}
+
+static void *mmap_grow(void *const addr, size_t size, size_t new_size)
 {
  #ifdef _USE_MREMAP_
+	if (NULL == addr) {
+		assert(0 == size);
+		return mmap_new_anon_mem(new_size);
+	}
     return mremap(addr, size, new_size, MREMAP_MAYMOVE);
 #else
-    void* new_addr = mmap(NULL, new_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    void* new_addr = mmap_new_anon_mem(new_size);
     if ((new_addr != MAP_FAILED) && (addr)) {
         memcpy(new_addr, addr, size);
         munmap(addr, size);
