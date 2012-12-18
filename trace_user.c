@@ -182,6 +182,52 @@ static inline int trace_compare_generation(trace_generation_t a, trace_generatio
 	return 0;
 }
 
+static inline unsigned bytes_left_in_buf(const struct trace_record *records, unsigned rec_idx, const unsigned char *typed_buf)
+{
+	return (const unsigned char *)(records + rec_idx + 1) - typed_buf;
+}
+
+unsigned trace_copy_vstr_to_records(struct trace_record **records, unsigned *rec_idx, unsigned *records_array_len, unsigned char **typed_buf, const char *src)
+{
+	const unsigned char CONTINUATION_MASK = 0x80;
+	unsigned bytes_left = bytes_left_in_buf(*records, *rec_idx, *typed_buf);
+
+	do {
+		if (0 == bytes_left) {
+			trace_advance_record_array(records, rec_idx, records_array_len);
+			*typed_buf = (*records)[*rec_idx].u.payload;
+			bytes_left = TRACE_RECORD_PAYLOAD_SIZE;
+		}
+
+		unsigned copy_size;
+		const char *end = memchr(src, '\0', bytes_left);
+		if (NULL != end) { /* The remaining length of the string can fit in the buffer */
+			copy_size = end - src;
+			TRACE_ASSERT(copy_size < bytes_left);
+			*typed_buf[0] = 0;
+		}
+		else {
+			copy_size = bytes_left - 1;
+			*typed_buf[0] = CONTINUATION_MASK;
+			TRACE_ASSERT(src[copy_size]);
+		}
+
+		TRACE_ASSERT(copy_size < CONTINUATION_MASK);
+
+		*typed_buf[0] |= copy_size;
+		++ *typed_buf;
+		memcpy(*typed_buf, src, copy_size);
+
+		src += copy_size;
+		*typed_buf += copy_size;
+		bytes_left -= (1 + copy_size);
+
+	} while(*src);
+
+	/* Make sure we're not allocating a new record needlessly */
+	TRACE_ASSERT(bytes_left < TRACE_RECORD_PAYLOAD_SIZE);
+	return bytes_left;
+}
 
 static void update_last_committed_record(struct trace_records *records, trace_record_counter_t new_index)
 {

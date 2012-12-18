@@ -417,7 +417,6 @@ std::string TraceCall::initializeIntermediateTypedRecord(const std::string& dere
 std::string TraceCall::constlength_goToNextRecord(unsigned int *buf_left) const {
     std::stringstream code;
     code << advanceRecordArrayIdx();
-    code << initializeIntermediateTypedRecord(".");
     (*buf_left) = TRACE_RECORD_PAYLOAD_SIZE;
     return code.str();
 }
@@ -425,7 +424,6 @@ std::string TraceCall::constlength_goToNextRecord(unsigned int *buf_left) const 
 std::string TraceCall::varlength_goToNextRecord() const {
     std::stringstream code;
     code << advanceRecordArrayIdx();
-    code << initializeIntermediateTypedRecord(".");
     code << "(*__typed_buf) = __records[__rec_idx].u.payload;";
     code << "(*__buf_left) = " << TRACE_RECORD_PAYLOAD_SIZE << ";";
     return code.str();
@@ -449,26 +447,14 @@ std::string TraceCall::varlength_getTraceWriteExpression() const
         }
 
         if (param.isVarString()) {
-            std::string buf_left_str("(*__buf_left) - 1");
-            std::string rlen_str("rlen");
-
-            start_record << "{ " << param.type_name << " _s_ = (" << param.expression << ");";
-            start_record << "unsigned int rlen = _s_ ? __builtin_strlen(" << castTo(ast.getLangOptions(), "_s_", "const char *") << "): 0;";
-            start_record << "do { ";
-            start_record << "unsigned int copy_size = " << genMIN(rlen_str, buf_left_str) << ";";
-            start_record << "__builtin_memcpy(&((*__typed_buf)[1]), _s_, copy_size);";
-            start_record << "(*__typed_buf)[0] = copy_size;";
-            start_record << "(*__typed_buf)[0] |= (rlen - copy_size) ? 128 : 0;";
-            start_record << "(*__typed_buf) += 1 + copy_size;";
-            start_record << "rlen -= copy_size;";
-            start_record << "(*__buf_left) -= copy_size + 1;";
-            start_record << "_s_ += copy_size;";
-            start_record << "if (rlen || ((*__buf_left) == 0)) {";
-            start_record << varlength_goToNextRecord();
-            start_record << "}} while (rlen); }";
+        	start_record << "*__buf_left = trace_copy_vstr_to_records(&__records, &__rec_idx, &__records_array_len, __typed_buf, ";
+        	start_record << castTo(ast.getLangOptions(), param.expression, "const char *");
+        	start_record << "); ";
         }
 
         if (param.trace_call) {
+        	// TODO: Need to check why we are calling traceCallReferenced(), and why it's doing a linear search.
+        	// The whole point about using a set is that the item is only inserted if it's not there already.
             if (!traceCallReferenced(globalTraces, param.trace_call->trace_call_name)) {
                 globalTraces.insert(param.trace_call);
             }
@@ -491,7 +477,7 @@ std::string TraceCall::allocRecordArray() const
 	std::stringstream code;
 
 	code << "unsigned __records_array_len = p_trace_runtime_control->initial_records_per_trace; ";
-	code << "struct trace_record __records_initial_array[__records_array_len] ; ";
+	code << "struct trace_record __records_initial_array[__records_array_len]; ";
 	code << "struct trace_record* __records = __records_initial_array; ";
 	code << "unsigned __rec_idx = 0; ";
 
@@ -500,13 +486,7 @@ std::string TraceCall::allocRecordArray() const
 
 std::string TraceCall::advanceRecordArrayIdx() const
 {
-	std::stringstream code;
-	code << "if (++__rec_idx >= __records_array_len) { ";
-	code << "__records = trace_realloc_records_array(__records, &__records_array_len); ";
-	// In case trace_realloc_records_array failed and did not increase the buffer, avoid overflowing the array, at the cost of some trace corruption
-	code << "__rec_idx = " << genMIN("__rec_idx", "__records_array_len - 1") << "; }";
-
-	return code.str();
+	return "trace_advance_record_array(&__records, &__rec_idx, &__records_array_len); ";
 }
 
 std::string TraceCall::writeSimpleValueSrcDecl(const std::string &expression, const std::string &type_name, bool is_pointer, bool is_reference) const
@@ -572,13 +552,12 @@ std::string TraceCall::constlength_writeSimpleValue(const std::string &expressio
     const std::string payload_expr("__records[__rec_idx].u.payload");
     serialized << "__builtin_memcpy((&" << payload_expr << "[" << TRACE_RECORD_PAYLOAD_SIZE - (*buf_left) << "]), __src__.a," << copy_size << ");";
     (*buf_left) -= copy_size;
-    if ((*buf_left) == 0) {
-        if (copy_size) {
-            serialized << constlength_goToNextRecord(buf_left);
-            serialized << "__builtin_memcpy(&" << payload_expr << ", __src__.a + " << copy_size << ", " << value_size - copy_size << ");";
-        }
-        
-        (*buf_left) -= value_size - copy_size;
+
+    const unsigned remaining_bytes = value_size - copy_size;
+    if (((*buf_left) == 0) && (remaining_bytes > 0)) {
+		serialized << constlength_goToNextRecord(buf_left);
+		serialized << "__builtin_memcpy(" << payload_expr << ", __src__.a + " << copy_size << ", " << remaining_bytes << ");";
+        (*buf_left) -= remaining_bytes;
     }
 
     serialized << "}";
@@ -594,18 +573,19 @@ std::string TraceCall::varlength_writeSimpleValue(const std::string &expression,
     serialized << "{ ";
     serialized << writeSimpleValueSrcDecl(expression, type_name, is_pointer, is_reference);
     
-    serialized << "unsigned int copy_size = " << genMIN(expression_sizeof, buf_left_str) << ";";
-    serialized << "__builtin_memcpy((*__typed_buf), __src__.a, copy_size);";
+    serialized << "const unsigned int __copy_size = " << genMIN(expression_sizeof, buf_left_str) << ";";
+    serialized << "__builtin_memcpy((*__typed_buf), __src__.a, __copy_size);";
     
-    serialized << "(*__typed_buf) += copy_size;";
-    serialized << "(*__buf_left) -= copy_size;";
-    serialized << "if ((*__buf_left) == 0) {";
+    serialized << "(*__typed_buf) += __copy_size;";
+    serialized << "(*__buf_left) -= __copy_size;";
+
+    std::string remaining_copy_expr = "(" + expression_sizeof + " - __copy_size)";
+    serialized << "if ((*__buf_left == 0) && ("<<  remaining_copy_expr << " > 0)) { ";
     serialized << varlength_goToNextRecord();
 
-    std::string remaining_copy_expr = expression_sizeof + " - copy_size";
-    serialized << "__builtin_memcpy((*__typed_buf), __src__.a + copy_size, " << remaining_copy_expr << ");";
-    serialized << "(*__typed_buf) += " << remaining_copy_expr << ";";
-    serialized << "(*__buf_left) -= " << remaining_copy_expr << ";";
+    serialized << "__builtin_memcpy((*__typed_buf), __src__.a + __copy_size, " << remaining_copy_expr << "); ";
+    serialized << "(*__typed_buf) += " << remaining_copy_expr << "; ";
+    serialized << "(*__buf_left) -= " << remaining_copy_expr << "; ";
     serialized << "}}";
 
     return serialized.str();

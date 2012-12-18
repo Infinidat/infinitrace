@@ -170,6 +170,8 @@ struct trace_buffer {
 
 /* Runtime support functions used by the auto-generated code inserted during trace instrumentation. Using them otherwise is not recommended, as they may change. */
 
+unsigned trace_copy_vstr_to_records(struct trace_record **records, unsigned *rec_idx, unsigned *records_array_len, unsigned char **typed_buf, const char *src);
+
 /* Fill-in some of the record fields (termination, severity, pid, tid, timestamp and generation) and write them as a contiguous sequence. */
 void trace_commit_records(
 		struct trace_record *source_records,
@@ -179,6 +181,15 @@ void trace_commit_records(
 /* Handle allocation of a temporary array to hold the records in case the amount of records allocated on the stack is insufficient */
 struct trace_record *trace_realloc_records_array(struct trace_record *const records, unsigned int* n_records);
 void trace_free_records_array();
+
+/* Advance the index to the record array, increasing the array itself if necessary */
+static inline void trace_advance_record_array(struct trace_record **records, unsigned *rec_idx, unsigned *records_array_len)
+{
+	if (++ *rec_idx >= *records_array_len) {
+		*records = trace_realloc_records_array(*records, records_array_len);
+		*rec_idx = (*records_array_len - 1 >= *rec_idx) ? *rec_idx : *records_array_len - 1;
+	}
+}
 
 #ifdef __cplusplus
 }
