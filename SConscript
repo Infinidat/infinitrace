@@ -20,12 +20,12 @@ with TracesDisabled(xn_env) as untraced_env:
     lib = untraced_env.XnStaticLibrary(target = 'tracesstubs', source = srcs, CCFLAGS = optflags)
     untraced_env.Alias('xn', lib)
 
-    srcs = xn_env.AutoSplit('''timeformat.c hashmap.c trace_metadata_util.c cached_file.c trace_parser.c''')
+    srcs = xn_env.AutoSplit('''timeformat.c hashmap.c trace_metadata_util.c trace_parser.c''')
     lib = untraced_env.SharedLibrary(target = 'traces', source = srcs, CCFLAGS = optflags)
     xn_env.Alias('xn', lib)
 
 objs = [Object(target = S + '.o', source = S + '.c', CCFLAGS = optflags)  for S in 'trace_metadata_util', 'hashmap']
-srcs = xn_env.AutoSplit('''cached_file.c trace_parser.c validator.c''') + objs
+srcs = xn_env.AutoSplit('''trace_parser.c validator.c''') + objs
 xn_env.BuildStaticLibraries(target = 'tracereader', source = srcs, CCFLAGS = optflags)
 
 srcs = xn_env.AutoSplit('''timeformat.c parser.c''') + objs
@@ -40,7 +40,7 @@ with TracesDisabled(xn_env) as untraced_env:
     prog = untraced_env.XnProgram(target = "reader", source = srcs, LIBS = libs, CCFLAGS = optflags, LINKFLAGS="-lz")
     untraced_env.Alias('xn', prog)
 
-# srcs = xn_env.AutoSplit('''hashmap.c trace_metadata_util.c cached_file.c trace_parser.c''')
+# srcs = xn_env.AutoSplit('''hashmap.c trace_metadata_util.c trace_parser.c''')
 # xn_env.BuildStaticLibraries(target = 'tracereader', source = srcs, CCFLAGS = optflags)
 # xn_env.Append(LIBPATH = Dir('.'))
 
