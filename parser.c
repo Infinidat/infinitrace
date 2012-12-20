@@ -148,16 +148,6 @@ static enum trace_severity trace_sev_mapping[TRACE_SEV__COUNT];
 #define MAX_ULLONG     18446744073709551615ULL
 #endif
 
-static int my_strncpy(char* formatted_record, const char* source, int max_size) 
-{
-    const char* p = memccpy(formatted_record, source, '0', max_size);
-    if (p == NULL) {
-        return max_size;
-    } else {
-        return p - formatted_record - 1;
-    }
-}
-
 /*
  * return value:
  *    1: new data
@@ -537,9 +527,9 @@ static int accumulate_metadata(trace_parser_t *parser, const struct trace_record
         context->descriptors = (struct trace_log_descriptor *) context->metadata->data;
         context->types = (struct trace_type_definition *) ((char *) context->metadata->data + context->metadata_log_desciptor_size * context->metadata->log_descriptor_count);
         if (strcmp(context->metadata->name, "xn-infinidat-core") == 0)
-            my_strncpy(context->name, "core", sizeof(context->name));
+        	trace_array_strcpy(context->name, "core");
         else
-            my_strncpy(context->name, context->metadata->name, sizeof(context->name));
+        	trace_array_strcpy(context->name, context->metadata->name);
         // context->name[sizeof(context->name) - 1] = '\0';
 
         if (0 != init_types_hash(context)) {
@@ -1793,7 +1783,7 @@ static int process_single_record(
 
         break;
     case TRACE_REC_TYPE_FILE_HEADER:
-        my_strncpy(parser->file_info.machine_id, (const char * ) record->u.file_header.machine_id, sizeof(parser->file_info.machine_id));
+    	trace_array_strcpy(parser->file_info.machine_id, record->u.file_header.machine_id);
         parser->file_info.format_version = record->u.file_header.format_version;
         break;
     case TRACE_REC_TYPE_METADATA_HEADER:
@@ -2115,7 +2105,7 @@ static int log_id_to_log_template(trace_parser_t *parser, struct trace_parser_bu
         return -1;
     }
     formatted_record += total_length;
-    my_strncpy(formatted_record, out.buf, out.i);
+    memcpy (formatted_record, out.buf, out.i);
     formatted_record[out.i] = '\0';
     return (bytes_processed > 0) ? 0 : -1;
 }
@@ -2173,8 +2163,8 @@ static struct log_stats *get_buffer_log_stats(log_stats_pool_t pool, struct trac
 static int count_entries(trace_parser_t *parser, enum trace_parser_event_e event, void __attribute__((unused)) *event_data, void __attribute__((unused)) *arg)
 {
     log_stats_pool_t *stats_pool = (log_stats_pool_t *) arg;
-    char template[512];
     struct log_stats *stats;
+    char template[sizeof(stats->logs->template)];
     
     if (event == TRACE_PARSER_BUFFER_CHUNK_HEADER_PROCESSED) {
         struct parser_buffer_chunk_processed *chunk_processed = (struct parser_buffer_chunk_processed *) event_data;
@@ -2207,8 +2197,7 @@ static int count_entries(trace_parser_t *parser, enum trace_parser_event_e event
 
     if (stats->logs[metadata_index].template[0] == '\0') {
         log_id_to_log_template(parser, complete_typed_record->buffer, metadata_index, template, sizeof(template));
-        my_strncpy(stats->logs[metadata_index].template, template, sizeof(stats->logs[metadata_index].template));
-        stats->logs[metadata_index].template[sizeof(stats->logs[metadata_index].template) - 1] = '\0';
+        trace_strncpy_and_terminate(stats->logs[metadata_index].template, template, sizeof(stats->logs[metadata_index].template));
         stats->logs[metadata_index].occurrences = 1;
         stats->unique_count++;
     } else {
@@ -2566,8 +2555,8 @@ int TRACE_PARSER__from_file(trace_parser_t *parser, bool_t wait_for_input, const
     }
 #endif
 
-    my_strncpy(parser->file_info.filename, filename, sizeof(parser->file_info.filename));    
-    my_strncpy(parser->file_info.machine_id, (const char * ) file_header.u.file_header.machine_id, sizeof(parser->file_info.machine_id));
+    trace_strncpy_and_terminate(parser->file_info.filename, filename, sizeof(parser->file_info.filename));
+    trace_array_strcpy(parser->file_info.machine_id, file_header.u.file_header.machine_id);
     return 0;
 }
 

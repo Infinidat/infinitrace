@@ -261,7 +261,7 @@ struct trace_record {
 
 		/* Payload for TRACE_REC_TYPE_FILE_HEADER */
 		struct trace_record_file_header {
-			unsigned char machine_id[TRACE_MACHINE_ID_SIZE];	/* machine hostname, truncated to TRACE_MACHINE_ID_SIZE - 1 characters */
+			char machine_id[TRACE_MACHINE_ID_SIZE];	/* machine hostname, truncated to TRACE_MACHINE_ID_SIZE - 1 characters */
             unsigned short format_version;						/* Revision of the file format */
             unsigned short flags;
             unsigned char  reserved[4];

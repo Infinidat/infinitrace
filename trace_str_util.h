@@ -25,8 +25,10 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #ifndef __TRACE_STR_UTIL_H__
 #define __TRACE_STR_UTIL_H__
 
+#include <sys/types.h>
 #include "trace_defs.h"
 #include "bool.h"
+#include "min_max.h"
 
 #ifdef __cplusplus
  extern "C" {
@@ -43,6 +45,20 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
  *  Returns TRUE on success, FALSE, otherwise */
  bool_t trace_get_number(const char* str, long long *num);
 
+ /* A custom string copy routine. Copy the content of source to dest, up to max_size bytes, including the terminating null byte if present.
+  * Return the number of bytes copied excluding the null byte */
+ size_t trace_strncpy(char* dest, const char* source, size_t max_size);
+
+ /* A wrapper for trace_strncpy which guarantees that the destination string will be null terminated. Hence its length cannot exceed max_size - 1 */
+ static inline size_t trace_strncpy_and_terminate(char* dest, const char* source, size_t max_size)
+ {
+	 const size_t n_copied = trace_strncpy(dest, source, max_size - 1);
+	 dest[n_copied] = '\0';
+	 return n_copied;
+ }
+
+ /* A wrapper macro for trace_strncpy, which copies a string between char arrays. The size is computed automatically. */
+#define trace_array_strcpy(dest, src) trace_strncpy_and_terminate((char *)(dest), (const char *)(src), MIN(sizeof(dest), sizeof(src)))
 
  /* Note: the inline functions below are deprecated. Use the standard strcmp or trace_str_to_severity_case_sensitive instead in new code.
   * Presently they are only used by the trace instrumentor code. */

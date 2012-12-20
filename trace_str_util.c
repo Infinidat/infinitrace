@@ -105,4 +105,12 @@ bool_t trace_get_number(const char* str, long long *num) { /* home made atoll / 
     return TRUE;
 }
 
-
+size_t trace_strncpy(char* dest, const char* source, size_t max_size)
+{
+	const char* p = memccpy(dest, source, '\0', max_size);
+	if (p == NULL) {
+		return max_size;
+	} else {
+		return p - dest - 1;
+	}
+}
