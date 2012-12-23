@@ -68,6 +68,7 @@ static void out_flush(out_fd* out) {
 #define _outout stdout
     fwrite(out->buf, 1, out->i, _outout);
     out->i = 0;
+#undef _outout
 }
 static void out_check(out_fd* out) {
     if (out->i < sizeof(out->buf) - 0x200)
@@ -80,24 +81,10 @@ static void SAY_S(out_fd* out, const char* str) {
     out_check(out);
     int capacity = sizeof(out->buf) - out->i;
     char* dst = out->buf + out->i;
-    const char* p = memccpy(dst, str, 0, capacity);
-    if (p == NULL) {
-        out->i += capacity;
-    } else {
-        out->i += (p - dst - 1);
-    }
+    out->i += trace_strncpy(dst, str, capacity);
 }
-static void SAY_C(out_fd* out, const char chr) {
+static inline void SAY_C(out_fd* out, const char chr) {
     out->buf[out->i++] = chr;
-}
-static void SAY_N(out_fd* out, const char* str, int n) {
-    out_check(out);
-    int capacity = sizeof(out->buf) - out->i;
-    if (n > capacity) {
-        n = capacity;
-    }
-    memcpy(&out->buf[out->i], str, n);
-    out->i += n;
 }
 static void SAY_F(out_fd* out, const char* fmt, ...) {
     out_check(out);
@@ -109,30 +96,36 @@ static void SAY_F(out_fd* out, const char* fmt, ...) {
 
 #define SAY_COL(O,C) do { if (color_bool) { SAY_S(O,C); } } while (0)
 #define SAY_COLORED(O,S,C) do { if (color_bool) { SAY_COL(O,C); SAY_S(O,S); SAY_COL(O,ANSI_RESET);} else { SAY_S(O,S); } } while(0)
-static void SAY_ESCAPED(out_fd* out, const char* buf, int size) {
-    out_check(out);
-    static const char hex_digits[] = "0123456789abcdef";
-    const char* ptr = 0;
-    for (int i=0; i<size; i++ ) {
-        if (isprint(buf[i])) {
-            if (ptr == 0) ptr = &buf[i];
-        }
-        else {
-            if (ptr) SAY_N(out, ptr, buf + i - ptr);
-                       SAY_C(out, '\\');
-            switch(buf[i]) {
-            case '\n': SAY_C(out, 'n'); break;
-            case '\t': SAY_C(out, 't'); break;
-            case '\r': SAY_C(out, 'r'); break;
-            case '\0': SAY_C(out, '0'); break;
-            default: {
-                SAY_C(out, 'x');
-                SAY_C(out, hex_digits[(buf[i] >> 4) & 0xf]);
-                SAY_C(out, hex_digits[(buf[i]     ) & 0xf]);
-            }}}
-    }
-    if (ptr) SAY_N(out, ptr, buf + size - ptr);
+
+static inline void SAY_ESCAPED_C(out_fd* out, char chr) {
+	static const char hex_digits[] = "0123456789abcdef";
+
+	if (isprint(chr)) {
+		SAY_C(out, chr);
+	}
+	else {
+		SAY_C(out, '\\');
+		switch (chr) {
+		case '\n': SAY_C(out, 'n'); break;
+		case '\t': SAY_C(out, 't'); break;
+		case '\r': SAY_C(out, 'r'); break;
+		case '\0': SAY_C(out, '0'); break;
+		default:
+			SAY_C(out, 'x');
+			SAY_C(out, hex_digits[(chr >> 4) & 0xf]);
+			SAY_C(out, hex_digits[ chr       & 0xf]);
+			break;
+		}
+	}
 }
+
+static void SAY_ESCAPED_S(out_fd* out, const char* buf, size_t size) {
+    out_check(out);
+    for (size_t i = 0; i < size; i++) {
+    	SAY_ESCAPED_C(out, buf[i]);
+    }
+}
+
 static int ends_with_equal(const out_fd* out) {
     return (out->i > 10 && out->buf[out->i-1] == '=');
 }
@@ -780,7 +773,7 @@ static int format_typed_params(
     const char *delimiter = trace_kind == TRACE_LOG_DESCRIPTOR_KIND_FUNC_ENTRY ? ", " : " ";
     int first = 1;
     for (param = log_desc->params; (param->flags != 0); param++) {
-        const int hex_bool = param->flags & TRACE_PARAM_FLAG_HEX || parser->always_hex;
+        const int hex_bool = (param->flags & TRACE_PARAM_FLAG_HEX) || parser->always_hex;
         int put_delimiter = 1; // (param + 1)->flags != 0 ;
         
         if (first) {
@@ -850,10 +843,6 @@ static int format_typed_params(
                     if (ends_with_equal(out))
                         put_delimiter = 0;
                 }
-                /*
-                  if ((param + 1)->flags != 0)
-                  SAY_S  (out, delimiter);
-                */
             }
             else
                 SAY_S  (out, "<cstr?>");
@@ -869,23 +858,27 @@ static int format_typed_params(
                     SAY_C  (out, '\"');
                 }
 
-                while (1) {
+                unsigned char continuation = FALSE;
+                do {
                     unsigned char sl = (*(unsigned char *)pdata);
-                    unsigned char len = sl & 0x7f;
-                    unsigned char continuation = sl & 0x80;
+                    const unsigned char CONTINUATION_MASK = 0x80;
+                    const unsigned char LENGTH_MASK = CONTINUATION_MASK - 1;
+
+                    unsigned char len = sl & LENGTH_MASK;
+                    continuation = 		sl & CONTINUATION_MASK;
                     pdata ++;
                     if (param->flags & TRACE_PARAM_FLAG_STR) {
                         SAY_COL(out, CYAN_B);
-                        SAY_ESCAPED(out, (const char*) pdata, len);
-
-                        if (!continuation)
-                            SAY_S  (out, "\", ");
+                        SAY_ESCAPED_S(out, (const char*) pdata, len);
                     }
-                    pdata+= len;
+                    pdata += len;
 
-                    if (!continuation)
-                        break;
-                }
+                } while (continuation);
+
+                if (param->flags & TRACE_PARAM_FLAG_STR) {
+					SAY_C  (out, '\"');
+					SAY_COL(out, ANSI_RESET);
+				}
             }
         } break;
         
