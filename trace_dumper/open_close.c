@@ -285,15 +285,15 @@ static int close_file(struct trace_record_file *file, bool_t wait_for_flush) {
 	int rc = 0;
 	if (!is_closed(file)) {
 		trace_dumper_update_written_record_count(file);
-		rc = trace_dumper_flush_mmapping(file, wait_for_flush);
+		if (NULL != file->mapping_info) {
+			rc = trace_dumper_flush_mmapping(file, wait_for_flush);
+		}
+		else {
+			rc = close(file->fd);
+		}
+
 		if (0 == rc) {
-			rc = ftruncate64(file->fd, TRACE_RECORD_SIZE * file->records_written);
-			if (0 == rc) {
-				rc = close(file->fd);
-				if (0 == rc) {
-					file->fd = -1;
-				}
-			}
+			file->fd = -1;
 		}
 	}
 

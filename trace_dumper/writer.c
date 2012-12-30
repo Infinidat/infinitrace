@@ -339,43 +339,54 @@ static int free_mmapping(struct trace_output_mmap_info *mmapping) {
 		return -1;
 	}
 
-	memset(mmapping, 0, sizeof(*mmapping)); /* To catch attempts to access after freeing */
+	if ((mmapping->fd >= 0) && (0 != close(mmapping->fd))) {
+		return -1;
+	}
+
+	memset(mmapping, -1, sizeof(*mmapping)); /* To catch attempts to access after freeing */
 	free(mmapping);
 	return 0;
 }
 
 static int do_data_sync(struct trace_output_mmap_info *mmap_info, bool_t final)
 {
-	const unsigned long records_written = mmap_info->records_written;
+	const trace_record_counter_t records_written = mmap_info->records_written;
 	assert(mmap_info->records_committed <= records_written);
+	assert(0 == mmap_info->page_size % TRACE_RECORD_SIZE);
 
-	const size_t preferred_write_records = mmap_info->preferred_write_bytes / TRACE_RECORD_SIZE;
-	const struct trace_record *msync_base = mmap_info->base + ROUND_DOWN(mmap_info->records_committed, preferred_write_records);
-	const size_t unflushed_bytes = TRACE_RECORD_SIZE * (mmap_info->base + records_written - msync_base);
-	const size_t unflushed_bytes_rounded_down = ROUND_DOWN(unflushed_bytes, mmap_info->preferred_write_bytes);
+	const size_t page_size_records = mmap_info->page_size / TRACE_RECORD_SIZE;
+	const struct trace_record *const fadv_base = mmap_info->base + ROUND_DOWN(mmap_info->records_committed, page_size_records);
+	const size_t unflushed_bytes = TRACE_RECORD_SIZE * (mmap_info->base + records_written - fadv_base);
+	const size_t unflushed_bytes_rounded_to_page 	  = ROUND_DOWN(unflushed_bytes, mmap_info->page_size);
+	const size_t unflushed_bytes_rounded_to_preferred = ROUND_DOWN(unflushed_bytes_rounded_to_page, mmap_info->preferred_write_bytes);
 
 	const trace_ts_t now = trace_get_nsec_monotonic();
-	const size_t msync_len = (final || (now >= mmap_info->next_flush_ts)) ? unflushed_bytes : unflushed_bytes_rounded_down;
-	if (msync_len <= 0) {
-		return EAGAIN;
+	size_t fadv_len = 0;
+	if (! final) {
+		fadv_len = (now >= mmap_info->next_flush_ts) ? unflushed_bytes_rounded_to_page : unflushed_bytes_rounded_to_preferred;
+		if (fadv_len <= 0) {
+			return EAGAIN;
+		}
 	}
 
-	assert(mmap_info->records_committed * TRACE_RECORD_SIZE + msync_len <= mmap_info->mapping_len_bytes);
-	assert(0 == (msync_len % TRACE_RECORD_SIZE));
-
-	if (msync((void *)msync_base, msync_len, MS_SYNC | MS_INVALIDATE) != 0) {
-		syslog(LOG_USER|LOG_ERR, "Failed msync of length %#lX at %p, base=%p, due to %s", msync_len, msync_base, mmap_info->base, strerror(errno));
+	assert(mmap_info->records_committed * TRACE_RECORD_SIZE + fadv_len <= mmap_info->mapping_len_bytes);
+	const off64_t fadv_start_offset = TRACE_RECORD_SIZE * (fadv_base - mmap_info->base);
+	int rc = posix_fadvise64(mmap_info->fd, fadv_start_offset, fadv_len, POSIX_FADV_DONTNEED);
+	if (0 != rc) {
+		errno = rc;
+		syslog(LOG_USER|LOG_ERR, "Failed posix_fadvise of length %#lx at %p, base=%p, due to %s", fadv_len, fadv_base, mmap_info->base, strerror(rc));
 		return -1;
 	}
 
-	if (!final && (unflushed_bytes_rounded_down > 0) && (posix_madvise((void *)msync_base, unflushed_bytes_rounded_down, MADV_DONTNEED) != 0)) {
-		syslog(LOG_USER|LOG_ERR, "Failed posix_madvise of length %#lX at %p, base=%p, due to  %s", unflushed_bytes_rounded_down, msync_base, mmap_info->base, strerror(errno));
-		return -1;
+	if (final) {
+		assert(records_written == mmap_info->records_written);  /* Should not have any further changes if we were really called as final. */
+		mmap_info->records_committed = records_written;
 	}
-
-	mmap_info->records_committed = msync_base + msync_len / TRACE_RECORD_SIZE - mmap_info->base;
+	else {
+		mmap_info->records_committed = (fadv_start_offset + fadv_len) / TRACE_RECORD_SIZE;
+		mmap_info->next_flush_ts = now + mmap_info->global_conf->max_flush_interval;
+	}
 	assert(mmap_info->records_committed <= records_written);
-	mmap_info->next_flush_ts = now + mmap_info->global_conf->max_flush_interval;
 
 	return 0;
 }
@@ -410,7 +421,11 @@ static void *msync_mmapped_data(void *mmap_info_vp)
 		}
 	} while (! mmap_info->writing_complete);
 
-	if (do_data_sync(mmap_info, TRUE) < 0) {
+	if (ftruncate64(mmap_info->fd, TRACE_RECORD_SIZE * mmap_info->records_written) < 0) {
+		syslog(LOG_USER|LOG_ERR, "Failed to truncate the record file with fd=%d to %ld records due to %s",
+						mmap_info->fd, mmap_info->records_written, strerror(errno));
+	}
+	else if (do_data_sync(mmap_info, TRUE) < 0) {
 		mmap_info->lasterr = errno;
 		syslog(LOG_USER|LOG_ERR, "Failed to commit %ld records at the end of the record file due to %s",
 				num_records_pending(mmap_info), strerror(errno));
@@ -448,8 +463,10 @@ static int setup_mmapping(const struct trace_dumper_configuration_s *conf, struc
 
 	const long page_size = sysconf(_SC_PAGESIZE);
 	assert(page_size > 0);
-	record_file->mapping_info->preferred_write_bytes = MAX(conf->preferred_flush_bytes, (size_t) page_size);
+	record_file->mapping_info->page_size = (size_t) page_size;
+	record_file->mapping_info->preferred_write_bytes = MAX(conf->preferred_flush_bytes, record_file->mapping_info->page_size);
 	record_file->mapping_info->global_conf = conf;
+	record_file->mapping_info->fd = record_file->fd;
 	record_file->mapping_info->next_flush_ts = trace_get_nsec_monotonic() + conf->max_flush_interval;
 
 	const size_t len = ROUND_UP((conf->max_records_per_file + conf->max_records_per_file/4) * TRACE_RECORD_SIZE, record_file->mapping_info->preferred_write_bytes);
@@ -484,6 +501,7 @@ unmap_file:
 	ftruncate(record_file->fd, 0);
 
 free_mapping_info:
+	close(record_file->fd);
 	free(record_file->mapping_info);
 	record_file->mapping_info = NULL;
 	return -1;

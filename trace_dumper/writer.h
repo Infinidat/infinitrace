@@ -31,6 +31,7 @@ struct trace_output_mmap_info {
 	volatile bool_t writing_complete;
     pthread_t tid;
     size_t preferred_write_bytes;
+    size_t page_size;
 
     /* Fields writable only by the worker thread (except initialization) */
     volatile trace_record_counter_t records_committed;
@@ -40,6 +41,7 @@ struct trace_output_mmap_info {
     /* Initialized by the main thread, deleted by the worker thread */
 	struct trace_record *base;
     size_t mapping_len_bytes;
+    int fd;
     const struct trace_dumper_configuration_s *global_conf;
  };
 
