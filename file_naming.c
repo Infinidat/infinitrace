@@ -51,7 +51,7 @@ int trace_generate_file_name(char *filename, const char *filename_base, size_t n
 
 	if (! human_readable) {
 		/* An old format which uses milliseconds since the epoch. Provided as an option for backward compatiblity */
-		return snprintf(filename, name_len, "%s/" TRACE_FILE_PREFIX "%llu" TRACE_FILE_SUFFIX TRACE_FILE_SUFFIX, filename_base, now_ms);
+		return snprintf(filename, name_len, "%s/" TRACE_FILE_PREFIX "%llu" TRACE_FILE_SUFFIX, filename_base, now_ms);
 	}
 
 	struct tm now_tm;

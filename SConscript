@@ -8,11 +8,11 @@ with TracesDisabled(xn_env) as untraced_env:
     optflags=Split("""$CCFLAGS -Wall -O1""")
     lib = untraced_env.SConscript("trace_instrumentor/SConscript")
 
-    srcs = untraced_env.AutoSplit('''trace_user.c trace_metadata_util_untraced.c  halt.c trace_clock.c''')
+    srcs = untraced_env.AutoSplit('''trace_user.c trace_metadata_util_untraced.c  halt.c trace_clock_untraced.c''')
     lib = untraced_env.XnStaticLibrary(target = 'traces', source = srcs, CCFLAGS = optflags)
     untraced_env.Alias('xn', lib)
 
-    srcs = untraced_env.AutoSplit('''opt_util.c trace_str_util.c trace_clock_untraced.c file_naming.c''')
+    srcs = untraced_env.AutoSplit('''opt_util_untraced.c trace_str_util_untraced.c file_naming_untraced.c untraced_trace_clock_untraced.o''')
     lib = untraced_env.XnStaticLibrary(target = 'trace_util', source = srcs, CCFLAGS = optflags)
     untraced_env.Alias('xn', lib)
 
@@ -30,6 +30,9 @@ xn_env.BuildStaticLibraries(target = 'tracereader', source = srcs, CCFLAGS = opt
 
 srcs = xn_env.AutoSplit('''timeformat.c parser.c''') + objs
 xn_env.BuildStaticLibraries(target = 'reader', source = srcs, CCFLAGS = optflags)
+
+srcs = xn_env.AutoSplit('''opt_util.c trace_str_util.c trace_clock.c file_naming.c''')
+xn_env.BuildStaticLibraries(target = 'trace_util_traced', source = srcs, CCFLAGS = optflags)
 
 xn_env.Append(LIBPATH = Dir('.'))
 

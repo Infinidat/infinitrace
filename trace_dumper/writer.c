@@ -18,8 +18,11 @@
    limitations under the License.
  */
 
+#include "../platform.h"
+
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
-#define _LARGEFILE64_SOURCE
+#endif
 
 #include <string.h>
 #include <stdlib.h>
@@ -84,17 +87,17 @@ static ssize_t copy_iov_to_buffer(void *buffer, const struct iovec *iov, int iov
 	return (const char *)target - (const char *)buffer;
 }
 
-static int trace_dumper_writev(int fd, const struct iovec *iov, int iovcnt)
+static ssize_t trace_dumper_writev(int fd, const struct iovec *iov, int iovcnt)
 {
-    int length = total_iovec_len(iov, iovcnt);
-    char *buffer = (char *) malloc(length);
+    ssize_t length = total_iovec_len(iov, iovcnt);
+    void *buffer = malloc(length);
     if (NULL == buffer) {
     	return -1;
     }
 
     assert(copy_iov_to_buffer(buffer, iov, iovcnt) == length);
 
-    ssize_t bytes_written = write(fd, buffer, length); // TOOD: Introduce TEMP_FAILURE_RETRY
+    ssize_t bytes_written = TEMP_FAILURE_RETRY(write(fd, buffer, length));
     free(buffer);
     return bytes_written;
 }
@@ -373,14 +376,19 @@ static int do_data_sync(struct trace_output_mmap_info *mmap_info, bool_t final)
 	const off64_t fadv_start_offset = TRACE_RECORD_SIZE * (fadv_base - mmap_info->base);
 	int rc = posix_fadvise64(mmap_info->fd, fadv_start_offset, fadv_len, POSIX_FADV_DONTNEED);
 	if (0 != rc) {
+		const void *const mapping_base = mmap_info->base;
+		ERR("Failed posix_fadvise", fadv_len, fadv_base, mapping_base, rc, strerror(rc));
+		syslog(LOG_USER|LOG_ERR, "Failed posix_fadvise of length %#lx at %p, base=%p, due to %s", fadv_len, fadv_base, mapping_base, strerror(rc));
 		errno = rc;
-		syslog(LOG_USER|LOG_ERR, "Failed posix_fadvise of length %#lx at %p, base=%p, due to %s", fadv_len, fadv_base, mmap_info->base, strerror(rc));
 		return -1;
 	}
 
 	if (final) {
 		assert(records_written == mmap_info->records_written);  /* Should not have any further changes if we were really called as final. */
 		mmap_info->records_committed = records_written;
+		const int lasterr = mmap_info->lasterr;
+		const pthread_t posix_tid = mmap_info->tid;
+		INFO("Finalizing memory-mapped writing to file", records_written, lasterr, posix_tid);
 	}
 	else {
 		mmap_info->records_committed = (fadv_start_offset + fadv_len) / TRACE_RECORD_SIZE;
@@ -413,6 +421,7 @@ static void *msync_mmapped_data(void *mmap_info_vp)
 		default:
 			assert(rc < 0);
 			mmap_info->lasterr = errno;
+			WARN("Worker thread data sync returned", errno, strerror(errno));
 			/* No break - also delay as in the case of EAGAIN */
 
 		case EAGAIN:
@@ -422,6 +431,7 @@ static void *msync_mmapped_data(void *mmap_info_vp)
 	} while (! mmap_info->writing_complete);
 
 	if (ftruncate64(mmap_info->fd, TRACE_RECORD_SIZE * mmap_info->records_written) < 0) {
+		ERR("Failed to finalize file size to record count", mmap_info->records_written, errno, strerror(errno));
 		syslog(LOG_USER|LOG_ERR, "Failed to truncate the record file with fd=%d to %ld records due to %s",
 						mmap_info->fd, mmap_info->records_written, strerror(errno));
 	}
@@ -432,6 +442,7 @@ static void *msync_mmapped_data(void *mmap_info_vp)
 	}
 
 	if (0 != free_mmapping(mmap_info)) {
+		ERR("Failed to free mapping info", errno, strerror(errno));
 		syslog(LOG_USER|LOG_ERR, "Failed to free the memory mapping at %p due to %s", mmap_info->base, strerror(errno));
 	}
 
@@ -443,7 +454,7 @@ static void *msync_mmapped_data(void *mmap_info_vp)
 static int reset_file(const struct trace_record_file *record_file) {
 	if (NULL != record_file->mapping_info) {
 		record_file->mapping_info->writing_complete = TRUE;
-		return ftruncate64(record_file->fd, record_file->mapping_info->records_committed * TRACE_RECORD_SIZE); // TODO: Use TEMP_FAILURE_RETRY here
+		return TEMP_FAILURE_RETRY(ftruncate64(record_file->fd, record_file->mapping_info->records_committed * TRACE_RECORD_SIZE));
 	}
 
 	return 0;
@@ -490,6 +501,11 @@ static int setup_mmapping(const struct trace_dumper_configuration_s *conf, struc
 		goto errno_from_pthread;
 	}
 
+	const char *filename = record_file->filename;
+	const void *base_addr = record_file->mapping_info->base;
+	const pthread_t posix_tid = record_file->mapping_info->tid;
+	INFO("Started worker thread for mmapping", filename, base_addr, posix_tid);
+
 	return 0;
 
 /* Clean-up in case of errors */
@@ -501,7 +517,17 @@ unmap_file:
 	ftruncate(record_file->fd, 0);
 
 free_mapping_info:
-	close(record_file->fd);
+	filename = record_file->filename;
+	if (0 != close(record_file->fd)) {
+		ERR("Failed to close fd", record_file->fd, filename, errno);
+	}
+	record_file->fd = -1;
+
+
+	base_addr = record_file->mapping_info->base;
+	ERR("Failed to create a memory mapping for", filename, base_addr);
+
+	memset(record_file->mapping_info, -1, sizeof(*(record_file->mapping_info)));
 	free(record_file->mapping_info);
 	record_file->mapping_info = NULL;
 	return -1;
@@ -514,9 +540,14 @@ static void init_record_timestamps(struct trace_record_file *record_file) {
 static int log_dumper_performance_if_necessary(struct trace_record_file *record_file, size_t n_bytes)
 {
 	int rc = 0;
+	const size_t n_recs_pending = (NULL == record_file->mapping_info) ? 0 : num_records_pending(record_file->mapping_info);
+	const struct trace_record_io_timestamps *const ts = &record_file->ts;
+	const trace_ts_t memcpy_duration = ts->finished_memcpy - ts->started_memcpy;
+	const trace_ts_t validation_duration = ts->finished_validation - ts->started_validation;
+
+	DEBUG("Record writing performance:", memcpy_duration, validation_duration, n_recs_pending);
 	if (is_perf_logging_file_open(record_file)) {
-		const size_t n_recs_pending = (NULL == record_file->mapping_info) ? 0 : num_records_pending(record_file->mapping_info);
-		const struct trace_record_io_timestamps *const ts = &record_file->ts;
+
 		rc = fprintf(record_file->perf_log_file,
 				"\"%s\", "
 				TRACE_TIMESTAMP_FMT_STRING ", %lu, "
@@ -525,8 +556,8 @@ static int log_dumper_performance_if_necessary(struct trace_record_file *record_
 				trace_record_file_basename(record_file),
 				ts->started_memcpy,
 				n_bytes,
-				ts->finished_memcpy - ts->started_memcpy,
-				ts->finished_validation - ts->started_validation,
+				memcpy_duration,
+				validation_duration,
 				n_recs_pending);
 	}
 
@@ -557,14 +588,19 @@ int trace_dumper_write_via_mmapping(
 			return -1;
 		}
 
+		const trace_record_counter_t recs_written_so_far = record_file->mapping_info->records_written;
 		if (num_records_pending(record_file->mapping_info) > conf->max_records_pending_write_via_mmap) {
+			trace_record_counter_t records_committed = record_file->mapping_info->records_committed;
+			const char *const filename = record_file->filename;
+			WARN("Writing backlog exceeded", conf->max_records_pending_write_via_mmap, recs_written_so_far, records_committed, filename);
 			errno = EAGAIN;
 			return -1;
 		}
 
 		init_record_timestamps(record_file);
 
-		struct trace_record *write_start = record_file->mapping_info->base + record_file->mapping_info->records_written;
+
+		struct trace_record *write_start = record_file->mapping_info->base + recs_written_so_far;
 		record_file->ts.started_memcpy = trace_get_nsec();
 		assert((size_t)copy_iov_to_buffer(write_start, iov, iovcnt) == len);
 		record_file->ts.finished_memcpy = trace_get_nsec();
@@ -573,11 +609,18 @@ int trace_dumper_write_via_mmapping(
 			record_file->ts.started_validation = trace_get_nsec();
 			record_file->validator_last_result = record_file->post_write_validator(write_start, len / TRACE_RECORD_SIZE, TRUE, record_file->validator_context);
 			record_file->ts.finished_validation = trace_get_nsec();
-			if (record_file->validator_last_result < 0) {
+
+
+			const int validation_result = record_file->validator_last_result;
+			if (validation_result < 0) {
+				ERR("Unrecoverable error while validating records in", record_file->filename, validation_result, recs_written_so_far, write_start, len);
 				syslog(LOG_USER|LOG_ERR, "Validation returned error result %d while writing to file %s",
 						record_file->validator_last_result, record_file->filename);
 				reset_file(record_file);
 				return record_file->validator_last_result;
+			}
+			else if (validation_result > 0) {
+				WARN("Invalidated records in file", record_file->filename, validation_result, recs_written_so_far, write_start, len);
 			}
 		}
 

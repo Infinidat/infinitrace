@@ -15,9 +15,11 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
    limitations under the License.
 ***/
 
-#define _GNU_SOURCE
-
 #include "platform.h"
+
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 
 #include <sys/types.h>
 #include <errno.h>

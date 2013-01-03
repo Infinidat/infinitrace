@@ -24,9 +24,17 @@ Copyright 2012 infinidat
 #define _USE_INOTIFY_
 #define _USE_MREMAP_
 #define _USE_PROC_FS_
+
+#ifndef _LARGEFILE64_SOURCE
 #define _LARGEFILE64_SOURCE
+#endif
+
 #define SHM_DIR "/dev/shm"
 
+#endif
+
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
 #endif
 
 #if defined(__APPLE_CC_) || defined(__MACH__)
