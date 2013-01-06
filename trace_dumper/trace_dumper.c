@@ -675,6 +675,20 @@ static void handle_overwrite(struct trace_dumper_configuration_s *conf)
     conf->last_overwrite_test_record_count = conf->record_file.records_written;
 }
 
+static int prefetch_mmapped_pages(struct trace_dumper_configuration_s *conf)
+{
+	int rc = 0;
+	if ((NULL != conf->record_file.mapping_info) && (trace_dumper_prefetch_records_if_necessary(conf->record_file.mapping_info, 0) < 0)) {
+		rc = -1;
+	}
+
+	if ((NULL != conf->notification_file.mapping_info) && (trace_dumper_prefetch_records_if_necessary(conf->notification_file.mapping_info, 0x400) < 0)) {
+		rc = -1;
+	}
+
+	return rc;
+}
+
 /* Periodic housekeeping functions: Look for any processes that have started and need to have their traces collected, or that have ended, allowing any resouces
  * allocating for serving them to be freed.
  * Return value:
@@ -684,11 +698,14 @@ static void handle_overwrite(struct trace_dumper_configuration_s *conf)
  *  */
 static int do_housekeeping_if_necessary(struct trace_dumper_configuration_s *conf)
 {
-	static const trace_ts_t HOUSEKEEPING_INTERVAL = 10000000; /* 10ms */
-	const trace_ts_t now = get_nsec_monotonic();
-
 	apply_requested_file_operations(conf, TRACE_REQ_CLOSE_ALL_FILES | TRACE_REQ_DISCARD_ALL_BUFFERS);
 
+	if (prefetch_mmapped_pages(conf) < 0) {
+		return -1;
+	}
+
+	const trace_ts_t HOUSEKEEPING_INTERVAL = 10000000; /* 10ms */
+	const trace_ts_t now = get_nsec_monotonic();
 	if (now < conf->next_housekeeping_ts) {
 		return EAGAIN;
 	}

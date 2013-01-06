@@ -533,7 +533,54 @@ free_mapping_info:
 	return -1;
 }
 
-static void init_record_timestamps(struct trace_record_file *record_file) {
+static int advise_mmapped_range(struct trace_output_mmap_info *mmap_info, int advice, size_t num_prefetch_records)
+{
+	const trace_record_counter_t desired_prefetch_end = MIN(mmap_info->mapping_len_bytes / TRACE_RECORD_SIZE, mmap_info->records_written + num_prefetch_records);
+	const uintptr_t madv_start = ROUND_DOWN((uintptr_t)(mmap_info->base + mmap_info->records_written), mmap_info->page_size);
+	const size_t    madv_len = (uintptr_t)(mmap_info->base + desired_prefetch_end) - madv_start;
+	void *const madv_start_vp = (void *)madv_start;
+
+	if (madv_len <= mmap_info->page_size) {
+		return EAGAIN;
+	}
+
+	if (POSIX_MADV_WILLNEED == advice) {
+		const size_t n_pages = (madv_len + mmap_info->page_size - 1) / mmap_info->page_size;
+		unsigned char page_residence[n_pages];
+		if (0 != mincore(madv_start_vp, madv_len, page_residence)) {
+			return -1;
+		}
+
+		size_t present;
+		for (present = 0; (present < n_pages) && (page_residence[present] & 1); present++)
+			;
+
+		if (present == n_pages) {
+			DEBUG("mincore saved us an madvise", madv_start_vp, madv_len, advice);
+			return 0;
+		}
+	}
+
+	DEBUG("Prefetching records in output file", madv_start_vp, madv_len, advice);
+	int rc = posix_madvise(madv_start_vp, madv_len, advice);
+	if (rc != 0) {
+		ERR("Attempting to prefetch using posix_madvise(", madv_start_vp, madv_len, advice, ") failed with", rc, strerror(rc));
+		errno = rc;
+		return -1;
+	}
+
+	return 0;
+}
+
+int trace_dumper_prefetch_records_if_necessary(struct trace_output_mmap_info *mmap_info, size_t num_prefetch_records)
+{
+	const size_t DEFAULT_DESIRED_PREFETCH_RECORDS = 2 * TRACE_RECORD_BUFFER_RECS;
+	const size_t prefetch_size = (0 == num_prefetch_records) ? DEFAULT_DESIRED_PREFETCH_RECORDS : num_prefetch_records;
+	return advise_mmapped_range(mmap_info, POSIX_MADV_WILLNEED, prefetch_size);
+}
+
+static void init_record_timestamps(struct trace_record_file *record_file)
+{
 	memset(&record_file->ts, 0, sizeof(record_file->ts));
 }
 
@@ -602,6 +649,7 @@ int trace_dumper_write_via_mmapping(
 
 		struct trace_record *write_start = record_file->mapping_info->base + recs_written_so_far;
 		record_file->ts.started_memcpy = trace_get_nsec();
+		trace_dumper_prefetch_records_if_necessary(record_file->mapping_info, len / TRACE_RECORD_SIZE);
 		assert((size_t)copy_iov_to_buffer(write_start, iov, iovcnt) == len);
 		record_file->ts.finished_memcpy = trace_get_nsec();
 
@@ -623,6 +671,10 @@ int trace_dumper_write_via_mmapping(
 				WARN("Invalidated records in file", record_file->filename, validation_result, recs_written_so_far, write_start, len);
 			}
 		}
+
+		/* Restore the advice for the range written to to MADV_NORMAL. This is done in case a future kernel might have long-term effects after applying the
+		 * MADV_WILLNEED advice */
+		advise_mmapped_range(record_file->mapping_info, POSIX_MADV_NORMAL, len / TRACE_RECORD_SIZE);
 
 		record_file->mapping_info->records_written += len / TRACE_RECORD_SIZE;
 		log_dumper_performance_if_necessary(record_file, len);

@@ -78,5 +78,6 @@ int trace_dumper_write_via_mmapping(
 int trace_dumper_flush_mmapping(struct trace_record_file *record_file, bool_t synchronous);
 bool_t trace_dumper_record_file_state_is_ok(const struct trace_record_file *record_file);
 
+int trace_dumper_prefetch_records_if_necessary(struct trace_output_mmap_info *mmap_info, size_t num_prefetch_records);
 
 #endif /* WRITER_H_ */
