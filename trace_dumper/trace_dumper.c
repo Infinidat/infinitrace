@@ -506,7 +506,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 
 	cur_ts = get_nsec_monotonic();
 
-	bool_t premature_call = (cur_ts < conf->next_flush_ts);
+	bool_t premature_call = (cur_ts + 500 < conf->next_flush_ts);
 	if (!premature_call) {
 		init_dump_header(conf, &dump_header_rec, cur_ts, &iovec, &num_iovecs, &total_written_records);
 	}
@@ -751,8 +751,8 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
         
         rc = trace_flush_buffers(conf);
         if (rc > TRACE_FILE_IMMEDIATE_FLUSH_THRESHOLD) {
-        	const struct timespec ts = { 0, conf->ts_flush_delta };
-        	nanosleep(&ts, NULL);
+        	struct timespec ts = { 0, conf->ts_flush_delta };
+        	assert(0 == TEMP_FAILURE_RETRY(nanosleep(&ts, &ts)));
         	continue;
         }
         else if (rc < 0) {
