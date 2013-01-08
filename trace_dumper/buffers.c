@@ -188,6 +188,7 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
     char dynamic_trace_filename[0x100];
     char static_log_data_filename[0x100];
     int rc;
+    struct trace_mapped_buffer *new_mapped_buffer = NULL;
     snprintf(dynamic_trace_filename, sizeof(dynamic_trace_filename), TRACE_DYNAMIC_DATA_REGION_NAME_FMT, pid);
     snprintf(static_log_data_filename, sizeof(static_log_data_filename), TRACE_STATIC_DATA_REGION_NAME_FMT, pid);
 
@@ -222,7 +223,6 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
     }
 
     struct trace_buffer *unmapped_trace_buffer = (struct trace_buffer *) mapped_dynamic_addr;
-    struct trace_mapped_buffer *new_mapped_buffer = NULL;
     struct trace_metadata_region *static_log_data_region = (struct trace_metadata_region *) mapped_static_log_data_addr;
 
     if (trace_should_filter(conf, static_log_data_region->name)) {
