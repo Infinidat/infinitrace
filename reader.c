@@ -20,9 +20,9 @@
 #include <libgen.h>
 
 #include "parser.h"
+#include "filter.h"
 #include "list_template.h"
 #include "array_length.h"
-#include "timeformat.h"
 #include "trace_str_util.h"
 #include "opt_util.h"
 #include "file_naming.h"
@@ -34,7 +34,6 @@ enum op_type_e {
     OP_TYPE_DUMP_METADATA
 };
 
-typedef struct trace_record_matcher_spec_s filter_t;
 
 struct trace_reader_conf {
     enum op_type_e op_type;
@@ -52,17 +51,8 @@ struct trace_reader_conf {
     // long long from_time;
     int after_count;
     const char **files_to_process; /* A NULL terminated array of const char* */
-
-    filter_t * filter_function;
-    filter_t * filter_grep;
-    filter_t * filter_strcmp;    
-    filter_t * filter_value;
-    filter_t * filter_value2;
-    filter_t * filter_value3;
-    filter_t * filter_fuzzy;
-    filter_t * filter_time;
-    filter_t * filter_quota;
-    filter_t * filter_tid;
+    struct trace_record_matcher_spec_s *record_filter;
+    struct trace_filter_collection filter;
 };
 
 #ifdef  _USE_PROC_FS_
@@ -187,30 +177,9 @@ static int exit_usage(const char *prog_name, const char* more)
     return 0;                   /* happy compiler */
 }
 
-static filter_t *new_filter_t() {
-    filter_t* ret = malloc(sizeof(filter_t));
-    memset(ret, 0, sizeof(*ret));
-    return ret;
-}
-
-static void and_filter(filter_t *filter_a,
-                       filter_t *filter_b) {
-
-    filter_t * filter_dup_a = new_filter_t();
-    memcpy(filter_dup_a, filter_a, sizeof(*filter_a));
-    filter_a->type = TRACE_MATCHER_AND;
-    filter_a->u.binary_operator_parameters.a = filter_dup_a;
-    filter_a->u.binary_operator_parameters.b = filter_b;
-}
-
-static void or_filter(filter_t *filter_a,
-                      filter_t *filter_b) {
-
-    filter_t * filter_dup_a = new_filter_t();
-    memcpy(filter_dup_a, filter_a, sizeof(*filter_a));
-    filter_a->type = TRACE_MATCHER_OR;
-    filter_a->u.binary_operator_parameters.a = filter_dup_a;
-    filter_a->u.binary_operator_parameters.b = filter_b;
+static void fatal_usage_err_handler(const char *msg)
+{
+    exit_usage(NULL, msg);
 }
 
 static int get_severity_level(const char* str) {
@@ -420,18 +389,7 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
         case 'm':
             conf->op_type = OP_TYPE_DUMP_METADATA;
             break;
-            /* Filters */
-        case 'Q':
-            {
-                if (!trace_get_number(optarg, &num))
-                    exit_usage(NULL, "-Q [val] : [val] must be a legal number");
-                if (num <= 0)
-                    exit_usage(NULL, "-Q [val] : [val] must be a positive number");
-                conf->filter_quota = new_filter_t();
-                conf->filter_quota->type = TRACE_MATCHER_QUOTA_MAX;
-                conf->filter_quota->u.quota_max = num;
-            }
-            break;
+
         case 'A':
             {
                 if (! trace_get_number(optarg, &num))
@@ -439,115 +397,12 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
                 conf->after_count = num > 0 ? num : 0;
             }
             break;
-        case 't':
-            {
-                unsigned long long nanosec = str_to_nano_seconds(optarg);
-                if (conf->filter_time == NULL) {
-                    conf->filter_time = new_filter_t();
-                    conf->filter_time->type = TRACE_MATCHER_TIMERANGE;
-                    conf->filter_time->u.time_range.start = nanosec;
-                    conf->filter_time->u.time_range.end   = LLONG_MAX;
-                }
-                else if (nanosec < conf->filter_time->u.time_range.start) {
-                    conf->filter_time->u.time_range.end =
-                    conf->filter_time->u.time_range.start;
-                    conf->filter_time->u.time_range.start = nanosec;
-                }
-                else
-                    conf->filter_time->u.time_range.end   = nanosec;
-            }
-            break;
 
-#define WITH(FILTER) if (conf->FILTER == NULL) conf->FILTER = f; else or_filter(conf->FILTER, f)
-        case 'g':
-            {
-                filter_t * f = new_filter_t();
-                f->type = TRACE_MATCHER_CONST_SUBSTRING;
-                strncpy(f->u.const_string, optarg, sizeof(f->u.const_string));
-                WITH(filter_grep);
-            }
-            break;
-
-        case 'c':
-            {
-                filter_t * f = new_filter_t();
-                f->type = TRACE_MATCHER_CONST_STRCMP;
-                strncpy(f->u.const_string, optarg, sizeof(f->u.const_string));
-                WITH(filter_strcmp);
-            } break;
-
-        case 'w':
-        case 'v':
-        case 'u':
-            {
-                filter_t * f = new_filter_t();
-                char* equal = NULL ; 
-        #define OR_MAYBE(C) if (! equal ) equal = strrchr(optarg, C)
-                OR_MAYBE('=');
-                OR_MAYBE('>');
-                OR_MAYBE('<');
-        #undef  OR_MAYBE
-                if (equal) {
-                    if (equal > sizeof(f->u.named_param_value.param_name) + optarg) {
-                        fprintf(stderr, "'%s': Too long.", optarg);
-                        return -1;
-                    }
-                    if (!trace_get_number(equal+1, &num))
-                        exit_usage(NULL, " Bad integer number in named value");
-                    f->type = TRACE_MATCHER_LOG_NAMED_PARAM_VALUE;
-                    f->u.named_param_value.param_value = num;
-                    f->u.named_param_value.compare_type = *equal;
-                    strncpy(f->u.named_param_value.param_name, optarg, equal-optarg);
-                }
-                else {
-                    if (!trace_get_number(optarg, &num))
-                        exit_usage(NULL, " Bad integer number in value");
-                    f->type = TRACE_MATCHER_LOG_PARAM_VALUE;
-                    f->u.named_param_value.param_value = num;
-                    f->u.named_param_value.compare_type = '=';
-                }
-                if      (o == 'v') { WITH(filter_value ); }
-                else if (o == 'u') { WITH(filter_value2); }
-                else               { WITH(filter_value3); }
-            }
-            break;
-        case 'z':
-            {
-                filter_t * f = new_filter_t();
-                if (trace_get_number(optarg, &num)) {
-                    f->type = TRACE_MATCHER_LOG_PARAM_VALUE;
-                    f->u.named_param_value.param_value = num;
-                    f->u.named_param_value.compare_type = '=';
-                }
-                else {
-                    f->type = TRACE_MATCHER_CONST_SUBSTRING;
-                    strncpy(f->u.const_string, optarg, sizeof(f->u.const_string));
-                }
-                WITH(filter_fuzzy);
-            }
-            break;
-        case 'f':
-            {
-                filter_t * f = new_filter_t();
-                f->type = TRACE_MATCHER_FUNCTION_NAME;
-                strncpy(f->u.function_name, optarg, sizeof(f->u.function_name));
-                WITH(filter_function);
-            }
-            break;
-        case 'd':
-            {
-                filter_t * f = new_filter_t();
-                f->type = TRACE_MATCHER_TID;
-                if (!trace_get_number(optarg, &num))
-                    exit_usage(NULL, " Bad integer number in tid");
-                f->u.tid = num;
-                WITH(filter_tid);
-            }
-            break;
-
-#undef WITH
         default:
-            conf->op_type = OP_TYPE_INVALID;
+            if (! trace_filter_init_from_cmdline(&conf->filter, o, optarg, fatal_usage_err_handler)) {
+                conf->op_type = OP_TYPE_INVALID;
+            }
+
             break;
         }
     }
@@ -576,33 +431,19 @@ int read_event_handler(struct trace_parser  __attribute__((unused)) *parser, enu
     return 0;
 }
 
-static void set_parser_filter(struct trace_reader_conf *conf, trace_parser_t *parser)
+static void set_conf_filter(struct trace_reader_conf *conf)
 {
-    filter_t *filter = new_filter_t(); /* base */
-    filter->type = TRACE_MATCHER_SEVERITY_LEVEL;
-    filter->u.severity = ((conf->severity_level < TRACE_SEV__MIN ||
+    const unsigned severity = ((conf->severity_level < TRACE_SEV__MIN ||
                            conf->severity_level > TRACE_SEV__MAX) ?
                           TRACE_SEV_TRIO : (conf->severity_level)) ;
 
-#define WITH(FILTER) if (conf->FILTER) and_filter(filter, conf->FILTER)
-    WITH(filter_time);
-    WITH(filter_tid);
-    WITH(filter_grep);
-    WITH(filter_strcmp);
-    WITH(filter_value);
-    WITH(filter_value2);
-    WITH(filter_value3);
-    WITH(filter_fuzzy);
-    WITH(filter_function);
-    WITH(filter_quota);         /* must be last for lazy evaluation */
-#undef  WITH
-
-    memcpy(&parser->record_filter, filter, sizeof(parser->record_filter));
+    assert(NULL == conf->record_filter);
+    conf->record_filter = trace_filter_create_chain(&conf->filter, severity);
 }
 
-static void set_parser_params(struct trace_reader_conf *conf, trace_parser_t *parser)
+static void set_parser_params(const struct trace_reader_conf *conf, trace_parser_t *parser)
 {
-    set_parser_filter(conf, parser);
+    parser->record_filter = conf->record_filter;
     parser->nanoseconds_ts     = conf->nanoseconds_ts;
     parser->show_timestamp     = ! conf->empty_timestamp;
     parser->color              = ! conf->no_color;
@@ -704,13 +545,20 @@ static int dump_metadata_for_files(struct trace_reader_conf *conf)
     return error_occurred ? EX_IOERR : 0;
 }
 
+static void init_conf(struct trace_reader_conf *conf, int argc, const char **argv)
+{
+    memset(conf, 0, sizeof(*conf));
+    int rc = parse_command_line(conf, argc, argv);
+    if (0 != rc)
+        exit_usage(argv[0], NULL);
+
+    set_conf_filter(conf);
+}
+
 int main(int argc, const char **argv)
 {
     struct trace_reader_conf conf;
-    memset(&conf, 0, sizeof(conf));
-    int rc = parse_command_line(&conf, argc, argv);
-    if (0 != rc)
-    	exit_usage(argv[0], NULL);
+    init_conf(&conf, argc, argv);
 
     switch (conf.op_type) {
     case OP_TYPE_DUMP_STATS:
@@ -724,6 +572,7 @@ int main(int argc, const char **argv)
         break;
     case OP_TYPE_INVALID:
         exit_usage(argv[0], "Invalid paramter");
+        break;
 
     default:
         break;

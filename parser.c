@@ -17,7 +17,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 
 #define _GNU_SOURCE
 
-#include "platform.h"
+#include "./platform.h"
 
 #include <sys/types.h>
 #ifdef _USE_INOTIFY_
@@ -52,7 +52,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "string.h"
 #include "timeformat.h"
 #include "trace_str_util.h"
-
+#include "filter.h"
 #include "zlib.h"
 
 /* print out */
@@ -134,12 +134,6 @@ CREATE_LIST_IMPLEMENTATION(BufferParseContextList, struct trace_parser_buffer_co
 CREATE_LIST_IMPLEMENTATION(RecordsAccumulatorList, struct trace_record_accumulator)
 
 static enum trace_severity trace_sev_mapping[TRACE_SEV__COUNT];
-
-#ifdef ULLONG_MAX
-#define MAX_ULLONG	ULLONG_MAX
-#else
-#define MAX_ULLONG     18446744073709551615ULL
-#endif
 
 /*
  * return value:
@@ -307,7 +301,6 @@ void trace_parser_init(trace_parser_t *parser, trace_parser_event_handler_t even
     parser->arg = arg;
     parser->stream_type = stream_type;
     BufferParseContextList__init(&parser->buffer_contexts);
-    parser->record_filter.type = TRACE_MATCHER_TRUE;
     parser->show_timestamp = TRUE;
     parser->show_function_name = TRUE;
     parser->file_info.file_base = MAP_FAILED;
@@ -331,11 +324,6 @@ static int read_file_header(trace_parser_t *parser, struct trace_record *record)
     }
 
     return 0;
-}
-
-static inline const struct trace_log_descriptor *get_log_descriptor(const struct trace_parser_buffer_context *context, size_t idx)
-{
-	return (const struct trace_log_descriptor *)((const char *)(context->descriptors) + idx * context->metadata_log_desciptor_size);
 }
 
 static struct trace_parser_buffer_context *get_buffer_context_by_pid(trace_parser_t *parser, unsigned short pid)
@@ -1101,10 +1089,10 @@ static bool_t match_record_dump_with_match_expression(
 
 static void process_buffer_chunk_record(trace_parser_t *parser, const struct trace_record *buffer_chunk)
 {
-	const struct trace_record_buffer_dump *bd = &buffer_chunk->u.buffer_chunk;
+    const struct trace_record_buffer_dump *bd = &buffer_chunk->u.buffer_chunk;
     
     if (bd->severity_type) {
-        if (parser->stream_type == TRACE_INPUT_STREAM_TYPE_NONSEEKABLE && !(match_record_dump_with_match_expression(&parser->record_filter, buffer_chunk, NULL))) {
+        if (parser->stream_type == TRACE_INPUT_STREAM_TYPE_NONSEEKABLE && !(match_record_dump_with_match_expression(parser->record_filter, buffer_chunk, NULL))) {
             ignore_next_n_records(parser, bd->records);
         }
     }
@@ -1203,47 +1191,7 @@ static bool_t match_record_dump_with_match_expression(
 		const struct trace_record *record,
 		const struct trace_parser_buffer_context *buffer_context)
 {
-    const struct trace_record_buffer_dump *buffer_dump = &record->u.buffer_chunk;
-
-    switch ((int) matcher->type) {
-        case TRACE_MATCHER_TRUE:
-            return TRUE;
-
-        case TRACE_MATCHER_FALSE:
-            return FALSE;
-    
-        case TRACE_MATCHER_NOT:
-            return !match_record_dump_with_match_expression(matcher->u.unary_operator_parameters.param, record, buffer_context);
-
-        case TRACE_MATCHER_OR:
-            return (match_record_dump_with_match_expression(matcher->u.binary_operator_parameters.a, record, buffer_context) ||
-                    match_record_dump_with_match_expression(matcher->u.binary_operator_parameters.b, record, buffer_context));
-
-        case TRACE_MATCHER_AND:
-            return (match_record_dump_with_match_expression(matcher->u.binary_operator_parameters.a, record, buffer_context) &&
-                    match_record_dump_with_match_expression(matcher->u.binary_operator_parameters.b, record, buffer_context));
-
-            /*
-        case TRACE_MATCHER_TIMERANGE:
-            return (buffer_dump->ts > matcher->u.time_range.start);
-            */
-
-        case TRACE_MATCHER_PID:
-            return record->pid == matcher->u.pid;
-    
-        case TRACE_MATCHER_SEVERITY:
-            return (buffer_dump->severity_type) & (1 << matcher->u.severity);
-
-        case TRACE_MATCHER_SEVERITY_LEVEL:
-            return (buffer_dump->severity_type) >= (matcher->u.severity);
-
-        case TRACE_MATCHER_PROCESS_NAME:
-            return (buffer_context && strcmp(matcher->u.process_name, buffer_context->name) == 0);
-
-        default:
-            return TRUE;
-    }
-    return TRUE;
+    return trace_filter_match_record_chunk(matcher, record, buffer_context->name);
 }
 
 static int process_dump_header_record(
@@ -1343,210 +1291,6 @@ static bool_t discard_record_on_nonseekable_stream(trace_parser_t *parser)
     }
 }
 
-static bool_t params_have_type_name(const struct trace_param_descriptor *param, const char *type_name)
-{
-    for (; param->flags != 0; param++) {
-        if (!(param->flags & (TRACE_PARAM_FLAG_CSTR)) && param->type_name) {
-            if (strcmp(param->type_name, type_name) == 0) {
-                return TRUE;
-            }
-        }
-    }
-
-    return FALSE;
-}
-
-static bool_t record_params_contain_string(
-		const struct trace_parser_buffer_context *buffer,
-		const struct trace_record_typed *typed_record,
-		const char *const_str,
-        int exact,
-		unsigned int *log_size) {
-
-    unsigned int metadata_index = typed_record->log_id;
-    if (metadata_index >= buffer->metadata->log_descriptor_count)
-        return FALSE;
-
-    const struct trace_log_descriptor *log_desc = get_log_descriptor(buffer, metadata_index);;
-    const struct trace_param_descriptor *param = log_desc->params;
-    const unsigned char *pdata = typed_record->payload;
-    for (; param->flags != 0; param++) {
-
-        switch(param->flags &
-               (TRACE_PARAM_FLAG_ENUM    |
-                TRACE_PARAM_FLAG_NUM_8   |
-                TRACE_PARAM_FLAG_NUM_16  |
-                TRACE_PARAM_FLAG_NUM_32  |
-                TRACE_PARAM_FLAG_NUM_64  |
-                TRACE_PARAM_FLAG_CSTR    |
-                TRACE_PARAM_FLAG_VARRAY  |
-                TRACE_PARAM_FLAG_NESTED_LOG)) {
-
-        case TRACE_PARAM_FLAG_ENUM: {
-            pdata += sizeof(unsigned int);
-        } break;
-        
-        case TRACE_PARAM_FLAG_NUM_8: {
-            pdata += sizeof(char);
-        } break;
-
-        case TRACE_PARAM_FLAG_NUM_16: {
-            pdata += sizeof(unsigned short);
-        } break;
-            
-        case TRACE_PARAM_FLAG_NUM_32: {
-            pdata += sizeof(unsigned int);
-        } break;
-
-        case TRACE_PARAM_FLAG_NUM_64: {
-            pdata += sizeof(unsigned long long);
-        } break;
-
-        case TRACE_PARAM_FLAG_CSTR: {
-            if (exact ? 
-                strcmp(param->const_str, const_str) == 0 :
-                strstr(param->const_str, const_str) != 0)
-                return TRUE;
-        } break;
-
-        case TRACE_PARAM_FLAG_VARRAY: {
-            while (1) {
-                unsigned char sl = (*(unsigned char *)pdata);
-                unsigned char len = sl & 0x7f;
-                unsigned char continuation = sl & 0x80;
-                
-                pdata += sizeof(len) + len;
-                if (!continuation) {
-                    break;
-                }
-            }
-        } break;
-
-        case TRACE_PARAM_FLAG_NESTED_LOG: {
-            unsigned int _log_size = 0;
-            if (record_params_contain_string(buffer, (struct trace_record_typed *) pdata, const_str, exact, &_log_size))
-                return TRUE;
-            pdata += _log_size;
-        } break;
-
-        default:
-            continue; 
-        }
-    }
-
-    if ( log_size )
-        *log_size = (char *) pdata - (char *) typed_record;
-    return FALSE;
-}
-
-
-static bool_t record_params_contain_value(
-		const struct trace_parser_buffer_context *buffer,
-		const struct trace_record_typed *typed_record,
-        char compare_type,
-		unsigned long long value,
-		const char *param_name, 
-		unsigned int *log_size)
-{
-    unsigned int metadata_index = typed_record->log_id;
-    if (metadata_index >= buffer->metadata->log_descriptor_count)
-        return FALSE;
-
-    const struct trace_log_descriptor *log_desc = get_log_descriptor(buffer, metadata_index);;
-    const struct trace_param_descriptor *param = log_desc->params;
-
-    const unsigned char *pdata = typed_record->payload;
-    unsigned long long param_value = 0;
-    for (; param->flags != 0; param++) {
-        unsigned long long value_mask = 0; 
-
-        switch(param->flags &
-               (TRACE_PARAM_FLAG_ENUM    |
-                TRACE_PARAM_FLAG_NUM_8   |
-                TRACE_PARAM_FLAG_NUM_16  |
-                TRACE_PARAM_FLAG_NUM_32  |
-                TRACE_PARAM_FLAG_NUM_64  |
-                TRACE_PARAM_FLAG_VARRAY  |
-                TRACE_PARAM_FLAG_NESTED_LOG)) {
-
-        case TRACE_PARAM_FLAG_ENUM: {
-            value_mask = MAX_ULLONG;
-            param_value = (unsigned long long) (*(unsigned int *)(pdata));
-            pdata += sizeof(unsigned int);
-        } break;
-        
-        case TRACE_PARAM_FLAG_NUM_8: {
-            value_mask = 0xff;
-            param_value = (unsigned long long) (*(unsigned char *)(pdata));
-            pdata += sizeof(char);
-        } break;
-
-        case TRACE_PARAM_FLAG_NUM_16: {
-            value_mask = 0xffff;
-            param_value = (unsigned long long) (*(unsigned short *)(pdata));
-            pdata += sizeof(unsigned short);
-        } break;
-            
-        case TRACE_PARAM_FLAG_NUM_32: {
-            value_mask = 0xffffffff;
-            param_value = (unsigned long long) (*(unsigned int *)(pdata));
-            pdata += sizeof(unsigned int);
-        } break;
-
-        case TRACE_PARAM_FLAG_NUM_64: {
-            value_mask = MAX_ULLONG;
-            param_value = *((unsigned long long *) (pdata));
-            pdata += sizeof(unsigned long long);
-        } break;
-
-        case TRACE_PARAM_FLAG_VARRAY: {
-            while (1) {
-                unsigned char sl = (*(unsigned char *)pdata);
-                unsigned char len = sl & 0x7f;
-                unsigned char continuation = sl & 0x80;
-                
-                pdata += sizeof(len) + len;
-                if (!continuation) {
-                    break;
-                }
-            }
-        } break;
-
-        case TRACE_PARAM_FLAG_NESTED_LOG: {
-            unsigned int _log_size = 0;
-            if (record_params_contain_value(buffer, (struct trace_record_typed *) pdata, compare_type, value, param_name, &_log_size))
-                return TRUE;
-            pdata += _log_size;
-        } break;
-
-        default:
-            continue; 
-        }
-        
-        if ( (value_mask)
-             &&
-
-             ((param_name == NULL) ||
-              (param->param_name &&
-               strcmp(param_name, param->param_name) == 0))
-
-             &&
-
-             (compare_type == '>' ?
-              (value_mask&value) < param_value :
-              compare_type == '<' ? 
-              (value_mask&value) > param_value :
-              (value_mask&value) == param_value
-             )
-             )
-            return TRUE;
-    }
-
-    if ( log_size )
-        *log_size = (char *) pdata - (char *) typed_record;
-    return FALSE;
-}
-
 #define AFTER_COUNT_COUNT 20
 
 typedef struct {
@@ -1614,109 +1358,16 @@ static bool_t match_record_with_match_expression(
 		const struct trace_record *record,
         iter_t * iter)
 {
-    unsigned int metadata_index = record->u.typed.log_id;
 
-    if (metadata_index >= buffer->metadata->log_descriptor_count)
-        return FALSE;
+    long long *quota = NULL;
+    bool_t *keep_going = NULL;
 
-    const struct trace_log_descriptor *log_desc = get_log_descriptor(buffer, metadata_index);
-
-    switch (matcher->type) {
-    case TRACE_MATCHER_TRUE:
-        return TRUE;
-
-    case TRACE_MATCHER_FALSE:
-        return FALSE;
-
-    case TRACE_MATCHER_NOT:
-        return !match_record_with_match_expression(matcher->u.unary_operator_parameters.param, buffer, record, iter);
-
-    case TRACE_MATCHER_OR:
-        return (match_record_with_match_expression(matcher->u.binary_operator_parameters.a, buffer, record, iter) ||
-                match_record_with_match_expression(matcher->u.binary_operator_parameters.b, buffer, record, iter));
-
-    case TRACE_MATCHER_AND:
-        return (match_record_with_match_expression(matcher->u.binary_operator_parameters.a, buffer, record, iter) &&
-                match_record_with_match_expression(matcher->u.binary_operator_parameters.b, buffer, record, iter));
-
-    case TRACE_MATCHER_PID:
-        return record->pid == matcher->u.pid;
-
-    case TRACE_MATCHER_NESTING:
-        return record->nesting == matcher->u.nesting;
-
-    case TRACE_MATCHER_TID:
-        return record->tid == matcher->u.tid;
-
-    case TRACE_MATCHER_LOGID:
-        return record->u.typed.log_id == matcher->u.log_id;
-
-    case TRACE_MATCHER_SEVERITY:
-        return record->severity == matcher->u.severity;
-
-    case TRACE_MATCHER_SEVERITY_LEVEL:
-        return record->severity >= matcher->u.severity;
-
-    case TRACE_MATCHER_TYPE:
-        return params_have_type_name(log_desc->params, matcher->u.type_name);
-
-    case TRACE_MATCHER_FUNCTION:
-        if ((log_desc->kind == TRACE_LOG_DESCRIPTOR_KIND_FUNC_ENTRY) ||
-            (log_desc->kind == TRACE_LOG_DESCRIPTOR_KIND_FUNC_LEAVE)) {
-            if (strcmp(log_desc->params->const_str, matcher->u.function_name) == 0) {
-                return TRUE;
-            } else {
-                return FALSE;
-            }
-        }
-        break;
-        
-    case TRACE_MATCHER_LOG_PARAM_VALUE:
-        return record_params_contain_value(buffer, &record->u.typed,
-                                           matcher->u.named_param_value.compare_type,
-                                           matcher->u.named_param_value.param_value,
-                                           NULL, NULL);
-
-    case TRACE_MATCHER_LOG_NAMED_PARAM_VALUE:
-        return record_params_contain_value(buffer, &record->u.typed,
-                                           matcher->u.named_param_value.compare_type,
-                                           matcher->u.named_param_value.param_value,
-                                           matcher->u.named_param_value.param_name,
-                                           NULL);
-
-    case TRACE_MATCHER_CONST_SUBSTRING:
-        return record_params_contain_string(buffer, &record->u.typed, matcher->u.const_string, 0, NULL);
-
-    case TRACE_MATCHER_CONST_STRCMP:
-        return record_params_contain_string(buffer, &record->u.typed, matcher->u.const_string, 1, NULL);
-
-    case TRACE_MATCHER_TIMERANGE:
-        return ( (record->ts <= matcher->u.time_range.end ) ?
-                 (record->ts >= matcher->u.time_range.start) :
-                 iter ? (iter->keep_going = FALSE) : FALSE );
-
-    case TRACE_MATCHER_PROCESS_NAME:
-        return (0 == strcmp(matcher->u.process_name, buffer->name));
-
-    case TRACE_MATCHER_QUOTA_MAX:
-        if(!iter) return TRUE;  /* weird */
-        if (iter->quota == 0)
-            iter->quota = matcher->u.quota_max + 1;
-        return ((0 < --(iter->quota)) ?
-                TRUE :
-                (iter->keep_going = FALSE));
-
-    case TRACE_MATCHER_FUNCTION_NAME:
-        return (log_desc->function &&
-                // log_desc->function[0] &&
-                0 == strcmp(log_desc->function, matcher->u.function_name));
-
-    default:
-        return FALSE;
-        
+    if (NULL != iter) {
+        quota = &iter->quota;
+        keep_going = &iter->keep_going;
     }
 
-    return FALSE;
+    return trace_filter_match_record(matcher, buffer, record, quota, keep_going);
 }
 
 static int process_single_record(
@@ -1818,7 +1469,7 @@ static int read_smallest_ts_record(trace_parser_t *parser, struct trace_record *
 {
     struct trace_record tmp_record;
     unsigned int i;
-    unsigned long long min_ts = MAX_ULLONG;
+    unsigned long long min_ts = ULLONG_MAX;
     int rc;
     unsigned int index_of_minimal_chunk = 0;
 
@@ -1839,7 +1490,7 @@ static int read_smallest_ts_record(trace_parser_t *parser, struct trace_record *
         }
     }
     
-    if (min_ts == MAX_ULLONG) {
+    if (min_ts == ULLONG_MAX) {
         memset(record, 0, sizeof(*record));
     } else {
         parser->buffer_dump_context.record_dump_contexts[index_of_minimal_chunk].current_offset++;
@@ -1954,7 +1605,7 @@ int TRACE_PARSER__dump(trace_parser_t *parser)
     bzero(&iter, sizeof(iter));
     iter.keep_going = 1;
     while (iter.keep_going) {
-        int rc = process_next_record_from_file(parser, &parser->record_filter, dumper_event_handler, &dump_context, &iter);
+        int rc = process_next_record_from_file(parser, parser->record_filter, dumper_event_handler, &dump_context, &iter);
         if (0 != rc) {
             return rc;
         }
@@ -2223,7 +1874,7 @@ int TRACE_PARSER__dump_statistics(trace_parser_t *parser)
     log_stats_pool__init(log_stats_pool);
     unsigned int count = 0;
     while (1) {
-        int rc = process_next_record_from_file(parser, &parser->record_filter, count_entries, (void *) log_stats_pool, NULL);
+        int rc = process_next_record_from_file(parser, parser->record_filter, count_entries, (void *) log_stats_pool, NULL);
         count++;
         if (0 != rc) {
             break;

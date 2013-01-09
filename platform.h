@@ -45,6 +45,11 @@ Copyright 2012 infinidat
 
 #ifdef _LARGEFILE_IS_DEFAULT_ /* Normal Posix API functions support 64-bit files, no need for special functions */
 
+#include <limits.h>
+#ifndef ULLONG_MAX
+#define ULLONG_MAX     18446744073709551615ULL
+#endif
+
 #include <unistd.h>
 #define lseek64 lseek
 #define ftruncate64 ftruncate

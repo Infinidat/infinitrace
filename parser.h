@@ -107,66 +107,9 @@ struct operation_progress_status_s {
     long long current_offset;
 };
 */
-enum trace_record_matcher_type {
-    TRACE_MATCHER_TRUE,
-    TRACE_MATCHER_FALSE,
-    TRACE_MATCHER_OR,
-    TRACE_MATCHER_AND,
-    TRACE_MATCHER_NOT,
-    TRACE_MATCHER_PID,
-    TRACE_MATCHER_TID,
-    TRACE_MATCHER_LOGID,
-    TRACE_MATCHER_SEVERITY,
-    TRACE_MATCHER_SEVERITY_LEVEL,
-    TRACE_MATCHER_FUNCTION,
-    TRACE_MATCHER_TYPE,
-    TRACE_MATCHER_LOG_PARAM_VALUE,
-    TRACE_MATCHER_LOG_NAMED_PARAM_VALUE,
-    TRACE_MATCHER_PROCESS_NAME,
-    TRACE_MATCHER_NESTING,
-    TRACE_MATCHER_CONST_SUBSTRING,
-    TRACE_MATCHER_CONST_STRCMP,
-    TRACE_MATCHER_TIMERANGE,
-    TRACE_MATCHER_QUOTA_MAX,
-    TRACE_MATCHER_FUNCTION_NAME,
-};
 
-typedef struct trace_record_matcher_spec_s trace_record_matcher_spec_s;
-struct trace_record_matcher_spec_s {
-    enum trace_record_matcher_type type;
-    union trace_record_matcher_data_u {
-        unsigned short pid;
-        unsigned short tid;
-        unsigned int log_id;
-        unsigned severity;
-        struct trace_time_range {
-            unsigned long long start;
-            unsigned long long end;
-        } time_range;
 
-        char function_name[0x100];
-        char type_name[0x100];
-        char process_name[0x100];
-        char const_string[0x100];
-        /* unsigned long long param_value; */
-        unsigned short nesting;
-        long long quota_max;
-        
-        struct trace_matcher_named_param_value {
-            char param_name[0xf8];
-            char compare_type;
-            unsigned long long param_value;
-        } named_param_value;
-            
-        struct trace_record_matcher_binary_operator_params {
-            struct trace_record_matcher_spec_s *a, *b;
-        } binary_operator_parameters;
-        
-        struct trace_record_matcher_unary_operator_params {
-            struct trace_record_matcher_spec_s *param;
-        } unary_operator_parameters;
-    } u;
-};
+struct trace_record_matcher_spec_s;     /* Defined in filter.h */
 
 struct trace_parser;
 typedef int (*trace_parser_event_handler_t)(struct trace_parser *parser, enum trace_parser_event_e event, void *event_data, void *arg);
@@ -191,7 +134,7 @@ typedef struct trace_parser {
     int inotify_descriptor;
     int hide_field_names;
     int show_function_name;
-    struct trace_record_matcher_spec_s record_filter;
+    const struct trace_record_matcher_spec_s *record_filter;
     unsigned int ignored_records_count;
     enum trace_input_stream_type stream_type;
     bool_t free_dead_buffer_contexts;
@@ -207,5 +150,11 @@ int TRACE_PARSER__dump_statistics(trace_parser_t *parser);
 
 off64_t TRACE_PARSER__seek(trace_parser_t *parser, off64_t offset, int whence);
 
+/* Lower-level functions, might change in the future
+ * TODO: Move these into a separate implementation details header */
+static inline const struct trace_log_descriptor *get_log_descriptor(const struct trace_parser_buffer_context *context, size_t idx)
+{
+    return (const struct trace_log_descriptor *)((const char *)(context->descriptors) + idx * context->metadata_log_desciptor_size);
+}
 
 #endif /* __TRACE_PARSER_H__ */
