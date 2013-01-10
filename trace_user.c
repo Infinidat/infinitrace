@@ -414,7 +414,7 @@ static void copy_log_descriptors_to_allocated_buffer(unsigned int log_descriptor
 
     unsigned int i;
     for (i = 0; i < log_descriptor_count; i++) {
-        struct trace_log_descriptor *orig_log_desc = &__static_log_information_start + i;
+        struct trace_log_descriptor *orig_log_desc = __static_log_information_start + i;
         memcpy(log_desc, orig_log_desc, sizeof(*log_desc));
 
 #if TRACE_FORMAT_VERSION >= TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA
@@ -597,7 +597,7 @@ static void static_log_alloc_size(unsigned int log_descriptor_count, unsigned in
     const char *latest_function = NULL;
 
     for (i = 0; i < log_descriptor_count; i++) {
-        const struct trace_log_descriptor *element = &__static_log_information_start + i;
+        const struct trace_log_descriptor *element = __static_log_information_start + i;
         *alloc_size += sizeof(*element);
         param_alloc_size(element->params, alloc_size, total_params);
 
@@ -618,7 +618,7 @@ static void static_log_alloc_size(unsigned int log_descriptor_count, unsigned in
 static void map_static_log_data(const char *buffer_name)
 {
     char shm_name[0x100];
-    unsigned long log_descriptor_count = &__static_log_information_end - &__static_log_information_start;
+    unsigned long log_descriptor_count = __static_log_information_end - __static_log_information_start;
     unsigned int alloc_size;
     unsigned int total_log_descriptor_params;
     unsigned int type_definition_count;

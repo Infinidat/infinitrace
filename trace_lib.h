@@ -48,8 +48,8 @@ extern struct trace_buffer *current_trace_buffer;
 
 /* Identifiers that are created by the linker script (see ldwrap.py) and mark the beginning and end of data-structure arrays inserted
  * by the instrumentation mechanism */
-extern struct trace_log_descriptor __static_log_information_start;
-extern struct trace_log_descriptor __static_log_information_end;
+extern struct trace_log_descriptor __static_log_information_start[];
+extern struct trace_log_descriptor __static_log_information_end[];
 extern struct trace_type_definition *__type_information_start;
 
 

@@ -401,7 +401,7 @@ std::string TraceCall::initializeOpeningTypedRecord(const std::string& deref_ope
     std::stringstream code;
     const std::string rec_expr("__records[__rec_idx]");
 
-    code << rec_expr << deref_operator << "u.typed.log_id = &tracelog - &__static_log_information_start;";
+    code << rec_expr << deref_operator << "u.typed.log_id = &tracelog - __static_log_information_start;";
     return code.str();
 }
 
@@ -460,7 +460,7 @@ std::string TraceCall::varlength_getTraceWriteExpression() const
             }
 
             // TODO: Just do a single copy
-            std::string logid = "(&" + param.trace_call->trace_call_name + "- &__static_log_information_start)";
+            std::string logid = "(&" + param.trace_call->trace_call_name + "- __static_log_information_start)";
             std::string _type_name = "int";
             start_record << varlength_writeSimpleValue(logid, _type_name, false, false);
             
