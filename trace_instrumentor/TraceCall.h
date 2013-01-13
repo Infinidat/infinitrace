@@ -269,15 +269,17 @@ private:
     std::string getSeverity() const;
     std::string getSeverityExpr() const;
     std::string getTypeDefinitionExternDeclratations();
+    static const std::string& getPayloadExpr();
     static std::string genMIN(const std::string &a, const std::string &b);
     
     std::string initializeIntermediateTypedRecord(const std::string& deref_operator) const;
     std::string initializeOpeningTypedRecord(const std::string& deref_operator) const;
     std::string writeSimpleValueSrcDecl(const std::string &expression, const std::string &type_name, bool is_pointer, bool is_reference) const;
 
-    std::string constlength_writeSimpleValue(const std::string &expression, const std::string &type_name, bool is_pointer, bool is_reference, unsigned int size, unsigned int *buf_left) const;
-    std::string constlength_goToNextRecord(unsigned int *buf_left) const;
-    std::string constlength_initializeTypedRecord(unsigned int *buf_left) const;
+    std::string constlength__writeSimpleValueCopyTargetExpr(unsigned buf_left = TRACE_RECORD_PAYLOAD_SIZE) const;
+    std::string constlength_writeSimpleValue(const std::string &expression, const std::string &type_name, bool is_pointer, bool is_reference, unsigned int size, unsigned int& buf_left) const;
+    std::string constlength_goToNextRecord(unsigned int& buf_left) const;
+    std::string constlength_initializeTypedRecord(unsigned int& buf_left) const;
 
     std::string varlength_writeSimpleValue(const std::string &expression, const std::string &type_name, bool is_pointer, bool is_reference) const;
     std::string varlength_goToNextRecord() const;
@@ -290,7 +292,7 @@ private:
     void unknownTraceParam(const Expr *trace_param) const;
 
     std::string getFullTraceWriteExpression() const;
-    std::string constlength_getTraceWriteExpression(unsigned int *buf_left) const;
+    std::string constlength_getTraceWriteExpression(unsigned int& buf_left) const;
     std::string constlength_getFullTraceWriteExpression() const;
     std::string varlength_getTraceWriteExpression() const;
     std::string varlength_getFullTraceWriteExpression() const;

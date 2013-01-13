@@ -379,6 +379,12 @@ std::string TraceCall::getSeverityExpr() const
     return getSeverity();
 }
 
+const std::string& TraceCall::getPayloadExpr()
+{
+    static const std::string payload_expr("__records[__rec_idx].u.payload");
+    return payload_expr;
+}
+
 std::string TraceCall::varlength_initializeTypedRecord() const
 {
     std::stringstream code;
@@ -388,11 +394,11 @@ std::string TraceCall::varlength_initializeTypedRecord() const
     return code.str();
 }
 
-std::string TraceCall::constlength_initializeTypedRecord(unsigned int *buf_left) const
+std::string TraceCall::constlength_initializeTypedRecord(unsigned int& buf_left) const
 {
     std::stringstream code;
     code << initializeOpeningTypedRecord(".");
-    (*buf_left) = TRACE_RECORD_PAYLOAD_SIZE - 4;
+    buf_left = TRACE_RECORD_PAYLOAD_SIZE - 4;
     return code.str();
 }
 
@@ -414,17 +420,17 @@ std::string TraceCall::initializeIntermediateTypedRecord(const std::string& dere
 	return code.str();
 }
 
-std::string TraceCall::constlength_goToNextRecord(unsigned int *buf_left) const {
+std::string TraceCall::constlength_goToNextRecord(unsigned int& buf_left) const {
     std::stringstream code;
     code << advanceRecordArrayIdx();
-    (*buf_left) = TRACE_RECORD_PAYLOAD_SIZE;
+    buf_left = TRACE_RECORD_PAYLOAD_SIZE;
     return code.str();
 }
 
 std::string TraceCall::varlength_goToNextRecord() const {
     std::stringstream code;
     code << advanceRecordArrayIdx();
-    code << "(*__typed_buf) = __records[__rec_idx].u.payload;";
+    code << "(*__typed_buf) = " << getPayloadExpr() << ";";
     code << "(*__buf_left) = " << TRACE_RECORD_PAYLOAD_SIZE << ";";
     return code.str();
 }
@@ -469,6 +475,10 @@ std::string TraceCall::varlength_getTraceWriteExpression() const
         }
      }
      
+     start_record << "if (*__buf_left > 0) { ";
+     start_record << "__builtin_memset(*__typed_buf, 0xa5, *__buf_left); ";
+     start_record << "}";
+
      return start_record.str();
 }
 
@@ -520,7 +530,7 @@ std::string TraceCall::varlength_getFullTraceWriteExpression() const
     alloc_record << "unsigned int _buf_left; ";
     alloc_record << "unsigned int *__buf_left = &_buf_left; ";
     alloc_record << allocRecordArray();
-    alloc_record << "unsigned char *_payload_ptr = " << castTo(ast.getLangOptions(), "&__records[__rec_idx].u.payload", "unsigned char *") << ";";
+    alloc_record << "unsigned char *_payload_ptr = " << castTo(ast.getLangOptions(), getPayloadExpr(), "unsigned char *") << ";";
     alloc_record << "unsigned char **__typed_buf =  &_payload_ptr;";
 
     std::stringstream start_record;
@@ -535,29 +545,41 @@ std::string TraceCall::constlength_getFullTraceWriteExpression() const
     std::stringstream start_record;
     unsigned int buf_left = 0;
 
-    start_record << constlength_initializeTypedRecord(&buf_left);
-    start_record << constlength_getTraceWriteExpression(&buf_left);
+    start_record << constlength_initializeTypedRecord(buf_left);
+    start_record << constlength_getTraceWriteExpression(buf_left);
 
     return allocRecordArray() + start_record.str() + commitRecords();
 }
 
-std::string TraceCall::constlength_writeSimpleValue(const std::string &expression, const std::string &type_name, bool is_pointer, bool is_reference, unsigned int value_size, unsigned int *buf_left) const
+std::string TraceCall::constlength__writeSimpleValueCopyTargetExpr(unsigned buf_left) const
+{
+    std::stringstream serialized;
+    serialized << "(" << getPayloadExpr();
+    assert(buf_left <= TRACE_RECORD_PAYLOAD_SIZE);
+    const unsigned idx = TRACE_RECORD_PAYLOAD_SIZE - buf_left;
+    if (idx > 0) {
+        serialized << " + " << idx;
+    }
+    serialized << ")";
+    return serialized.str();
+}
+
+std::string TraceCall::constlength_writeSimpleValue(const std::string &expression, const std::string &type_name, bool is_pointer, bool is_reference, unsigned int value_size, unsigned int& buf_left) const
 {
     std::stringstream serialized;
 
     serialized << "{ ";
     serialized << writeSimpleValueSrcDecl(expression, type_name, is_pointer, is_reference);
     
-    unsigned int copy_size = MIN(value_size, (*buf_left));
-    const std::string payload_expr("__records[__rec_idx].u.payload");
-    serialized << "__builtin_memcpy((&" << payload_expr << "[" << TRACE_RECORD_PAYLOAD_SIZE - (*buf_left) << "]), __src__.a," << copy_size << ");";
-    (*buf_left) -= copy_size;
+    unsigned int copy_size = MIN(value_size, buf_left);
+    serialized << "__builtin_memcpy((" << constlength__writeSimpleValueCopyTargetExpr(buf_left) << "), __src__.a," << copy_size << ");";
+    buf_left -= copy_size;
 
     const unsigned remaining_bytes = value_size - copy_size;
-    if (((*buf_left) == 0) && (remaining_bytes > 0)) {
+    if ((buf_left == 0) && (remaining_bytes > 0)) {
 		serialized << constlength_goToNextRecord(buf_left);
-		serialized << "__builtin_memcpy(" << payload_expr << ", __src__.a + " << copy_size << ", " << remaining_bytes << ");";
-        (*buf_left) -= remaining_bytes;
+		serialized << "__builtin_memcpy(" << constlength__writeSimpleValueCopyTargetExpr() << ", __src__.a + " << copy_size << ", " << remaining_bytes << ");";
+        buf_left -= remaining_bytes;
     }
 
     serialized << "}";
@@ -591,7 +613,7 @@ std::string TraceCall::varlength_writeSimpleValue(const std::string &expression,
     return serialized.str();
 }
 
-std::string TraceCall::constlength_getTraceWriteExpression(unsigned int *buf_left) const
+std::string TraceCall::constlength_getTraceWriteExpression(unsigned int& buf_left) const
 {
     std::stringstream start_record;
     for (unsigned int i = 0; i < args.size(); i++) {
@@ -601,6 +623,10 @@ std::string TraceCall::constlength_getTraceWriteExpression(unsigned int *buf_lef
             start_record << constlength_writeSimpleValue(param.expression, param.type_name, param.is_pointer, param.is_reference, param.size, buf_left);
         }
 
+    }
+
+    if (buf_left > 0) {
+        start_record << "__builtin_memset(" << constlength__writeSimpleValueCopyTargetExpr(buf_left) << ", 0xa5, " << buf_left << "); ";
     }
 
     return start_record.str();
