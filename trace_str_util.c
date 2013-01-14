@@ -30,7 +30,7 @@
 
 
 #define TRACE_SEV_X(v, str) [v] = #str,
-const char *trace_severity_to_str_array[] = {
+const char *const trace_severity_to_str_array[] = {
 	[0] = "INVALID",
 	[1] = "FUNCTION_TRACE",
 	TRACE_SEVERITY_DEF
@@ -39,19 +39,32 @@ const char *trace_severity_to_str_array[] = {
 #undef TRACE_SEV_X
 
 #define TRACE_SEV_X(unused, name)                   \
+     /* coverity[deadcode] */        \
      if (COMP_FUNC(s, #name) == 0) { \
          return TRACE_SEV_##name;                   \
      }
 
+static enum trace_severity num_to_severity(const char *s)
+{
+    long long num = -1;
+    bool_t is_num = trace_get_number(s, &num);
+
+    if (is_num && (num >= TRACE_SEV_INVALID) && (num <= TRACE_SEV__MAX)) {
+        return (enum trace_severity) num;
+    }
+
+    return TRACE_SEV_INVALID;
+}
+
 enum trace_severity trace_str_to_severity_case_sensitive(const char *s)
 {
 #define COMP_FUNC strcmp
-
+    /* coverity[deadcode] */
 	TRACE_SEVERITY_DEF
 
 #undef COMP_FUNC
 
-	return TRACE_SEV_INVALID;
+	return num_to_severity(s);
 }
 
 enum trace_severity trace_str_to_severity_case_insensitive(const char *s)
@@ -61,14 +74,8 @@ enum trace_severity trace_str_to_severity_case_insensitive(const char *s)
 	TRACE_SEVERITY_DEF
 
 #undef COMP_FUNC
-	long long num;
-	bool_t is_num = trace_get_number(s, &num);
 
-	if (is_num && (num >= TRACE_SEV_INVALID) && (num <= TRACE_SEV__MAX)) {
-		return (enum trace_severity) num;
-	}
-
-	return TRACE_SEV_INVALID;
+	return num_to_severity(s);
 }
 
 #undef TRACE_SEV_X
@@ -88,7 +95,7 @@ bool_t trace_get_number(const char* str, long long *num) { /* home made atoll / 
             if ((*str < '0' || *str > '9') && ((*str|0x20) < 'a' || (*str|0x20) > 'f'))
                 return 0;
             n *= 0x10;
-            n += (*str > '9') ? ((*str|0x20) - 'W') : *str-'0';
+            n += (*str > '9') ? ((*str|0x20) - ('a' - 10)) : *str-'0';
             str++;
         }
     }

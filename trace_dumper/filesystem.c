@@ -16,6 +16,7 @@
 #include "../trace_lib.h"
 #include "../trace_user.h"
 #include "../file_naming.h"
+#include "../trace_str_util.h"
 #include "trace_dumper.h"
 #include "writer.h"
 #include "filesystem.h"
@@ -51,7 +52,7 @@ static int get_trace_file_timestamp(const char *filename)
     }
 
     char timestamp[50];
-    strncpy(timestamp, filename + strlen(TRACE_FILE_PREFIX), sizeof(timestamp));
+    trace_strncpy_and_terminate(timestamp, filename + strlen(TRACE_FILE_PREFIX), sizeof(timestamp));
     char *tmp_ptr = index(timestamp, '.');
     if (NULL == tmp_ptr) {
         return -1;
@@ -97,7 +98,7 @@ static int find_oldest_trace_file(const struct trace_dumper_configuration_s *con
     }
 
 Exit:
-    strncpy(filename, tmp_filename, filename_size);
+    trace_strncpy_and_terminate(filename, tmp_filename, filename_size);
     closedir(dir);
     return 0;
 }
@@ -259,12 +260,12 @@ int prepend_prefix_to_filename(const char *filename, const char *prefix)
     char orig_filename[0x100];
     char snapshot_filename[sizeof(dir) + sizeof(base) + 0x10];
 
-    strncpy(orig_filename, filename, sizeof(orig_filename));
+    trace_strncpy_and_terminate(orig_filename, filename, sizeof(orig_filename));
     char *dirname_ptr = dirname(orig_filename);
-    strncpy(dir, dirname_ptr, sizeof(dir));
-    strncpy(orig_filename, filename, sizeof(orig_filename));
+    trace_strncpy_and_terminate(dir, dirname_ptr, sizeof(dir));
+    trace_strncpy_and_terminate(orig_filename, filename, sizeof(orig_filename));
     char *basename_ptr = basename(orig_filename);
-    strncpy(base, basename_ptr, sizeof(base));
+    trace_strncpy_and_terminate(base, basename_ptr, sizeof(base));
     snprintf(snapshot_filename, sizeof(snapshot_filename), "%s/%s%s", dir, prefix, base);
     return rename(filename, snapshot_filename);
 }

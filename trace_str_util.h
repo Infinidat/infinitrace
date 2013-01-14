@@ -35,7 +35,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #endif
 
 
- extern const char *trace_severity_to_str_array[];
+ extern const char *const trace_severity_to_str_array[];
 
  enum trace_severity trace_str_to_severity_case_sensitive(const char *s);
  enum trace_severity trace_str_to_severity_case_insensitive(const char *s);

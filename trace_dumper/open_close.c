@@ -19,7 +19,7 @@
  */
 
 #include "../platform.h"
-
+#include "../trace_str_util.h"
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -177,7 +177,7 @@ static int trace_open_file(struct trace_dumper_configuration_s *conf, struct tra
         return -1;
     }
 
-    strncpy(record_file->filename, filename, sizeof(record_file->filename));
+    trace_strncpy_and_terminate(record_file->filename, filename, sizeof(record_file->filename));
     return trace_write_header(conf, record_file);
 }
 

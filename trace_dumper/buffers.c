@@ -37,6 +37,7 @@
 #include "../trace_lib.h"
 #include "../trace_user.h"
 #include "../trace_clock.h"
+#include "../trace_str_util.h"
 #include "trace_dumper.h"
 #include "metadata.h"
 #include "open_close.h"
@@ -63,20 +64,21 @@ pid_t get_pid_from_shm_name(const char *shm_name)
 {
     char str_pid[10];
     shm_name += strlen(TRACE_SHM_ID);
-    char *underscore = strstr(shm_name, "_");
+    char *underscore = strchr(shm_name, '_');
 
     if (NULL == underscore) {
+        errno = EINVAL;
         return -1;
     }
 
     if ((unsigned long) (underscore - shm_name) >= sizeof(str_pid)) {
+        errno = EINVAL;
         return -1;
     }
 
     memcpy(str_pid, shm_name, underscore - shm_name);
     str_pid[underscore - shm_name] = '\0';
     return atoi(str_pid);
-
 }
 
 bool_t is_static_log_data_shm_region(const char *shm_name)
@@ -147,17 +149,13 @@ static int get_process_time(pid_t pid, trace_ts_t *curtime)
     return 0;
 }
 
-bool_t trace_should_filter(struct trace_dumper_configuration_s *conf __attribute__((unused)), const char *buffer_name)
+bool_t trace_should_filter(struct trace_dumper_configuration_s *conf, const char *buffer_name)
 {
     buffer_name_t filter;
     memset(filter, 0, sizeof(filter));
-    strncpy(filter, buffer_name, sizeof(filter));
+    trace_strncpy_and_terminate(filter, buffer_name, sizeof(filter));
     int rc = BufferFilter__find_element(&conf->filtered_buffers, &filter);
-    if (rc >= 0) {
-        return TRUE;
-    } else {
-        return FALSE;
-    }
+    return rc >= 0 ;
 }
 
 /* Open a shared memory object in read-write mode and return the file descriptor. Also if size is not NULL, return its size */
@@ -276,7 +274,7 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
                       new_mapped_buffer->metadata.log_descriptor_count, new_mapped_buffer->metadata.type_definition_count);
     static_log_data_region->base_address = mapped_static_log_data_addr;
     init_metadata_iovector(&new_mapped_buffer->metadata, new_mapped_buffer->pid);
-    strncpy(new_mapped_buffer->name, static_log_data_region->name, sizeof(new_mapped_buffer->name));
+    trace_array_strcpy(new_mapped_buffer->name, static_log_data_region->name);
     unsigned int i;
     for (i = 0; i < TRACE_BUFFER_NUM_RECORDS; i++) {
         struct trace_mapped_records *mapped_records;
@@ -571,8 +569,7 @@ void clear_mapped_records(struct trace_dumper_configuration_s *conf)
 void add_buffer_filter(struct trace_dumper_configuration_s *conf, char *buffer_name)
 {
     buffer_name_t filter;
-    memset(filter, 0, sizeof(filter));
-    strncpy(filter, buffer_name, sizeof(filter));
+    trace_strncpy_and_terminate(filter, buffer_name, sizeof(filter));
 
     if (0 != BufferFilter__add_element(&conf->filtered_buffers, &filter)) {
         ERR("Can't add buffer", buffer_name,  "to filter list");
