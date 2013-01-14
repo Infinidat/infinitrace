@@ -17,13 +17,13 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 
 #define _GNU_SOURCE
 
-#include "./platform.h"
+#include "platform.h"
 
 #include <sys/types.h>
 #ifdef _USE_INOTIFY_
 #include <sys/inotify.h>
 #endif
-#include <sys/stat.h>
+
 #include <fcntl.h>
 #include <stdio.h>
 #include <ctype.h>
@@ -31,15 +31,10 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include <stdlib.h>
 #include <limits.h>
 #include <errno.h>
-#include <sys/mman.h>
-#include <sys/resource.h>
 #include <sys/poll.h>
 #include <assert.h>
 #include <stdarg.h>
 #include <sysexits.h>
-
-#include <pthread.h>
-#include <semaphore.h>
 
 #include "parser.h"
 #include "min_max.h"
@@ -53,7 +48,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "timeformat.h"
 #include "trace_str_util.h"
 #include "filter.h"
-#include "zlib.h"
+#include "parser_mmap.h"
 
 /* print out */
 typedef struct {
@@ -185,56 +180,10 @@ static int wait_for_data(trace_parser_t *parser, int ms_timeout __attribute__((u
 #endif
 }
 
-static off64_t get_current_end_offset_from_fd(int fd)
-{
-	struct stat st;
-	if (0 != fstat(fd, &st)) {
-		return (off64_t) -1;
-	}
-
-	const off64_t allocated_size = (off64_t) 512 * st.st_blocks;
-    return MIN(allocated_size, st.st_size);
-}
-
-
-static void *re_map(trace_parser_t *parser, off64_t new_end)
-{
-#ifdef _USE_MREMAP_
-
-    return mremap(parser->file_info.file_base, parser->file_info.end_offset, new_end, MREMAP_MAYMOVE);
-
-#else
-
-	if (0 != munmap(parser->file_info.file_base, parser->file_info.end_offset)) {
-		return MAP_FAILED;
-	}
-	return mmap(NULL, new_end, PROT_READ, MAP_SHARED, parser->file_info.fd, 0);
-
-#endif
-}
-
-
-static off64_t trace_end_offset(trace_parser_t *parser)
-{
-    const off64_t new_end = get_current_end_offset_from_fd(parser->file_info.fd);
-    if (new_end != parser->file_info.end_offset) {
-    	assert(new_end > parser->file_info.end_offset);
-    	void *const new_addr = re_map(parser, new_end);
-        if (!new_addr || MAP_FAILED == new_addr) {
-            return -1;
-        }
-
-        parser->file_info.end_offset = new_end;
-        parser->file_info.file_base = new_addr;
-    }
-
-    return new_end;
-}
-
 static int adjust_offset_for_added_data(trace_parser_t *parser)
 {
 	int rc = wait_for_data(parser, -1);
-	if ((rc > 0) && (trace_end_offset(parser) < (off64_t) 0)) {
+	if ((rc > 0) && (trace_parser_update_end_offset(parser) < (off64_t) 0)) {
 		return -1;
 	}
 
@@ -1906,219 +1855,6 @@ static int init_inotify(trace_parser_t *parser, const char *filename)
 }
 #endif
 
-/* Remove rlimits for virtual memory, which could prevent trace_reader from running */
-static int remove_limits(void)
-{
-    const struct rlimit limit = { RLIM_INFINITY, RLIM_INFINITY };
-    return setrlimit(RLIMIT_AS, &limit);
-}
-
-static long long aligned_size(long long size)
-{
-    static long long page_size;
-    
-    if (!page_size) {
-        page_size = sysconf(_SC_PAGE_SIZE);
-        if (!page_size || (page_size & (page_size - 1))) {
-            /* page size is not a power of two */
-            page_size = 4096;
-        }
-    }
-
-    return (size + page_size - 1) & ~(page_size - 1);
-}
-
-static void *mmap_new_anon_mem(size_t size)
-{
-	return mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANON, -1, 0);
-}
-
-static void *mmap_grow(void *const addr, size_t size, size_t new_size)
-{
- #ifdef _USE_MREMAP_
-	if (NULL == addr) {
-		assert(0 == size);
-		return mmap_new_anon_mem(new_size);
-	}
-    return mremap(addr, size, new_size, MREMAP_MAYMOVE);
-#else
-    void* new_addr = mmap_new_anon_mem(new_size);
-    if ((new_addr != MAP_FAILED) && (addr)) {
-        memcpy(new_addr, addr, size);
-        munmap(addr, size);
-    }
-
-    return new_addr;
-
-#endif
-}
-
-static void *mmap_gzip(int fd, long long *input_size)
-{
-    int new_fd = -1;
-    gzFile gz;
-    unsigned char u[4];
-    int len;
-    void *addr;
-    long long size;
-    long long offset;
-    long long avail;
-
-    lseek64(fd, -4, SEEK_END);
-    len = read(fd, u, sizeof(u));
-    if (len != 4) {
-        return NULL;
-    }
-
-    /* unfortunately gzip's size is 32-bit */
-    size = (u[3] << 24) + (u[2] << 16) + (u[1] << 8) + u[0];
-
-    if (size < *input_size) {
-        size = (double)*input_size * 1.3;
-    }
-
-    lseek64(fd, 0, SEEK_SET);
-    new_fd = dup(fd);
-    gz = gzdopen(new_fd, "rb");
-    if (gz == NULL) {
-        close(new_fd);
-        return NULL;
-    }
-    new_fd = -1;
- 
-    if (gzdirect(gz)) {
-        gzclose(gz);
-        return NULL;
-    }
-
-    size = aligned_size(size);
-
-    addr = mmap_grow(NULL, 0, size);
-    if (addr == MAP_FAILED) {
-        gzclose(gz);
-        return addr;
-    }
-
-    offset = 0;
-    avail = size;
-
-    for (;;) {
-#define CHUNK 65536
-        len = gzread(gz, (char*)addr + offset, MIN(CHUNK, avail));
-        if (len < 0) {
-            gzclose(gz);
-            munmap(addr, size);
-            return MAP_FAILED;
-        }
-        if (len == 0) {
-            break;
-        }
-        offset += len;
-        avail -= len;
-
-        // size in trailer doesn't match actual data - more than 4G of input?
-        if (avail == 0) {
-            long long new_size = aligned_size(size + 0x100000000ll);
-            void* new_addr;
-
-            remove_limits();
-
-            new_addr = mmap_grow(addr, size, new_size);
-
-            if (addr == MAP_FAILED) {
-                gzclose(gz);
-                munmap(addr, size);
-                return MAP_FAILED;
-            }
-
-            avail = new_size - size;
-            addr = new_addr;
-            size = new_size;
-        }
-    }
-
-    gzclose(gz);
-
-    *input_size = offset;
-
-    return addr;
-}
-
-static void *mmap_fd(int fd, long long *size)
-{
-    void *addr = mmap_gzip(fd, size);
-    if (addr == MAP_FAILED || addr != NULL) {
-        return addr;
-    }
-
-    return mmap(NULL, *size, PROT_READ, MAP_SHARED, fd, 0);
-}
-
-static int mmap_file(trace_parser_t *parser, const char *filename)
-{
-    long long size;
-    void *addr;
-    
-    int fd = open(filename, O_RDONLY);
-    if (fd < 0) {
-        return -1;
-    }
-    
-    size = get_current_end_offset_from_fd(fd);
-    if (size < 0) {
-        close(fd);
-        return -1;
-    }
-
-    addr = mmap_fd(fd, &size);
-    if ((MAP_FAILED == addr) && (ENOMEM == errno)) {
-    	/* The failure may be due to rlimit for virtual memory set too low, so try to raise it */
-    	if (0 != remove_limits()) {
-    		return -1;
-    	}
-    	addr = mmap_fd(fd, &size);
-    }
-
-    if (MAP_FAILED == addr) {
-        close(fd);
-        return -1;
-    }
-
-    assert(-1 == parser->file_info.fd);
-    parser->file_info.fd = fd;
-
-    assert(MAP_FAILED == parser->file_info.file_base);
-    parser->file_info.file_base = addr;
-
-    parser->file_info.end_offset = size;
-    parser->file_info.current_offset = 0;
-    return 0;
-}
-
-static void unmap_file(trace_parser_t *parser)
-{
-    if (MAP_FAILED != parser->file_info.file_base) {
-    	assert(0 == munmap(parser->file_info.file_base, parser->file_info.end_offset));
-    	parser->file_info.file_base = MAP_FAILED;
-    }
-
-    parser->file_info.end_offset = 0;
-
-    if (-1 != parser->inotify_descriptor) {
-    	assert(0 == inotify_rm_watch(parser->inotify_fd, parser->inotify_descriptor));
-    	parser->inotify_descriptor = -1;
-    }
-
-    if (-1 != parser->inotify_fd) {
-    	assert(0 == close(parser->inotify_fd));
-    	parser->inotify_fd = -1;
-    }
-
-    if (-1 != parser->file_info.fd) {
-    	assert(0 == close(parser->file_info.fd));
-    	parser->file_info.fd = -1;
-    }
-}
 
 static void init_trace_sev_mapping(void) {
     for (unsigned i = 0; i < ARRAY_LENGTH(trace_sev_mapping); i++) {
@@ -2143,7 +1879,7 @@ int TRACE_PARSER__from_file(trace_parser_t *parser, bool_t wait_for_input, const
         parser->wait_for_input = TRUE;
     }
 
-    rc = mmap_file(parser, filename);
+    rc = trace_parser_mmap_file(parser, filename);
     if (0 != rc) {
         return -1;
     }
@@ -2152,7 +1888,7 @@ int TRACE_PARSER__from_file(trace_parser_t *parser, bool_t wait_for_input, const
 
     rc = read_file_header(parser, &file_header);
     if (0 != rc) {
-        unmap_file(parser);
+        trace_parser_unmap_file(parser);
         return -1;
     }
 
@@ -2187,7 +1923,7 @@ int TRACE_PARSER__from_file(trace_parser_t *parser, bool_t wait_for_input, const
 #undef TRACE_SEV_X
 
     default:
-    	unmap_file(parser);
+    	trace_parser_unmap_file(parser);
     	errno = EFTYPE;
     	return -1;
     }
@@ -2207,7 +1943,7 @@ int TRACE_PARSER__from_file(trace_parser_t *parser, bool_t wait_for_input, const
 void TRACE_PARSER__fini(trace_parser_t *parser)
 {
     if (file_open(parser)) {
-        unmap_file(parser);
+        trace_parser_unmap_file(parser);
     }
 
     free_all_metadata(parser);

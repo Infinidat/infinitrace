@@ -95,9 +95,9 @@ struct record_dump_context_s {
 
 struct buffer_dump_context_s {
     struct record_dump_context_s record_dump_contexts[RECORD_DUMP_CONTEXTS];
-    long long end_offset;
-    long long previous_dump_offset;
-    long long file_offset;
+    off64_t end_offset;
+    off64_t previous_dump_offset;
+    off64_t file_offset;
     unsigned int num_chunks;
 };
 
