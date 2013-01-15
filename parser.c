@@ -359,7 +359,6 @@ static int metadata_info_started(trace_parser_t *parser, const struct trace_reco
     if (BufferParseContextList__add_element(&parser->buffer_contexts, &new_context) < 0) {
     	free(new_context.metadata);
     	new_context.metadata = NULL;
-    	errno = ENOMEM;
     	return -1;
     }
 
@@ -521,7 +520,6 @@ static struct trace_record *accumulate_record(trace_parser_t *parser, const stru
 
         int rc = RecordsAccumulatorList__allocate_element(&parser->records_accumulators);
         if (0 != rc) {
-            errno = ENOMEM;
             return NULL;
         }
         

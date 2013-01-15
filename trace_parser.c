@@ -39,6 +39,8 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <assert.h>
+#include <time.h>
+
 #include "min_max.h"
 #include "array_length.h"
 #include "trace_defs.h"

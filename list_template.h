@@ -19,7 +19,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "trace_macros.h"
 #include "array_length.h"
 #include <string.h>
-#include <pthread.h>
+#include <errno.h>
 
 /* These macros assume the following: 
   - listdatatype is defined to hold the name of the datatype in the list 
@@ -29,19 +29,19 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 
 #define CREATE_LIST_PROTOTYPE(listname, listdatatype, num_elements)     \
 	typedef struct listname##_s {                                       \
-	int element_count;                                                  \
+	unsigned element_count;                                             \
 	listdatatype elements[num_elements];                                \
 } listname;                                                             \
 																		\
 void listname ## __##init(listname *self);                              \
 void listname ## __##clear(listname *self);                             \
 void listname ## __##fini(listname *self);                              \
-int listname##__from_buffer(listname *self, const char *buffer, int buffer_size); \
 int listname##__add_element(listname *self, listdatatype *element);     \
+int listname##__from_buffer(listname *self, const void *buffer);        \
 int listname##__allocate_element(listname *self); \
-int listname##__get_element(const listname *self, int __index, listdatatype *output_element); \
-int listname##__get_element_ptr(const listname *self, int __index, listdatatype **element_ptr); \
-int listname##__remove_element(listname *self, int __index);              \
+int listname##__get_element(const listname *self, unsigned __index, listdatatype *output_element); \
+int listname##__get_element_ptr(const listname *self, unsigned __index, listdatatype **element_ptr); \
+int listname##__remove_element(listname *self, unsigned __index);              \
 int listname##__element_count(const listname *self);                          \
 int listname##__last_element_index(const listname *self);                     \
 int listname##__dequeue(listname *self, listdatatype *output_element);  \
@@ -55,15 +55,17 @@ void listname ## __##init(listname *self)                               \
 	memset(self, 0, sizeof(*self));                                     \
 }                                                                       \
                                                                         \
-int listname##__from_buffer(listname *self, const char *buffer, int buffer_size) \
+int listname##__from_buffer(listname *self, const void *buffer)         \
 {                                                                       \
-	listname *other = (listname *) buffer;                              \
+	const listname *const other = (const listname *) buffer;            \
 	listname ## __##init(self);                                         \
-	if (buffer_size != sizeof(*self)) {                                 \
-		return -1;                                                      \
+	const int n = other->element_count;                                 \
+	if ((n < 0) || (n > listname##_NUM_ELEMENTS)) {                     \
+	    errno = (n < 0) ? EINVAL : ENOMEM;                              \
+        return -1;                                                      \
 	}                                                                   \
-	memcpy(&self->elements, other->elements, buffer_size);              \
-	self->element_count = other->element_count;                         \
+	self->element_count = n;                                            \
+    memcpy(self->elements, other->elements, n * sizeof(listdatatype));  \
 	return 0;                                                           \
 }                                                                       \
                                                                         \
@@ -73,22 +75,22 @@ void listname ## __clear(listname *self) {                              \
                                                                         \
 void listname ## __##fini(listname *self)                               \
 {                                                                       \
-	memset(self, 0, sizeof(*self));                                     \
+	listname ## __##init(self);                                         \
 }                                                                       \
                                                                         \
 int listname##__add_element(listname *self, listdatatype *element)      \
 {                                                                       \
-	if (listname##_NUM_ELEMENTS == listname##__element_count(self)) {              \
-		return -1;                                                      \
+	if (listname##__allocate_element(self) < 0) {                       \
+        return -1;                                                      \
 	}                                                                   \
-	memcpy(&self->elements[self->element_count], element, sizeof(*element)); \
-	self->element_count++;                                              \
+	memcpy(&self->elements[self->element_count - 1], element, sizeof(*element)); \
 	return 0;                                                           \
 }                                                                       \
                                                                         \
 int listname##__allocate_element(listname *self)                        \
 {                                                                       \
-	if (listname##_NUM_ELEMENTS == listname##__element_count(self)) {              \
+	if (listname##__element_count(self) >= listname##_NUM_ELEMENTS) {   \
+	    errno = ENOMEM;                                                 \
 		return -1;                                                      \
 	}                                                                   \
 	self->element_count++;                                              \
@@ -96,39 +98,37 @@ int listname##__allocate_element(listname *self)                        \
 }                                                                       \
                                                                         \
                                                                         \
-int listname##__get_element(const listname *self, int __index, listdatatype *output_element) \
+int listname##__get_element(const listname *self, unsigned __index, listdatatype *output_element) \
 {                                                                       \
-	int rc = 0;                                                         \
-	if (__index >= self->element_count) {                                 \
-		memset(output_element, 0, sizeof(*output_element));             \
-		rc = -1;                                                        \
-		goto Exit;                                                      \
+    listdatatype *p_elem = NULL;                                        \
+	if (listname##__get_element_ptr(self, __index, &p_elem) < 0) {      \
+        memset(output_element, 0, sizeof(*output_element));             \
+		return -1;                                                      \
 	}                                                                   \
                                                                         \
-	memcpy(output_element, &self->elements[__index], sizeof(*output_element)); \
-Exit:                                                                   \
-	return rc;                                                          \
+	memcpy(output_element, p_elem, sizeof(*output_element));            \
+	return 0;                                                           \
 }                                                                       \
                                                                         \
-int listname##__get_element_ptr(const listname *self, int __index, listdatatype **output_element_ptr) \
+int listname##__get_element_ptr(const listname *self, unsigned __index, listdatatype **output_element_ptr) \
 {                                                                       \
-	int rc = 0;                                                         \
-	if (__index >= self->element_count) {                                 \
-		rc = -1;                                                        \
-		goto Exit;                                                      \
+	if (__index >= self->element_count) {                               \
+	    *output_element_ptr = NULL;                                     \
+        errno = EINVAL;                                                 \
+        return -1;                                                      \
 	}                                                                   \
                                                                         \
-	*output_element_ptr = (listdatatype *)&self->elements[__index];                       \
-Exit:                                                                   \
-	return rc;                                                          \
+	*output_element_ptr = (listdatatype *)&self->elements[__index];         \
+	return 0;                                                           \
 }                                                                       \
                                                                         \
-int listname##__remove_element(listname *self, int __index)               \
+int listname##__remove_element(listname *self, unsigned __index)               \
 {                                                                       \
 	int size_of_moved_elements = 0;                                     \
                                                                         \
-	if (__index >= listname##__element_count(self)) {                     \
-		return -1;                                                      \
+	if (__index >= (unsigned) listname##__element_count(self)) {        \
+        errno = ENOENT;                                                 \
+	    return -1;                                                      \
 	}                                                                   \
                                                                         \
 	size_of_moved_elements = sizeof(self->elements[__index]) * (self->element_count - __index - 1); \
@@ -136,62 +136,45 @@ int listname##__remove_element(listname *self, int __index)               \
 	memmove(&self->elements[__index], &self->elements[__index + 1], size_of_moved_elements); \
                                                                         \
 	self->element_count--;                                              \
-                                                                        \
 	return 0;                                                           \
                                                                         \
 }                                                                       \
                                                                         \
 int listname##__dequeue(listname *self, listdatatype *output_element)   \
 {                                                                       \
-	int rc = -1;                                                        \
-	if (0 == listname##__element_count(self)) {                         \
-		rc = -1;                                                        \
-		goto Exit;                                                      \
+	if (listname##__element_count(self) <= 0) {                         \
+        errno = EINVAL;                                                 \
+        return -1;                                                      \
 	}                                                                   \
                                                                         \
 	listname##__get_element(self, 0, output_element);                   \
 	listname##__remove_element(self, 0);                                \
-    rc = 0;                                                             \
-Exit:                                                                   \
-	return rc;                                                          \
-                                                                        \
+    return 0;                                                           \
 }                                                                       \
                                                                         \
-int listname##__element_count(const listname *self)                           \
+int listname##__element_count(const listname *self)                     \
 {                                                                       \
-	int rc;                                                             \
-	rc = self->element_count;                                           \
-                                                                        \
-	return rc;                                                          \
+	return self->element_count;                                         \
 }                                                                       \
                                                                         \
-int listname##__last_element_index(const listname *self)                      \
+int listname##__last_element_index(const listname *self)                \
 {                                                                       \
 	return (listname##__element_count(self) - 1);                       \
 }                                                                       \
                                                                         \
 int listname##__find_element(const listname *self, listdatatype *element)     \
 {                                                                       \
-	int i = 0;                                                          \
-	int element_count = 0;                                              \
-	int rc = -1;                                                        \
-	listdatatype tmp_element		;                                   \
-                                                                        \
-	element_count = listname##__element_count(self);                    \
-	while(i < element_count) {                                          \
-		listname##__get_element(self, i, &tmp_element);                 \
-		rc = memcmp(element, &tmp_element, sizeof(*element));           \
-		if (0 == rc) {                                                  \
+	const int element_count = listname##__element_count(self);          \
+	for (int i = 0; i < element_count; i++) {                           \
+	    listdatatype *tmp_element = NULL;                               \
+		listname##__get_element_ptr(self, i, &tmp_element);             \
+		if (0 == memcmp(element, tmp_element, sizeof(*element))) {      \
 			return i;                                                   \
 		}                                                               \
-		i++;                                                            \
 	}                                                                   \
                                                                         \
-	if (0 != rc) {                                                      \
-		rc = -1;                                                        \
-	}                                                                   \
-                                                                        \
-	return rc;                                                          \
+    errno = ENOENT;                                                     \
+    return -1;                                                          \
 }                                                                       \
                                                                         \
 bool_t listname##__insertable(const listname *self) {                         \
