@@ -36,9 +36,15 @@
 #include "parser.h"
 #include "filter.h"
 
+#pragma GCC diagnostic ignored "-Wvla"  /* Allow C99 variable-length arrays */
+
 static filter_t *new_filter_t() {
-    filter_t* ret = calloc(1, sizeof(filter_t));
-    return ret;
+    return calloc(1, sizeof(filter_t));
+}
+
+static void del_filter_t(filter_t *f)
+{
+    free(f);
 }
 
 static void and_filter(filter_t *filter_a,
@@ -155,26 +161,33 @@ bool_t trace_filter_init_from_cmdline(struct trace_filter_collection *filters, i
             OR_MAYBE('>');
             OR_MAYBE('<');
     #undef  OR_MAYBE
+
+    #define QUIT_ON_ERR_AND_FREE_FILT(msg) { del_filter_t(f); QUIT_ON_ERR(msg) }
             if (equal) {
                 if (equal > sizeof(f->u.named_param_value.param_name) + arg - 1) {
-                    fprintf(stderr, "'%s': Too long.", arg);
+                    const char msg_start[] = " Expression too long: ";
+                    char msg[sizeof(msg_start) + 10 + strlen(arg)];
+                    snprintf(msg, sizeof(msg), "%s'%s'", msg_start, msg);
+                    QUIT_ON_ERR_AND_FREE_FILT(msg);
                     return FALSE;
                 }
 
                 if (!trace_get_number(equal+1, &num))
-                    QUIT_ON_ERR(" Bad integer number in named value");
+                    QUIT_ON_ERR_AND_FREE_FILT(" Bad integer number in named value");
                 f->type = TRACE_MATCHER_LOG_NAMED_PARAM_VALUE;
                 f->u.named_param_value.compare_type = *equal;
                 strncpy(f->u.named_param_value.param_name, arg, equal-arg);
             }
             else {
                 if (!trace_get_number(arg, &num))
-                    QUIT_ON_ERR(" Bad integer number in named value");
+                    QUIT_ON_ERR_AND_FREE_FILT(" Bad integer number in named value");
                 f->type = TRACE_MATCHER_LOG_PARAM_VALUE;
                 f->u.named_param_value.compare_type = '=';
             }
 
             f->u.named_param_value.param_value = num;
+
+    #undef QUIT_ON_ERR_AND_FREE_FILT
 
             switch(option) {
             case 'v':
