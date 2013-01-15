@@ -182,10 +182,10 @@ static int open_trace_shm(const char *shm_name, off_t *size) {
 
 static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
 {
-    int static_fd, dynamic_fd;
+    int static_fd = -1, dynamic_fd = -1;
     char dynamic_trace_filename[0x100];
     char static_log_data_filename[0x100];
-    int rc;
+    int rc = -1;
     struct trace_mapped_buffer *new_mapped_buffer = NULL;
     snprintf(dynamic_trace_filename, sizeof(dynamic_trace_filename), TRACE_DYNAMIC_DATA_REGION_NAME_FMT, pid);
     snprintf(static_log_data_filename, sizeof(static_log_data_filename), TRACE_STATIC_DATA_REGION_NAME_FMT, pid);
@@ -193,7 +193,7 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
     off_t static_log_data_region_size = 0;
     static_fd = open_trace_shm(static_log_data_filename, &static_log_data_region_size);
     if (static_fd < 0) {
-        ERR("Unable to open static buffer: %s", strerror(errno));
+        ERR("Unable to open static buffer:", static_log_data_filename, pid, errno, strerror(errno));
         rc = -1;
         goto delete_shm_files;
     }
@@ -201,21 +201,21 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
     off_t trace_region_size = 0;
     dynamic_fd = open_trace_shm(dynamic_trace_filename, &trace_region_size);
     if (dynamic_fd < 0) {
-        ERR("Unable to open dynamic buffer %s: %s", dynamic_trace_filename, strerror(errno));
+        ERR("Unable to open dynamic buffer", dynamic_trace_filename, pid, errno, strerror(errno));
         rc = -1;
         goto close_static;
     }
 
     void *mapped_dynamic_addr = mmap(NULL, trace_region_size, PROT_READ | PROT_WRITE, MAP_SHARED, dynamic_fd, 0);
     if (MAP_FAILED == mapped_dynamic_addr) {
-        ERR("Unable to map log information buffer");
+        ERR("Unable to map log information buffer", dynamic_trace_filename, pid, errno, strerror(errno));
         rc = -1;
         goto close_dynamic;
     }
 
     void * mapped_static_log_data_addr = mmap(NULL, static_log_data_region_size, PROT_READ | PROT_WRITE, MAP_SHARED, static_fd, 0);
     if (MAP_FAILED == mapped_static_log_data_addr) {
-        ERR("Unable to map static log area: %s", strerror(errno));
+        ERR("Unable to map static log area:", static_log_data_filename, pid, errno, strerror(errno));
         rc = -1;
         goto unmap_dynamic;
     }
@@ -225,23 +225,23 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
 
     if (trace_should_filter(conf, static_log_data_region->name)) {
         rc = 0;
-        INFO("Filtering buffer", static_log_data_region->name);
+        INFO("Filtering buffer", static_log_data_region->name, pid);
         goto unmap_static;
 
     }
 
     if (0 != MappedBuffers__allocate_element(&conf->mapped_buffers)) {
         rc = -1;
+        ERR("No space left to add a buffer for", static_log_data_region->name, pid);
         goto unmap_static;
-        return -1;
     }
 
     MappedBuffers__get_element_ptr(&conf->mapped_buffers, MappedBuffers__element_count(&conf->mapped_buffers) - 1, &new_mapped_buffer);
     memset(new_mapped_buffer, 0, sizeof(*new_mapped_buffer));
     if (static_log_data_region_size > MAX_METADATA_SIZE) {
-        ERR("Error, metadata size %x too large", static_log_data_region_size);
+        ERR("Error, metadata size too large for", static_log_data_region->name, pid, static_log_data_region_size);
         rc = -1;
-        goto unmap_static;
+        goto remove_mapped_buffer;
     }
 
     new_mapped_buffer->records_buffer_base_address = mapped_dynamic_addr;
@@ -264,7 +264,7 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
     		WARN("Process", pid, "no longer exists");
     	}
     	else {
-    		syslog(LOG_USER|LOG_WARNING, "Faield to get the process time for pid %d due to %s", pid, strerror(errno));
+    		syslog(LOG_USER|LOG_WARNING, "Failed to get the process time for pid %d due to %s", pid, strerror(errno));
     	}
     	process_time = 0;
     }
@@ -287,19 +287,22 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
         mapped_records->current_read_record = mapped_records->mutab->next_flush_record;
     }
 
-    INFO("new process joined" ,"pid =", new_mapped_buffer->pid, "name =", new_mapped_buffer->name);
     if (new_mapped_buffer->pid != pid) {
+        WARN("Pid cannot fit in a 16-bit field for", new_mapped_buffer->name, pid, mapped_static_log_data_addr, static_log_data_region_size, mapped_dynamic_addr, trace_region_size);
     	syslog(LOG_USER|LOG_WARNING, "Pid %d of %s is too large to be represented in trace dumper's %lu-bit pid field. Please restrict your system's process IDs accordingly",
     			pid, new_mapped_buffer->name, 8*sizeof(new_mapped_buffer->pid));
     }
     else if (conf->log_details && !conf->attach_to_pid) {
+        INFO("Starting to collect traces from the process", new_mapped_buffer->name, pid, mapped_static_log_data_addr, static_log_data_region_size, mapped_dynamic_addr, trace_region_size);
     	syslog(LOG_USER|LOG_INFO, "Starting to collect traces from %s with pid %d to %s",
     			new_mapped_buffer->name, new_mapped_buffer->pid, conf->record_file.filename);
     }
 
     rc = 0;
     goto exit;
-    MappedBuffers__remove_element(&conf->mapped_buffers, MappedBuffers__element_count(&conf->mapped_buffers) - 1);
+
+remove_mapped_buffer:
+    MappedBuffers__remove_element(&conf->mapped_buffers, MappedBuffers__last_element_index(&conf->mapped_buffers));
 unmap_static:
     munmap(mapped_static_log_data_addr, static_log_data_region_size);
 unmap_dynamic:
@@ -314,6 +317,7 @@ exit:
 	if (0 != rc) {
 		const char *err_name = strerror(errno);
 		const char *proc_name = ((NULL == new_mapped_buffer) ? "(unknown)" : new_mapped_buffer->name);
+		ERR("Failed to map a buffer for process", proc_name, pid, errno, err_name);
 		syslog(LOG_USER|LOG_ERR, "Failed to map buffer for pid %d - %s. Last Error: %s.", (int) pid, proc_name, err_name);
 	}
 	return rc;
