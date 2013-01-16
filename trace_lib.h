@@ -172,6 +172,8 @@ struct trace_buffer {
 
 unsigned trace_copy_vstr_to_records(struct trace_record **records, unsigned *rec_idx, unsigned *records_array_len, unsigned char **typed_buf, const char *src);
 
+unsigned trace_copy_scalar_to_records(struct trace_record **records, unsigned *rec_idx, unsigned *records_array_len, unsigned char **typed_buf, const unsigned char *src, unsigned len);
+
 /* Fill-in some of the record fields (termination, severity, pid, tid, timestamp and generation) and write them as a contiguous sequence. */
 void trace_commit_records(
 		struct trace_record *source_records,

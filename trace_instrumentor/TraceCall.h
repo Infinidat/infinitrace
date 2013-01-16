@@ -156,14 +156,14 @@ TraceParam(llvm::raw_ostream &out, DiagnosticsEngine &_Diags, ASTContext &_ast, 
         return trace_flags.str();
     }
     
-    std::string asString() {
+    std::string asString() const {
         std::ostringstream os;
         os << "TraceParam(flags = " << stringifyTraceParamFlags() << ", ";
-        if (const_str.length() != 0) {
+        if (!const_str.empty()) {
             os << "const_str = \"" << const_str << "\", ";
         }
 
-        if (expression.length() != 0) {
+        if (!expression.empty()) {
             os << "expression = \"" << expression << "\", ";
         }
 
@@ -184,6 +184,18 @@ TraceParam(llvm::raw_ostream &out, DiagnosticsEngine &_Diags, ASTContext &_ast, 
         } else {
             return false;
         }
+    }
+
+    bool isConstString() const {
+        return (0 != (flags & TRACE_PARAM_FLAG_CSTR)) || !const_str.empty();
+    }
+
+    bool isArray() const {
+        return 0 != (flags & TRACE_PARAM_FLAG_VARRAY);
+    }
+
+    bool isRecord() const {
+        return 0 != (flags & TRACE_PARAM_FLAG_RECORD);
     }
 
     bool isVarString() const {

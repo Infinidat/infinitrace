@@ -445,36 +445,58 @@ std::string TraceCall::genMIN(const std::string &a, const std::string &b)
 std::string TraceCall::varlength_getTraceWriteExpression() const
 {
     std::stringstream start_record;
+    bool varlength_encountered = isRepr();
+    unsigned buf_left = TRACE_RECORD_PAYLOAD_SIZE - 4;
+
      for (unsigned int i = 0; i < args.size(); i++) {
         const TraceParam &param = args[i];
 
         if (param.isSimple()) {
-            start_record << varlength_writeSimpleValue(param.expression, param.type_name, param.is_pointer, param.is_reference);
+            if (varlength_encountered) {
+                start_record << varlength_writeSimpleValue(param.expression, param.type_name, param.is_pointer, param.is_reference);
+            }
+            else {
+                start_record << constlength_writeSimpleValue(param.expression, param.type_name, param.is_pointer, param.is_reference, param.size, buf_left);
+            }
         }
-
-        if (param.isVarString()) {
-        	start_record << "*__buf_left = trace_copy_vstr_to_records(&__records, &__rec_idx, &__records_array_len, __typed_buf, ";
-        	start_record << castTo(ast.getLangOptions(), param.expression, "const char *");
-        	start_record << "); ";
-        }
-
-        if (param.trace_call) {
-        	// TODO: Need to check why we are calling traceCallReferenced(), and why it's doing a linear search.
-        	// The whole point about using a set is that the item is only inserted if it's not there already.
-            if (!traceCallReferenced(globalTraces, param.trace_call->trace_call_name)) {
-                globalTraces.insert(param.trace_call);
+        else {
+            if (! varlength_encountered) {
+                varlength_encountered = true;
+                start_record << "*__buf_left = " << buf_left << "; ";
+                start_record << "*__typed_buf = " << getPayloadExpr() << " + "  << TRACE_RECORD_PAYLOAD_SIZE - buf_left << "; ";
             }
 
-            // TODO: Just do a single copy
-            std::string logid = "(&" + param.trace_call->trace_call_name + "- __static_log_information_start)";
-            std::string _type_name = "int";
-            start_record << varlength_writeSimpleValue(logid, _type_name, false, false);
-            
-            start_record << param.expression;
-            start_record << "(__buf_left, __typed_buf, __records, __rec_idx, __records_array_len);";
+            if (param.isVarString()) {
+                start_record << "*__buf_left = trace_copy_vstr_to_records(&__records, &__rec_idx, &__records_array_len, __typed_buf, ";
+                start_record << castTo(ast.getLangOptions(), param.expression, "const char *");
+                start_record << "); ";
+            }
+
+            else if (param.trace_call) {
+                // TODO: Need to check why we are calling traceCallReferenced(), and why it's doing a linear search.
+                // The whole point about using a set is that the item is only inserted if it's not there already.
+                if (!traceCallReferenced(globalTraces, param.trace_call->trace_call_name)) {
+                    globalTraces.insert(param.trace_call);
+                }
+
+                // TODO: Just do a single copy
+                std::string logid = "(&" + param.trace_call->trace_call_name + "- __static_log_information_start)";
+                std::string _type_name = "int";
+                start_record << varlength_writeSimpleValue(logid, _type_name, false, false);
+
+                start_record << param.expression;
+                start_record << "(__buf_left, __typed_buf, __records, __rec_idx, __records_array_len);";
+            }
+
+            else {
+                // TODO: Handle variable length arrays and records, which are currently ignored.
+                assert (param.isConstString() || param.isArray() || param.isRecord());
+            }
         }
      }
      
+     assert (varlength_encountered);
+
      start_record << "if (*__buf_left > 0) { ";
      start_record << "__builtin_memset(*__typed_buf, 0xa5, *__buf_left); ";
      start_record << "}";
@@ -589,26 +611,10 @@ std::string TraceCall::constlength_writeSimpleValue(const std::string &expressio
 std::string TraceCall::varlength_writeSimpleValue(const std::string &expression, const std::string &type_name, bool is_pointer, bool is_reference) const
 {
     std::stringstream serialized;
-    std::string expression_sizeof = "sizeof(__src__.v)";
-    std::string buf_left_str = "(*__buf_left)";
-
     serialized << "{ ";
     serialized << writeSimpleValueSrcDecl(expression, type_name, is_pointer, is_reference);
-    
-    serialized << "const unsigned int __copy_size = " << genMIN(expression_sizeof, buf_left_str) << ";";
-    serialized << "__builtin_memcpy((*__typed_buf), __src__.a, __copy_size);";
-    
-    serialized << "(*__typed_buf) += __copy_size;";
-    serialized << "(*__buf_left) -= __copy_size;";
-
-    std::string remaining_copy_expr = "(" + expression_sizeof + " - __copy_size)";
-    serialized << "if ((*__buf_left == 0) && ("<<  remaining_copy_expr << " > 0)) { ";
-    serialized << varlength_goToNextRecord();
-
-    serialized << "__builtin_memcpy((*__typed_buf), __src__.a + __copy_size, " << remaining_copy_expr << "); ";
-    serialized << "(*__typed_buf) += " << remaining_copy_expr << "; ";
-    serialized << "(*__buf_left) -= " << remaining_copy_expr << "; ";
-    serialized << "}}";
+    serialized << "*__buf_left = trace_copy_scalar_to_records(&__records, &__rec_idx, &__records_array_len, __typed_buf, __src__.a, sizeof(__src__.a)); ";
+    serialized << "} ";
 
     return serialized.str();
 }
@@ -623,6 +629,7 @@ std::string TraceCall::constlength_getTraceWriteExpression(unsigned int& buf_lef
             start_record << constlength_writeSimpleValue(param.expression, param.type_name, param.is_pointer, param.is_reference, param.size, buf_left);
         }
 
+        // TODO: Non "Simple" arguments can still be passed here (e.g. records), and they would likely be ignored. This should be revised!
     }
 
     if (buf_left > 0) {

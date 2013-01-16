@@ -33,6 +33,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "trace_macros.h"
 #include "trace_lib.h"
 #include "trace_user.h"
+#include "min_max.h"
 #include "trace_metadata_util.h"
 #include "trace_clock.h"
 #include "bool.h"
@@ -227,6 +228,31 @@ unsigned trace_copy_vstr_to_records(struct trace_record **records, unsigned *rec
 	/* Make sure we're not allocating a new record needlessly */
 	TRACE_ASSERT(bytes_left < TRACE_RECORD_PAYLOAD_SIZE);
 	return bytes_left;
+}
+
+unsigned trace_copy_scalar_to_records(struct trace_record **records, unsigned *rec_idx, unsigned *records_array_len, unsigned char **typed_buf, const unsigned char *src, unsigned len)
+{
+    TRACE_ASSERT(len < TRACE_RECORD_PAYLOAD_SIZE);
+
+    unsigned bytes_left = bytes_left_in_buf(*records, *rec_idx, *typed_buf);
+    const unsigned copy_size = MIN(bytes_left, len);
+    memcpy(*typed_buf, src, copy_size);
+
+    if (copy_size < len) {
+        trace_advance_record_array(records, rec_idx, records_array_len);
+        const unsigned second_copy_size = len - copy_size;
+        unsigned char *const second_copy_start = (*records)[*rec_idx].u.payload;
+
+        memcpy(second_copy_start, src + copy_size, second_copy_size);
+        bytes_left = TRACE_RECORD_PAYLOAD_SIZE - second_copy_size;
+        *typed_buf = second_copy_start + second_copy_size;
+    }
+    else {
+        bytes_left -= len;
+        *typed_buf += len;
+    }
+
+    return bytes_left;
 }
 
 static void update_last_committed_record(struct trace_records *records, trace_record_counter_t new_index)
