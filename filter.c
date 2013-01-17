@@ -98,15 +98,17 @@ static bool_t set_const_string(filter_t * f, const char *s)
 
 bool_t trace_filter_init_from_cmdline(struct trace_filter_collection *filters, int option, const char *arg, void (*err_handler)(const char *msg))
 {
-#define QUIT_ON_ERR(msg) { err_handler(msg); return FALSE; }
+#define QUIT_ON_ERR(msg) { err_handler(msg); parse_errors++; break; }
 
     long long num = -1;
+    filter_t * f = NULL;
+    unsigned parse_errors = 0;
 
     switch (option) {
     case 'Q':
         {
             if (!trace_get_number(arg, &num) || (num < 0))
-                QUIT_ON_ERR(" -Q [val] : [val] must be a valid positive number");
+                QUIT_ON_ERR(" -Q [val] : [val] must be a valid non-negative number");
 
             filters->quota = new_filter_t();
             filters->quota->type = TRACE_MATCHER_QUOTA_MAX;
@@ -135,7 +137,7 @@ bool_t trace_filter_init_from_cmdline(struct trace_filter_collection *filters, i
 #define WITH(FILTER) if (filters->FILTER == NULL) filters->FILTER = f; else or_filter(filters->FILTER, f)
     case 'g':
         {
-            filter_t * f = new_filter_t();
+            f = new_filter_t();
             f->type = TRACE_MATCHER_CONST_SUBSTRING;
             set_const_string(f, arg);
             WITH(grep);
@@ -144,7 +146,7 @@ bool_t trace_filter_init_from_cmdline(struct trace_filter_collection *filters, i
 
     case 'c':
         {
-            filter_t * f = new_filter_t();
+            f = new_filter_t();
             f->type = TRACE_MATCHER_CONST_STRCMP;
             set_const_string(f, arg);
             WITH(strcmp);
@@ -154,40 +156,35 @@ bool_t trace_filter_init_from_cmdline(struct trace_filter_collection *filters, i
     case 'v':
     case 'u':
         {
-            filter_t * f = new_filter_t();
+            f = new_filter_t();
             char* equal = NULL ;
     #define OR_MAYBE(C) if (! equal ) equal = strrchr(arg, C)
             OR_MAYBE('=');
             OR_MAYBE('>');
             OR_MAYBE('<');
     #undef  OR_MAYBE
-
-    #define QUIT_ON_ERR_AND_FREE_FILT(msg) { del_filter_t(f); QUIT_ON_ERR(msg) }
             if (equal) {
                 if (equal > sizeof(f->u.named_param_value.param_name) + arg - 1) {
                     const char msg_start[] = " Expression too long: ";
                     char msg[sizeof(msg_start) + 10 + strlen(arg)];
                     snprintf(msg, sizeof(msg), "%s'%s'", msg_start, msg);
-                    QUIT_ON_ERR_AND_FREE_FILT(msg);
-                    return FALSE;
+                    QUIT_ON_ERR(msg);
                 }
 
                 if (!trace_get_number(equal+1, &num))
-                    QUIT_ON_ERR_AND_FREE_FILT(" Bad integer number in named value");
+                    QUIT_ON_ERR(" Bad integer number in named value");
                 f->type = TRACE_MATCHER_LOG_NAMED_PARAM_VALUE;
                 f->u.named_param_value.compare_type = *equal;
                 strncpy(f->u.named_param_value.param_name, arg, equal-arg);
             }
             else {
                 if (!trace_get_number(arg, &num))
-                    QUIT_ON_ERR_AND_FREE_FILT(" Bad integer number in named value");
+                    QUIT_ON_ERR(" Bad integer number in named value");
                 f->type = TRACE_MATCHER_LOG_PARAM_VALUE;
                 f->u.named_param_value.compare_type = '=';
             }
 
             f->u.named_param_value.param_value = num;
-
-    #undef QUIT_ON_ERR_AND_FREE_FILT
 
             switch(option) {
             case 'v':
@@ -210,7 +207,7 @@ bool_t trace_filter_init_from_cmdline(struct trace_filter_collection *filters, i
         break;
     case 'z':
         {
-            filter_t * f = new_filter_t();
+            f = new_filter_t();
             if (trace_get_number(arg, &num)) {
                 f->type = TRACE_MATCHER_LOG_PARAM_VALUE;
                 f->u.named_param_value.param_value = num;
@@ -225,7 +222,7 @@ bool_t trace_filter_init_from_cmdline(struct trace_filter_collection *filters, i
         break;
     case 'f':
         {
-            filter_t * f = new_filter_t();
+            f = new_filter_t();
             f->type = TRACE_MATCHER_FUNCTION_NAME;
             strncpy(f->u.function_name, arg, sizeof(f->u.function_name));
             WITH(function);
@@ -233,7 +230,7 @@ bool_t trace_filter_init_from_cmdline(struct trace_filter_collection *filters, i
         break;
     case 'd':
         {
-            filter_t * f = new_filter_t();
+            f = new_filter_t();
             f->type = TRACE_MATCHER_TID;
             if (!trace_get_number(arg, &num))
                 QUIT_ON_ERR(" Bad integer number in tid");
@@ -244,12 +241,18 @@ bool_t trace_filter_init_from_cmdline(struct trace_filter_collection *filters, i
         break;
 
 #undef WITH
+#undef QUIT_ON_ERR
 
     default:
-        return FALSE;
+        parse_errors++;
+        break;
     }
 
-    return TRUE;
+    if ((parse_errors > 0) && (NULL != f)) {
+        del_filter_t(f);
+        f = NULL;
+    }
+    return 0 == parse_errors;
 }
 
 bool_t trace_filter_match_record_chunk(
