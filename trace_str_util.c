@@ -39,7 +39,6 @@ const char *const trace_severity_to_str_array[] = {
 #undef TRACE_SEV_X
 
 #define TRACE_SEV_X(unused, name)                   \
-     /* coverity[deadcode] */        \
      if (COMP_FUNC(s, #name) == 0) { \
          return TRACE_SEV_##name;                   \
      }
@@ -58,8 +57,11 @@ static enum trace_severity num_to_severity(const char *s)
 
 enum trace_severity trace_str_to_severity_case_sensitive(const char *s)
 {
-#define COMP_FUNC strcmp
-    /* coverity[deadcode] */
+    const size_t len_s = strlen(s);
+
+    /* We are not using strcmp() here because on Linux it is a macro, whose expansion makes Coverity complain about dead code */
+#define COMP_FUNC(s, ref)  !( (sizeof(ref) - 1 == len_s) && (memcmp(s, ref, sizeof(ref) - 1) == 0) )
+
 	TRACE_SEVERITY_DEF
 
 #undef COMP_FUNC
