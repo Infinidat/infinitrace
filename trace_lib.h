@@ -41,8 +41,7 @@ extern "C" {
 
 /* Modify __repr__ method declarations and definitions to use the argument list required by the trace runtime. */
 #define __repr__ _trace_represent( \
-		unsigned int *__buf_left, unsigned char **__typed_buf, \
-		struct trace_record* __records, unsigned int& __rec_idx, unsigned int& __records_array_len)
+		unsigned char*& __typed_buf, struct trace_record* __records, unsigned int& __rec_idx, unsigned int& __records_array_len)
 
 extern struct trace_buffer *current_trace_buffer;
 
@@ -170,9 +169,11 @@ struct trace_buffer {
 
 /* Runtime support functions used by the auto-generated code inserted during trace instrumentation. Using them otherwise is not recommended, as they may change. */
 
-unsigned trace_copy_vstr_to_records(struct trace_record **records, unsigned *rec_idx, unsigned *records_array_len, unsigned char **typed_buf, const char *src);
+unsigned char *trace_copy_vstr_to_records(struct trace_record **records, unsigned *rec_idx, unsigned *records_array_len, unsigned char *typed_buf, const char *src);
 
-unsigned trace_copy_scalar_to_records(struct trace_record **records, unsigned *rec_idx, unsigned *records_array_len, unsigned char **typed_buf, const unsigned char *src, unsigned len);
+unsigned char *trace_copy_scalar_to_records(struct trace_record **records, unsigned *rec_idx, unsigned *records_array_len, unsigned char *typed_buf, const unsigned char *src, unsigned len);
+
+void trace_clear_record_remainder(struct trace_record *records, unsigned rec_idx, unsigned char *typed_buf);
 
 /* Fill-in some of the record fields (termination, severity, pid, tid, timestamp and generation) and write them as a contiguous sequence. */
 void trace_commit_records(

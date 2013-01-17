@@ -387,18 +387,14 @@ const std::string& TraceCall::getPayloadExpr()
 
 std::string TraceCall::varlength_initializeTypedRecord() const
 {
-    std::stringstream code;
-    code << initializeOpeningTypedRecord(".");
-    code << "(*__buf_left) = " << TRACE_RECORD_PAYLOAD_SIZE << " - 4;";
-    code << "(*__typed_buf) += 4;";
-    return code.str();
+    return initializeOpeningTypedRecord(".");
 }
 
 std::string TraceCall::constlength_initializeTypedRecord(unsigned int& buf_left) const
 {
     std::stringstream code;
     code << initializeOpeningTypedRecord(".");
-    buf_left = TRACE_RECORD_PAYLOAD_SIZE - 4;
+    buf_left = TRACE_RECORD_PAYLOAD_SIZE - sizeof(static_cast<struct trace_record *>(NULL)->u.typed.log_id);
     return code.str();
 }
 
@@ -430,8 +426,7 @@ std::string TraceCall::constlength_goToNextRecord(unsigned int& buf_left) const 
 std::string TraceCall::varlength_goToNextRecord() const {
     std::stringstream code;
     code << advanceRecordArrayIdx();
-    code << "(*__typed_buf) = " << getPayloadExpr() << ";";
-    code << "(*__buf_left) = " << TRACE_RECORD_PAYLOAD_SIZE << ";";
+    code << "__typed_buf = " << getPayloadExpr() << ";";
     return code.str();
 }
 
@@ -462,12 +457,11 @@ std::string TraceCall::varlength_getTraceWriteExpression() const
         else {
             if (! varlength_encountered) {
                 varlength_encountered = true;
-                start_record << "*__buf_left = " << buf_left << "; ";
-                start_record << "*__typed_buf = " << getPayloadExpr() << " + "  << TRACE_RECORD_PAYLOAD_SIZE - buf_left << "; ";
+                start_record << "__typed_buf = " << getPayloadExpr() << " + "  << TRACE_RECORD_PAYLOAD_SIZE - buf_left << "; ";
             }
 
             if (param.isVarString()) {
-                start_record << "*__buf_left = trace_copy_vstr_to_records(&__records, &__rec_idx, &__records_array_len, __typed_buf, ";
+                start_record << "__typed_buf = trace_copy_vstr_to_records(&__records, &__rec_idx, &__records_array_len, __typed_buf, ";
                 start_record << castTo(ast.getLangOptions(), param.expression, "const char *");
                 start_record << "); ";
             }
@@ -485,7 +479,7 @@ std::string TraceCall::varlength_getTraceWriteExpression() const
                 start_record << varlength_writeSimpleValue(logid, _type_name, false, false);
 
                 start_record << param.expression;
-                start_record << "(__buf_left, __typed_buf, __records, __rec_idx, __records_array_len);";
+                start_record << "(__typed_buf, __records, __rec_idx, __records_array_len); ";
             }
 
             else {
@@ -497,10 +491,7 @@ std::string TraceCall::varlength_getTraceWriteExpression() const
      
      assert (varlength_encountered);
 
-     start_record << "if (*__buf_left > 0) { ";
-     start_record << "__builtin_memset(*__typed_buf, 0xa5, *__buf_left); ";
-     start_record << "}";
-
+     start_record << "trace_clear_record_remainder(__records, __rec_idx, __typed_buf); ";
      return start_record.str();
 }
 
@@ -549,12 +540,8 @@ std::string TraceCall::writeSimpleValueSrcDecl(const std::string &expression, co
 std::string TraceCall::varlength_getFullTraceWriteExpression() const
 {
 	std::stringstream alloc_record;
-    alloc_record << "unsigned int _buf_left; ";
-    alloc_record << "unsigned int *__buf_left = &_buf_left; ";
     alloc_record << allocRecordArray();
-    alloc_record << "unsigned char *_payload_ptr = " << castTo(ast.getLangOptions(), getPayloadExpr(), "unsigned char *") << ";";
-    alloc_record << "unsigned char **__typed_buf =  &_payload_ptr;";
-
+    alloc_record << "unsigned char *__typed_buf = " << getPayloadExpr() << " + " << sizeof(static_cast<struct trace_record *>(NULL)->u.typed.log_id)  << "; ";
     std::stringstream start_record;
     start_record << varlength_initializeTypedRecord();
     start_record << varlength_getTraceWriteExpression();
@@ -613,7 +600,7 @@ std::string TraceCall::varlength_writeSimpleValue(const std::string &expression,
     std::stringstream serialized;
     serialized << "{ ";
     serialized << writeSimpleValueSrcDecl(expression, type_name, is_pointer, is_reference);
-    serialized << "*__buf_left = trace_copy_scalar_to_records(&__records, &__rec_idx, &__records_array_len, __typed_buf, __src__.a, sizeof(__src__.a)); ";
+    serialized << "__typed_buf = trace_copy_scalar_to_records(&__records, &__rec_idx, &__records_array_len, __typed_buf, __src__.a, sizeof(__src__.a)); ";
     serialized << "} ";
 
     return serialized.str();

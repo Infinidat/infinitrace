@@ -185,18 +185,20 @@ static inline int trace_compare_generation(trace_generation_t a, trace_generatio
 
 static inline unsigned bytes_left_in_buf(const struct trace_record *records, unsigned rec_idx, const unsigned char *typed_buf)
 {
-	return (const unsigned char *)(records + rec_idx + 1) - typed_buf;
+	const unsigned bytes_left = records[rec_idx].u.payload + TRACE_RECORD_PAYLOAD_SIZE - typed_buf;
+	TRACE_ASSERT(bytes_left <= TRACE_RECORD_PAYLOAD_SIZE);  /* Check for typed_buf pointing outside the buffer */
+	return bytes_left;
 }
 
-unsigned trace_copy_vstr_to_records(struct trace_record **records, unsigned *rec_idx, unsigned *records_array_len, unsigned char **typed_buf, const char *src)
+unsigned char *trace_copy_vstr_to_records(struct trace_record **records, unsigned *rec_idx, unsigned *records_array_len, unsigned char *typed_buf, const char *src)
 {
 	const unsigned char CONTINUATION_MASK = 0x80;
-	unsigned bytes_left = bytes_left_in_buf(*records, *rec_idx, *typed_buf);
+	unsigned bytes_left = bytes_left_in_buf(*records, *rec_idx, typed_buf);
 
 	do {
 		if (0 == bytes_left) {
 			trace_advance_record_array(records, rec_idx, records_array_len);
-			*typed_buf = (*records)[*rec_idx].u.payload;
+			typed_buf = (*records)[*rec_idx].u.payload;
 			bytes_left = TRACE_RECORD_PAYLOAD_SIZE;
 		}
 
@@ -205,38 +207,39 @@ unsigned trace_copy_vstr_to_records(struct trace_record **records, unsigned *rec
 		if (NULL != end) { /* The remaining length of the string can fit in the buffer */
 			copy_size = end - src;
 			TRACE_ASSERT(copy_size < bytes_left);
-			*typed_buf[0] = 0;
+			typed_buf[0] = 0;
 		}
 		else {
 			copy_size = bytes_left - 1;
-			*typed_buf[0] = CONTINUATION_MASK;
+			typed_buf[0] = CONTINUATION_MASK;
 			TRACE_ASSERT(src[copy_size]);
 		}
 
 		TRACE_ASSERT(copy_size < CONTINUATION_MASK);
 
-		*typed_buf[0] |= copy_size;
-		++ *typed_buf;
-		memcpy(*typed_buf, src, copy_size);
+		typed_buf[0] |= copy_size;
+		++typed_buf;
+		memcpy(typed_buf, src, copy_size);
 
 		src += copy_size;
-		*typed_buf += copy_size;
+		typed_buf += copy_size;
 		bytes_left -= (1 + copy_size);
 
 	} while(*src);
 
 	/* Make sure we're not allocating a new record needlessly */
 	TRACE_ASSERT(bytes_left < TRACE_RECORD_PAYLOAD_SIZE);
-	return bytes_left;
+
+	return typed_buf;
 }
 
-unsigned trace_copy_scalar_to_records(struct trace_record **records, unsigned *rec_idx, unsigned *records_array_len, unsigned char **typed_buf, const unsigned char *src, unsigned len)
+unsigned char *trace_copy_scalar_to_records(struct trace_record **records, unsigned *rec_idx, unsigned *records_array_len, unsigned char *typed_buf, const unsigned char *src, unsigned len)
 {
     TRACE_ASSERT(len < TRACE_RECORD_PAYLOAD_SIZE);
 
-    unsigned bytes_left = bytes_left_in_buf(*records, *rec_idx, *typed_buf);
+    unsigned bytes_left = bytes_left_in_buf(*records, *rec_idx, typed_buf);
     const unsigned copy_size = MIN(bytes_left, len);
-    memcpy(*typed_buf, src, copy_size);
+    memcpy(typed_buf, src, copy_size);
 
     if (copy_size < len) {
         trace_advance_record_array(records, rec_idx, records_array_len);
@@ -244,15 +247,18 @@ unsigned trace_copy_scalar_to_records(struct trace_record **records, unsigned *r
         unsigned char *const second_copy_start = (*records)[*rec_idx].u.payload;
 
         memcpy(second_copy_start, src + copy_size, second_copy_size);
-        bytes_left = TRACE_RECORD_PAYLOAD_SIZE - second_copy_size;
-        *typed_buf = second_copy_start + second_copy_size;
+        typed_buf = second_copy_start + second_copy_size;
     }
     else {
-        bytes_left -= len;
-        *typed_buf += len;
+        typed_buf += len;
     }
 
-    return bytes_left;
+    return typed_buf;
+}
+
+void trace_clear_record_remainder(struct trace_record *records, unsigned rec_idx, unsigned char *typed_buf)
+{
+    memset(typed_buf, 0xa5, bytes_left_in_buf(records, rec_idx, typed_buf));
 }
 
 static void update_last_committed_record(struct trace_records *records, trace_record_counter_t new_index)
