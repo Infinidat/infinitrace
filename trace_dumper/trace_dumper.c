@@ -700,10 +700,6 @@ static int do_housekeeping_if_necessary(struct trace_dumper_configuration_s *con
 {
 	apply_requested_file_operations(conf, TRACE_REQ_CLOSE_ALL_FILES | TRACE_REQ_DISCARD_ALL_BUFFERS);
 
-	if (prefetch_mmapped_pages(conf) < 0) {
-		return -1;
-	}
-
 	const trace_ts_t HOUSEKEEPING_INTERVAL = 10000000; /* 10ms */
 	const trace_ts_t now = get_nsec_monotonic();
 	if (now < conf->next_housekeeping_ts) {
@@ -731,8 +727,14 @@ static int do_housekeeping_if_necessary(struct trace_dumper_configuration_s *con
     rc = unmap_discarded_buffers(conf);
     if (0 != rc) {
     	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while unmapping discarded buffers.", strerror(errno));
+    	return rc;
     }
 
+    rc = prefetch_mmapped_pages(conf);
+    if (0 != rc) {
+        ERR("Prefetching mapped pages returned", rc, errno, strerror(errno));
+        syslog(LOG_ERR|LOG_USER, "Prefetching mapped pages returned %d, errno=%d (%s)", rc, errno, strerror(errno));
+    }
     return rc;
 }
 

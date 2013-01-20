@@ -544,7 +544,9 @@ static int advise_mmapped_range(struct trace_output_mmap_info *mmap_info, int ad
 		return EAGAIN;
 	}
 
-	if (POSIX_MADV_WILLNEED == advice) {
+	const trace_ts_t start = trace_get_nsec_monotonic();
+	const trace_record_counter_t mincore_threshold = TRACE_RECORD_BUFFER_RECS;
+	if ((POSIX_MADV_WILLNEED == advice) && (num_prefetch_records < mincore_threshold)) {
 		const size_t n_pages = (madv_len + mmap_info->page_size - 1) / mmap_info->page_size;
 		unsigned char page_residence[n_pages];
 		if (0 != mincore(madv_start_vp, madv_len, page_residence)) {
@@ -555,18 +557,22 @@ static int advise_mmapped_range(struct trace_output_mmap_info *mmap_info, int ad
 		for (present = 0; (present < n_pages) && (page_residence[present] & 1); present++)
 			;
 
+		const trace_ts_t duration = trace_get_nsec_monotonic() - start;
 		if (present == n_pages) {
-			DEBUG("mincore saved us an madvise", madv_start_vp, madv_len, advice);
+			DEBUG("mincore saved us an madvise", madv_start_vp, madv_len, num_prefetch_records, advice, duration);
 			return 0;
 		}
 	}
 
-	DEBUG("Prefetching records in output file", madv_start_vp, madv_len, advice);
-	int rc = posix_madvise(madv_start_vp, madv_len, advice);
+	const int rc = posix_madvise(madv_start_vp, madv_len, advice);
 	if (rc != 0) {
 		ERR("Attempting to prefetch using posix_madvise(", madv_start_vp, madv_len, advice, ") failed with", rc, strerror(rc));
 		errno = rc;
 		return -1;
+	}
+	else {
+	    const trace_ts_t duration = trace_get_nsec_monotonic() - start;
+	    DEBUG("Prefetched records in output file", madv_start_vp, madv_len, num_prefetch_records, advice, duration);
 	}
 
 	return 0;
