@@ -331,8 +331,12 @@ static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *co
 				    struct trace_mapped_records *mapped_records = NULL;
 
 					for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
-						assert(mapped_records->current_read_record <= mapped_records->next_flush_record);
-						mapped_records->num_records_discarded += (mapped_records->next_flush_record - mapped_records->current_read_record);
+					    if (mapped_records->current_read_record != mapped_records->next_flush_record) {
+					        assert(mapped_records->current_read_record <= mapped_records->next_flush_record);
+					        trace_record_counter_t n_discarded_records = mapped_records->next_flush_record - mapped_records->current_read_record;
+					        WARN("Trace dumper has had to discard records due to insufficient buffer space for pid", mapped_buffer->pid, mapped_buffer->name, rid, n_discarded_records);
+					        mapped_records->num_records_discarded += n_discarded_records;
+					    }
 					}
 				}
 			}
@@ -624,6 +628,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 				advance_mapped_record_counters(conf);
 				rc = total_unflushed_records;	/* We had to discard records, but we consider them to be successfully written in this context. */
 			}
+			WARN("Writing records did not complete successfully. After adjustment: errno=", errno, rc, num_iovecs, total_written_records, cur_ts);
 			return rc;
 		}
 
@@ -784,6 +789,7 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
 			usleep(1000);
 		}
         else if (rc < 0) {
+            ERR("Error while performing housekeeping functions. errno=", errno, strerror(errno));
         	break;
         }
         else assert(0 == rc);
@@ -794,7 +800,7 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
     if (rc < 0) {
 		rc = errno;
 		syslog(LOG_USER|LOG_ERR, "trace_dumper: Error encountered while writing traces: %s.", strerror(rc));
-		ERR("Unexpected failure writing trace file:", strerror(rc));
+		ERR("Unexpected failure writing trace file:", rc, strerror(rc));
 		switch (rc) {
 		case ENOMEM:
 			return EX_SOFTWARE;

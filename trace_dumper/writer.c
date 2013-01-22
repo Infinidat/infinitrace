@@ -624,6 +624,7 @@ int trace_dumper_write_via_mmapping(
 		int iovcnt)
 {
 	if ((NULL == record_file->mapping_info) && (setup_mmapping(conf, record_file) < 0)) {
+	        ERR("Failed to set-up mmapping errno=", errno, strerror(errno), record_file->filename);
 			return -1;
 	}
 	assert(MAP_FAILED != record_file->mapping_info->base);
