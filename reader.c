@@ -191,6 +191,8 @@ static int get_severity_level(const char* str) {
         exit_usage(NULL, invalid_severity_msg);
 }
 
+#ifdef _ENABLE_ACTIVE_FILE_INFERENCE_
+
 static void tokenize_cmdline(char* cmdline, int len, int* argc, char** argv,int MAX_ARGS)
 {
     char* p;
@@ -335,6 +337,8 @@ static int get_active_tracefile(char* filename, int len)
     return result;
 }
 
+#endif
+
 static int parse_command_line(struct trace_reader_conf *conf, int argc, const char **argv)
 {
     int o;
@@ -410,6 +414,8 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
     unsigned long filename_index = optind;
     conf->files_to_process = argv + (int)filename_index;
 
+#ifdef _ENABLE_ACTIVE_FILE_INFERENCE_
+
     if (NULL == *(conf->files_to_process)) {
         static char filename[PATH_MAX];
         static const char* args[2] = { filename, NULL };
@@ -419,6 +425,8 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
             conf->files_to_process = (const char**)args;
         }
     }
+
+#endif
 
     if (NULL == *(conf->files_to_process))
     	exit_usage(NULL, "Must specify input files");
