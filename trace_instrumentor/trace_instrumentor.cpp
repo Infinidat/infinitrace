@@ -369,6 +369,7 @@ std::string TraceCall::commitRecords() const
 {
 	std::stringstream code;
 	code << "trace_commit_records(__records, __rec_idx + 1, " << getSeverityExpr() << "); ";
+	code << "trace_internal_err_record_if_necessary(__trace_saved_errno, __records); ";
 	return code.str();
 }
 
@@ -499,6 +500,7 @@ std::string TraceCall::allocRecordArray() const
 {
 	std::stringstream code;
 
+	code << "const int __trace_saved_errno = trace_internal_err_clear_errno(); ";
 	code << "unsigned __records_array_len = p_trace_runtime_control->initial_records_per_trace; ";
 	code << "struct trace_record __records_initial_array[__records_array_len]; ";
 	code << "struct trace_record* __records = __records_initial_array; ";

@@ -167,6 +167,18 @@ struct trace_buffer {
     } u;
 };
 
+
+/* Functions and data structures for retrieving the latest error of the current thread */
+
+struct trace_internal_err_info {
+    trace_ts_t  ts;
+    unsigned    log_id;
+    int         err_num;
+};
+
+const struct trace_internal_err_info *trace_internal_err_get_last(void);
+void trace_internal_err_clear(void);
+
 /* Runtime support functions used by the auto-generated code inserted during trace instrumentation. Using them otherwise is not recommended, as they may change. */
 
 unsigned char *trace_copy_vstr_to_records(struct trace_record **records, unsigned *rec_idx, unsigned *records_array_len, unsigned char *typed_buf, const char *src);
@@ -193,6 +205,12 @@ static inline void trace_advance_record_array(struct trace_record **records, uns
 		*rec_idx = (*records_array_len - 1 >= *rec_idx) ? *rec_idx : *records_array_len - 1;
 	}
 }
+
+/* Set errno for the thread to 0 and return the old errno value */
+int trace_internal_err_clear_errno(void);
+
+/* If errno is not 0, capture information about the error */
+void trace_internal_err_record_if_necessary(int saved_errno, const struct trace_record *header);
 
 #ifdef __cplusplus
 }

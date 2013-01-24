@@ -122,6 +122,40 @@ int trace_runtime_control_set_subsystem_range(int low, int high)
 	return 0;
 }
 
+static __thread struct trace_internal_err_info internal_err_info;
+
+const struct trace_internal_err_info *trace_internal_err_get_last(void)
+{
+    return &internal_err_info;
+}
+
+void trace_internal_err_clear(void)
+{
+    memset(&internal_err_info, 0, sizeof(internal_err_info));
+}
+
+int trace_internal_err_clear_errno(void)
+{
+    const int saved_errno = errno;
+    errno = 0;
+    return saved_errno;
+}
+
+void trace_internal_err_record_if_necessary(int saved_errno, const struct trace_record *header)
+{
+    if (0 != errno) {
+        if (NULL != header) {
+            internal_err_info.ts = header->ts;
+            internal_err_info.log_id = (header->rec_type == TRACE_REC_TYPE_TYPED) ? header->u.typed.log_id : (trace_log_id_t) -1;
+        }
+        else {
+            trace_internal_err_clear();
+        }
+        internal_err_info.err_num = errno;
+    }
+
+    errno = saved_errno;
+}
 
 /* Runtime support functions called when writing traces to shared-memory */
 
@@ -373,7 +407,7 @@ struct trace_record *trace_realloc_records_array(struct trace_record *const reco
 	if ((NULL != records) && (NULL == trace_records_dynamic_array)) {  /* The original data is in an array allocated on the stack */
 		memcpy(new_records, records, old_size);
 	}
-	*n_records = new_size;
+	*n_records = new_size / TRACE_RECORD_SIZE;
 	trace_records_dynamic_array = new_records;
 	return new_records;
 }

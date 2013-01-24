@@ -231,6 +231,10 @@ typedef unsigned short int trace_pid_t;
 
 /* Time-stamps and time intervals in nano-seconds */
 typedef unsigned long long trace_ts_t;
+
+/* Log-ids used to identify logging formats */
+typedef unsigned int trace_log_id_t;
+
 #define TRACE_TIMESTAMP_FMT_STRING "%llu"
 
 struct trace_record {
@@ -255,7 +259,7 @@ struct trace_record {
 		
 		/* Payload for TRACE_REC_TYPE_TYPED */
 		struct trace_record_typed {
-			unsigned int log_id;	/* Index to the array of log descriptors in the metadata */
+		    trace_log_id_t log_id;	/* Index to the array of log descriptors in the metadata */
 			unsigned char payload[];
 		} typed;
 

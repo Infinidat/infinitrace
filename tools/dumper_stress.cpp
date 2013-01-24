@@ -6,6 +6,7 @@
 #include <time.h>
 #include <signal.h>
 #include <assert.h>
+#include <errno.h>
 #include "common/traces/trace_defs.h"
 #include "common/traces/trace_user.h"
 #include "common/traces/array_length.h"
@@ -73,6 +74,13 @@ static void *do_log(void *)
 
 		if (yield_cpu)
 			sched_yield();
+	}
+
+	const struct trace_internal_err_info *const err_info = trace_internal_err_get_last();
+	if (err_info->err_num) {
+	    const trace_log_descriptor *const desc = __static_log_information_start + err_info->log_id;
+	    fprintf(stderr, "Thread finished with error code %d (%s) at t=%llu in %s:%u (%s())\n",
+	            err_info->err_num, strerror(err_info->err_num), err_info->ts, desc->file, desc->line, desc->function);
 	}
 
     return 0;
