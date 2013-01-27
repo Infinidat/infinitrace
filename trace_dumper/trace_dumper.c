@@ -426,6 +426,28 @@ static void possibly_report_record_loss(
 	}
 }
 
+static bool_t records_are_from_same_trace(volatile const struct trace_record *rec1, volatile const struct trace_record *rec2)
+{
+    return (rec1->ts == rec2->ts) && (rec1->tid == rec2->tid)  && (rec1->severity == rec2->severity);
+}
+
+static bool_t record_ends_trace(volatile const struct trace_record *ending_candidate, volatile const struct trace_record *start_rec) {
+    assert(start_rec->termination & TRACE_TERMINATION_FIRST);
+    return (ending_candidate->termination & TRACE_TERMINATION_LAST) || !records_are_from_same_trace(ending_candidate, start_rec);
+}
+
+static volatile const struct trace_record *n_records_after(volatile const struct trace_record *rec, const struct trace_mapped_records *mapped_records, ssize_t n)
+{
+    const size_t idx =  rec - mapped_records->records;
+    assert(idx < mapped_records->imutab->max_records);
+    return mapped_records->records + ((idx + n) & mapped_records->imutab->max_records_mask);
+}
+
+static volatile const struct trace_record *previous_record(volatile const struct trace_record *rec, const struct trace_mapped_records *mapped_records)
+{
+    return n_records_after(rec, mapped_records, -1);
+}
+
 static unsigned add_warn_records_to_iov(
 		const struct trace_mapped_records *mapped_records,
 		unsigned count,
@@ -437,8 +459,13 @@ static unsigned add_warn_records_to_iov(
 	unsigned start_idx = mapped_records->imutab->max_records_mask & mapped_records->current_read_record;
 	unsigned i;
 
+	const useconds_t retry_wait_len = 10;
+	const unsigned num_retries_on_partial_record = 3;
+	unsigned retries_left = num_retries_on_partial_record;
+
+	volatile const struct trace_record *const end_rec = n_records_after(mapped_records->records + start_idx, mapped_records, count);
 	for (i = 0; i < count; i+= recs_covered) {
-		volatile const struct trace_record *rec = (const struct trace_record *)&mapped_records->records[(start_idx + i) & mapped_records->imutab->max_records_mask];
+		volatile const struct trace_record *rec = n_records_after(mapped_records->records + start_idx, mapped_records, i);
 		struct iovec *iov = increase_iov_if_necessary(record_file, iov_idx + 2);
 
 		if ((rec->termination & TRACE_TERMINATION_FIRST) &&
@@ -451,30 +478,35 @@ static unsigned add_warn_records_to_iov(
 						assert(rec == mapped_records->records + mapped_records->imutab->max_records);
 						recs_covered = mapped_records->imutab->max_records - (start_idx + i);
 						assert(recs_covered > 0);
+						DEBUG("Buffer wrap-around while scanning for notifications", recs_covered, iov_idx, i);
 						iov[iov_idx].iov_len = sizeof(*rec) * recs_covered;
 						i+= recs_covered;
 						iov_idx++;
 						rec = mapped_records->records;
 						iov[iov_idx].iov_base = (void *)rec;
 					}
-				} while (0 == ((rec++)->termination & TRACE_TERMINATION_LAST));
+				} while (! record_ends_trace(rec++, starting_rec) && (end_rec != rec));
 
-				recs_covered = rec - starting_rec;
-				if (((rec - 1)->ts != starting_rec->ts) || ((rec - 1)->tid != starting_rec->tid)) {
-					syslog(LOG_USER|LOG_NOTICE, "Was about to add a partial record of severity %s to the notification iov, at start_idx=%u, i=%u, recs_covered=%u, count=%u",
-							trace_severity_to_str_array[starting_rec->severity], start_idx, i, recs_covered, count);
+				recs_covered = (rec - starting_rec) & mapped_records->imutab->max_records_mask;
+				assert(recs_covered >= 1);
+				assert(i + recs_covered <= count);
 
-					/* TODO: If this condition is encountered we should wait briefly for the writing thread to finish writing.
-					Apparently this will mainly happen with extra long traces, not common in practice. */
-					continue;
-				}
+				if (! records_are_from_same_trace(previous_record(rec, mapped_records), starting_rec)) {
+                    if (retries_left > 0) {
+                       INFO("Unterminated record found while scanning for notifications, The scan will be retried", retries_left, iov_idx, i, recs_covered);
+                       retries_left--;
+                       recs_covered = 0;
+                       usleep(retry_wait_len);
+                    }
+                    else {
+                        WARN("Skipped a partial record while building the notification iov of severity", (enum trace_severity)(starting_rec->severity), start_idx, i, recs_covered, count);
+                        syslog(LOG_USER|LOG_NOTICE, "Was about to add a partial record of severity %s to the notification iov, at start_idx=%u, i=%u, recs_covered=%u, count=%u",
+                                trace_severity_to_str_array[starting_rec->severity], start_idx, i, recs_covered, count);
+                    }
+                    continue;
+                }
 
-				if (i + recs_covered > count) {
-					syslog(LOG_USER|LOG_NOTICE, "Record scanning for notifications went beyond the specified count, at start_idx=%u, i=%u, recs_covered=%u, count=%u",
-												start_idx, i, recs_covered, count);
-					break;
-				}
-
+				retries_left = num_retries_on_partial_record;
 				iov[iov_idx].iov_base = (void *)starting_rec;
 				iov[iov_idx].iov_len = sizeof(*rec) * recs_covered;
 				iov_idx++;

@@ -450,16 +450,6 @@ static void *msync_mmapped_data(void *mmap_info_vp)
 	return NULL;
 }
 
-
-static int reset_file(const struct trace_record_file *record_file) {
-	if (NULL != record_file->mapping_info) {
-		record_file->mapping_info->writing_complete = TRUE;
-		return TEMP_FAILURE_RETRY(ftruncate64(record_file->fd, record_file->mapping_info->records_committed * TRACE_RECORD_SIZE));
-	}
-
-	return 0;
-}
-
 static int setup_mmapping(const struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file)
 {
 	if (is_closed(record_file)) {
@@ -671,7 +661,7 @@ int trace_dumper_write_via_mmapping(
 				ERR("Unrecoverable error while validating records in", record_file->filename, validation_result, recs_written_so_far, write_start, len);
 				syslog(LOG_USER|LOG_ERR, "Validation returned error result %d while writing to file %s",
 						record_file->validator_last_result, record_file->filename);
-				reset_file(record_file);
+				record_file->mapping_info->lasterr = EPROTO;
 				return record_file->validator_last_result;
 			}
 			else if (validation_result > 0) {

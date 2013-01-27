@@ -35,7 +35,7 @@ struct trace_output_mmap_info {
 
     /* Fields writable only by the worker thread (except initialization) */
     volatile trace_record_counter_t records_committed;
-    volatile int lasterr;
+    volatile int lasterr;   /* Can also be written by the main thread if it detects unrecoverable data validation errors. */
     trace_ts_t next_flush_ts;
 
     /* Initialized by the main thread, deleted by the worker thread */
