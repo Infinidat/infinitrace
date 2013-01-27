@@ -33,15 +33,13 @@ bool_t has_mapped_buffers(const struct trace_dumper_configuration_s *conf);
 void add_buffer_filter(struct trace_dumper_configuration_s *conf, char *buffer_name);
 
 
-
 #define for_each_mapped_buffer(_i_, _mapped_buffer_)      \
-    for (({_i_ = 0; MappedBuffers__get_element_ptr(&conf->mapped_buffers, i, &_mapped_buffer_);}); _i_ < MappedBuffers__element_count(&conf->mapped_buffers); ({_i_++; MappedBuffers__get_element_ptr(&conf->mapped_buffers, i, &_mapped_buffer_);}))
+    for (_i_ = 0; (_i_ < MappedBuffers__element_count(&conf->mapped_buffers)) && (0 == MappedBuffers__get_element_ptr(&conf->mapped_buffers, _i_, &_mapped_buffer_)); _i_++)
 
 
 #define for_each_mapped_records(_i_, _rid_, _mapped_buffer_, _mr_)      \
-    for (({_i_ = 0; MappedBuffers__get_element_ptr(&conf->mapped_buffers, i, &_mapped_buffer_);}); _i_ < MappedBuffers__element_count(&conf->mapped_buffers); ({_i_++; MappedBuffers__get_element_ptr(&conf->mapped_buffers, i, &_mapped_buffer_);})) \
-        for (({_rid_ = 0; _mr_ = &_mapped_buffer_->mapped_records[_rid_];}); _rid_ < TRACE_BUFFER_NUM_RECORDS; ({_rid_++; _mr_ = &_mapped_buffer_->mapped_records[_rid_];}))
-
+    for_each_mapped_buffer(_i_, _mapped_buffer_) \
+        for (_rid_ = 0; (_rid_ < TRACE_BUFFER_NUM_RECORDS) && (_mr_ = &_mapped_buffer_->mapped_records[_rid_]); _rid_++)
 
 
 #endif /* BUFFERS_H_ */
