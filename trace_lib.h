@@ -39,6 +39,31 @@ extern "C" {
 		unsigned int& __rec_idx             __attribute__((unused)), \
 		unsigned int& __records_array_len   __attribute__((unused)))
 
+/*
+ * Provide a way to produce the representation of a C++ object to which we have a pointer, that guarantees that the __repr__ function of
+ * the pointer's class, as determined at compile-time, is called, irrespective of the actual class of the object that is being pointed to, which may have
+ * overridden __repr__ with a custom implementation.
+ * In order to achieve this, call the macro __repr_statically_bound_proxy_gen__ with the class name as argument in the public section of the class declaration.
+ * Then, when you have a pointer to the an object and wish to produce its representation, call the method __repr_statically_bound_proxy__() .
+ * Notes:
+ *   This only makes sense when __repr__ is defined as virtual
+ *   For this to work, the __repr__ method of your class must be declared as const.
+ * */
+#define __repr_statically_bound_proxy_gen__(cls)             \
+    class __ ## cls ## _repr_statically_bound_proxy__ {      \
+        const cls *const p;                                  \
+    public:                                                  \
+        __ ## cls ## _repr_statically_bound_proxy__(const cls *_p) : p(_p) {}               \
+        void __repr__ const                                                                 \
+        { p-> cls :: TRACE_REPR_INTERNAL_METHOD_NAME (__typed_buf, __records, __rec_idx, __records_array_len);   \
+        return;                                                                             \
+        /* The instrumentor expects a call to REPR() so we trick it */                      \
+        /* coverity[deadcode] */                                                            \
+        TRACE_REPR_CALL_NAME (); }                                                          \
+    };                                                                                      \
+    __ ## cls ## _repr_statically_bound_proxy__ __repr_statically_bound_proxy__() const { return __ ## cls ## _repr_statically_bound_proxy__(this); }
+
+
 extern struct trace_buffer *current_trace_buffer;
 
 /* Identifiers that are created by the linker script (see ldwrap.py) and mark the beginning and end of data-structure arrays inserted
