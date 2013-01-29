@@ -1,4 +1,4 @@
-CFLAGS=-I. -c -Wall -g -std=gnu99 -fPIC -O2
+CFLAGS=-I. -c -Wall -g -std=gnu99 -fPIC
 LIBTRACE_OBJS=trace_metadata_util.o trace_parser.o halt.o hashmap.o validator.o
 LIBPARSER_OBJS=timeformat.o parser.o filter.o parser_mmap.o hashmap.o trace_metadata_util.o
 LIBTRACEUSER_OBJS=trace_metadata_util.o trace_user.o halt.o trace_clock.o
@@ -7,13 +7,20 @@ DUMPER_OBJS=trace_dumper/trace_dumper.o trace_dumper/filesystem.o trace_dumper/w
 
 TARGET_PLATFORM=$(shell gcc -v 2>&1|fgrep Target|cut -d':' -d' ' -f2|cut -d'-' -f 2,3)
 EXTRA_LIBS=
-
+ALL_TARGETS=libtrace simple_trace_reader dump_file_diags reader 
+# Note that interactive_reader has been removed from the default build
+ 
 ifeq ($(TARGET_PLATFORM),linux-gnu)
        EXTRA_LIBS+=-lrt
        LIBTRACEUTIL_OBJS+=trace_clock.o
+       ALL_TARGETS+=libtraceuser trace_dumper trace_instrumentor
 endif
 
-all: libtrace libtraceuser simple_trace_reader trace_dumper dump_file_diags trace_instrumentor interactive_reader
+ifndef DISABLE_OPT  # Make sure to set this variable when building on Mac inside Eclipse, otherwise debugging will fail
+       CFLAGS+=-O2
+endif
+
+all: $(ALL_TARGETS)
 trace_dumper: libtrace libtraceutil $(DUMPER_OBJS)
 	gcc -L.  $(DUMPER_OBJS) -ltrace -ltraceutil $(EXTRA_LIBS) -o trace_dumper/trace_dumper 
 
@@ -50,4 +57,4 @@ trace_instrumentor: trace_instrumentor/trace_instrumentor.o
 	gcc $(LDFLAGS) -shared trace_instrumentor/trace_instrumentor.o  -o trace_instrumentor/trace_instrumentor.so
 
 clean:
-	rm -f *.o trace_reader/simple_trace_reader.o trace_reader/simple_trace_reader trace_dumper/*.o trace_instrumentor/*.o tools/*.o trace_instrumentor/*.so trace_dumper/trace_dumper trace_reader/trace_reader *so *.a
+	rm -f *.o trace_reader/simple_trace_reader.o reader trace_reader/simple_trace_reader trace_dumper/*.o trace_instrumentor/*.o tools/*.o trace_instrumentor/*.so trace_dumper/trace_dumper trace_reader/trace_reader *so *.a
