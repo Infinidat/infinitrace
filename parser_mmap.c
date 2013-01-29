@@ -217,15 +217,21 @@ static void *mmap_fd(int fd, off64_t *size)
     return mmap(NULL, *size, PROT_READ, MAP_SHARED, fd, 0);
 }
 
-static off64_t get_current_end_offset_from_fd(int fd)
+static off64_t get_current_end_offset_from_fd(int fd, bool_t minimum_size)
 {
     struct stat st;
     if (0 != fstat(fd, &st)) {
         return (off64_t) -1;
     }
 
-    const off64_t allocated_size = (off64_t) 512 * st.st_blocks;
-    return MIN(allocated_size, st.st_size);
+    if (minimum_size) {
+        const off64_t allocated_size = (off64_t) S_BLKSIZE * st.st_blocks;
+        return MIN(allocated_size, st.st_size);
+    }
+    else {
+        return st.st_size;
+    }
+
 }
 
 int trace_parser_mmap_file(struct trace_parser *parser, const char *filename)
@@ -238,7 +244,7 @@ int trace_parser_mmap_file(struct trace_parser *parser, const char *filename)
         return -1;
     }
 
-    size = get_current_end_offset_from_fd(fd);
+    size = get_current_end_offset_from_fd(fd, parser->wait_for_input);
     if (size < 0) {
         goto failure_cleanup;
     }
@@ -317,7 +323,7 @@ static void *resize_mapping(struct trace_parser *parser, off64_t new_end)
 
 off64_t trace_parser_update_end_offset(struct trace_parser *parser)
 {
-    const off64_t new_end = get_current_end_offset_from_fd(parser->file_info.fd);
+    const off64_t new_end = get_current_end_offset_from_fd(parser->file_info.fd, FALSE);
     if (new_end != parser->file_info.end_offset) {
         assert(new_end > parser->file_info.end_offset);
         void *const new_addr = resize_mapping(parser, new_end);
