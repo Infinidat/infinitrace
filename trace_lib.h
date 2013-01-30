@@ -41,7 +41,10 @@ extern "C" {
 
 /* Modify __repr__ method declarations and definitions to use the argument list required by the trace runtime. */
 #define __repr__ _trace_represent( \
-		unsigned char*& __typed_buf, struct trace_record* __records, unsigned int& __rec_idx, unsigned int& __records_array_len)
+		unsigned char*& __typed_buf         __attribute__((unused)), \
+		struct trace_record* __records      __attribute__((unused)), \
+		unsigned int& __rec_idx             __attribute__((unused)), \
+		unsigned int& __records_array_len   __attribute__((unused)))
 
 extern struct trace_buffer *current_trace_buffer;
 
