@@ -23,21 +23,25 @@ Copyright 2012 infinidat Inc
 #ifndef _TRACE_VALIDATOR_H_
 #define _TRACE_VALIDATOR_H_
 
-#include "bool.h"
 #include "trace_defs.h"
+
+enum trace_validator_flag {
+    TRACE_VALIDATOR_FIX_ERRORS = 0x01,
+    TRACE_VALIDATOR_SKIP_PID_CONSISTENCY_CHECK = 0x10,
+};
 
 /* Validator function signature
  * records - an array of trace records
  * n_records - the number of records.
- * fix_errors - If it is true, recoverable errors are fixed, typically by marking the damaged records as unknown type.
+ * flags - A logical or of values from enum trace_validator_flag defined above.
  * Return values:
  * 		If an unrecoverable error was found a negative value is returned and errno is set to EPROTO.
  * 		Otherwise the number of recoverable errors found is returned.
  *  */
-typedef int (*trace_post_write_validator)(struct trace_record *records, int n_records, bool_t fix_errors, void *context);
+typedef int (*trace_post_write_validator)(struct trace_record *records, int n_records, unsigned flags, void *context);
 
 /* Validators for particular formats */
-int trace_dump_validator(struct trace_record *records, int n_records, bool_t fix_errors, void *context);
-int trace_typed_record_sequence_validator(struct trace_record *records, int n_records, bool_t fix_errors, void *context);
+int trace_dump_validator(struct trace_record *records, int n_records, unsigned flags, void *context);
+int trace_typed_record_sequence_validator(struct trace_record *records, int n_records, unsigned flags, void *context);
 
 #endif /* _TRACE_VALIDATOR_H_ */

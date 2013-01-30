@@ -112,8 +112,10 @@ struct trace_record_file {
     struct trace_output_mmap_info *mapping_info;
     trace_record_counter_t records_discarded;
     struct iovec *iov;
-    size_t iov_allocated_len;
+    unsigned iov_allocated_len;
+    unsigned iov_count;
     trace_post_write_validator post_write_validator;
+    unsigned validator_flags_override;
     void *validator_context;
     int validator_last_result;
     FILE *perf_log_file;

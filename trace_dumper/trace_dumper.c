@@ -310,19 +310,22 @@ static void reset_discarded_record_counters(struct trace_dumper_configuration_s 
 	conf->record_file.records_discarded = 0;
 }
 
-static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *conf, unsigned int num_iovecs, unsigned int total_written_records, trace_ts_t cur_ts)
+static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *conf, unsigned int total_written_records, trace_ts_t cur_ts)
 {
+    const unsigned int num_iovecs = conf->record_file.iov_count;
     if (num_iovecs > 1) {
     	assert(num_iovecs >= 3);  /* Should have at least dump and chunk headers and some data */
         conf->last_flush_offset = conf->record_file.records_written;
 		conf->prev_flush_ts = cur_ts;
 		conf->next_flush_ts = cur_ts + conf->ts_flush_delta;
 
-        int ret = trace_dumper_write(conf, &conf->record_file, conf->flush_iovec, num_iovecs, FALSE);
-		if ((unsigned int)ret != (total_written_records * sizeof(struct trace_record))) {
-			if (ret < 0) {
+        const int bytes_written = trace_dumper_write(conf, &conf->record_file, conf->flush_iovec, num_iovecs, FALSE);
+		if ((unsigned int)bytes_written != (total_written_records * sizeof(struct trace_record))) {
+			if (bytes_written < 0) {
 				if (EAGAIN != errno) {
+				    ERR("Unexpected error while writing records, errno=", errno, strerror(errno));
 					syslog(LOG_ERR|LOG_USER, "Had error %s (%d) while writing records", strerror(errno), errno);
+					return -1;
 				}
 				else {
 				    int i;
@@ -338,14 +341,24 @@ static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *co
 					        mapped_records->num_records_discarded += n_discarded_records;
 					    }
 					}
+
+					/* We had to discard records, but since we did so in a controlled manner with proper reporting we return success. */
 				}
 			}
 			else {
-				syslog(LOG_ERR|LOG_USER, "Wrote only %d records out of %u requested", (ret / (int)sizeof(struct trace_record)), total_written_records);
+			    ERR("Wrote fewer bytes than requested:", bytes_written, "Actual records written:", bytes_written / (int)sizeof(struct trace_record), total_written_records);
+				syslog(LOG_ERR|LOG_USER, "Wrote only %d records out of %u requested", (bytes_written / (int)sizeof(struct trace_record)), total_written_records);
+				/* TODO: Consider "rewinding" the file in this case. */
+
+				if (0 == errno) {
+				    errno = ETIMEDOUT;
+				}
+				return -1;
 			}
-            return -1;
+
 		}
         
+		conf->record_file.iov_count = 0;
 		advance_mapped_record_counters(conf);
 	}
 
@@ -454,10 +467,10 @@ static unsigned add_warn_records_to_iov(
 		enum trace_severity threshold_severity,
 		struct trace_record_file *record_file)
 {
-	unsigned iov_idx = 0;
 	unsigned recs_covered = 0;
 	unsigned start_idx = mapped_records->imutab->max_records_mask & mapped_records->current_read_record;
 	unsigned i;
+	const unsigned initial_count = record_file->iov_count;
 
 	const useconds_t retry_wait_len = 10;
 	const unsigned num_retries_on_partial_record = 3;
@@ -466,11 +479,12 @@ static unsigned add_warn_records_to_iov(
 	volatile const struct trace_record *const end_rec = n_records_after(mapped_records->records + start_idx, mapped_records, count);
 	for (i = 0; i < count; i+= recs_covered) {
 		volatile const struct trace_record *rec = n_records_after(mapped_records->records + start_idx, mapped_records, i);
-		struct iovec *iov = increase_iov_if_necessary(record_file, iov_idx + 2);
+		struct iovec *iov = increase_iov_if_necessary(record_file, record_file->iov_count + 2);
 
 		if ((rec->termination & TRACE_TERMINATION_FIRST) &&
 			(TRACE_REC_TYPE_TYPED == rec->rec_type) &&
 			(rec->severity >= threshold_severity)) {
+		        unsigned iov_idx = record_file->iov_count;
 				volatile const struct trace_record *const starting_rec = rec;
 				do {
 					/* In case of wrap-around within the record sequence for a single trace, start a new iovec */
@@ -509,16 +523,57 @@ static unsigned add_warn_records_to_iov(
 				retries_left = num_retries_on_partial_record;
 				iov[iov_idx].iov_base = (void *)starting_rec;
 				iov[iov_idx].iov_len = sizeof(*rec) * recs_covered;
-				iov_idx++;
+				record_file->iov_count = iov_idx + 1;
 		}
 		else {
 			recs_covered = 1;
 		}
 	}
 
-	return iov_idx;
+	return record_file->iov_count - initial_count;
 }
 
+static void report_record_loss(struct trace_record_file *record_file)
+{
+    if (record_file->validator_last_result > 0) {
+        int n_records_indavlidated = record_file->validator_last_result;
+        const char *filename = record_file->filename;
+        WARN("Had to invalidate records which had been overrun", n_records_indavlidated, filename);
+        syslog( LOG_USER|LOG_WARNING,
+                "Trace dumper has had to invalidate %d record(s) from file %s which had been overrun while writing.",
+                n_records_indavlidated, filename);
+        record_file->validator_last_result = 0;
+    }
+}
+
+static int write_notification_records(struct trace_dumper_configuration_s *conf)
+{
+    /* TODO: Implement a more clever validator that takes level thresholds into account. */
+    conf->notification_file.post_write_validator = trace_typed_record_sequence_validator;
+    conf->notification_file.validator_context = NULL;
+    int rc = 0;
+
+    if (trace_dumper_write_to_record_file(conf, &conf->notification_file) < 0) {
+        ERR("Error", errno, strerror(errno), "writing records to the file", conf->notification_file.filename);
+        if (conf->notification_file.validator_last_result < 0) {
+            ERR("Unrecoverable error while validating records to the notification file",
+                    conf->notification_file.filename, conf->notification_file.validator_last_result);
+            syslog( LOG_USER|LOG_WARNING,
+                    "Trace dumper's data validation found an unrecoverable error with code %d while writing notifications to the file %s",
+                    conf->notification_file.validator_last_result, conf->notification_file.filename);
+        }
+
+        rc = -1;
+    }
+
+    if ((rc >= 0) && (conf->notification_file.validator_last_result > 0)) {
+        report_record_loss(&conf->notification_file);
+        rc = conf->notification_file.validator_last_result;
+    }
+
+    conf->notification_file.iov_count = 0;
+    return rc;
+}
 
 /* Iterate over all the mapped buffers and flush them. The result will be a new dump added to the file, with the
  * records flushed from every buffer that has data pending constituting a chunk.
@@ -536,7 +591,6 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
     unsigned int total_written_records = 0;
     int total_unflushed_records = 0;
     long lost_records = 0L;
-    int notification_records_invalidated = 0;
     int rc = 0;
     trace_record_counter_t min_remaining = TRACE_RECORD_BUFFER_RECS;
 
@@ -615,19 +669,9 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
         min_remaining = MIN(min_remaining, (trace_record_counter_t)(deltas.remaining_before_loss));
 
         if (conf->write_notifications_to_file && (mapped_records->imutab->severity_type >= (1U << conf->minimal_notification_severity))) {
-        	/* TODO: Implement a more clever validator that takes level thresholds into account. */
-    		conf->notification_file.post_write_validator = trace_typed_record_sequence_validator;
-    		conf->notification_file.validator_context = NULL;
-
-			unsigned int num_warn_iovecs = add_warn_records_to_iov(mapped_records, deltas.total, conf->minimal_notification_severity, &conf->notification_file);
-			trace_dumper_write_to_record_file(conf, &conf->notification_file, num_warn_iovecs);
-			if (conf->notification_file.validator_last_result < 0) {
-				syslog( LOG_USER|LOG_WARNING,
-						"Trace dumper's data validation found an unrecoverable error with code %d while writing notifications to the file %s",
-						conf->notification_file.validator_last_result, conf->notification_file.filename);
-			}
-			else {
-				notification_records_invalidated += conf->notification_file.validator_last_result;
+            unsigned int num_warn_iovecs = add_warn_records_to_iov(mapped_records, deltas.total, conf->minimal_notification_severity, &conf->notification_file);
+			if (num_warn_iovecs > 0) {
+			    rc = write_notification_records(conf);
 			}
         }
 
@@ -654,26 +698,15 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 
 		conf->record_file.post_write_validator = trace_dump_validator;
 		conf->record_file.validator_context = NULL;
-		rc = possibly_write_iovecs_to_disk(conf, num_iovecs, total_written_records, cur_ts);
-		if (rc < 0) {
-			if (EAGAIN == errno) {
-				advance_mapped_record_counters(conf);
-				rc = total_unflushed_records;	/* We had to discard records, but we consider them to be successfully written in this context. */
-			}
+		conf->record_file.iov_count = num_iovecs;
+
+		if (possibly_write_iovecs_to_disk(conf, total_written_records, cur_ts) < 0) {
+			assert(0 != errno);
 			WARN("Writing records did not complete successfully. After adjustment: errno=", errno, rc, num_iovecs, total_written_records, cur_ts);
 			return rc;
 		}
 
-		if ((conf->record_file.validator_last_result > 0) || (notification_records_invalidated > 0)) {
-			syslog( LOG_USER|LOG_WARNING,
-					"Trace dumper has had to invalidate %d record(s) from trace record file %s, and %d record(s) from the notification file %s, which had been overrun while writing."
-					" remaining records: %lu",
-					conf->record_file.validator_last_result, conf->record_file.filename,
-					notification_records_invalidated, conf->notification_file.filename,
-					min_remaining);
-			conf->record_file.validator_last_result = 0;
-			notification_records_invalidated = 0;
-		}
+		report_record_loss(&conf->record_file);
 
 		/* The latest chunk written has successfully output information about any discarded records, so reset the counters. */
 		reset_discarded_record_counters(conf);

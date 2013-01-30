@@ -54,7 +54,7 @@ int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct trace_r
 int dump_iovector_to_parser(const struct trace_dumper_configuration_s *conf, struct trace_parser *parser, const struct iovec *iov, int iovcnt);
 
 /* A wrapper for trace_dumper_write which syncs the written data to the disk after the write. */
-int trace_dumper_write_to_record_file(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, int iovcnt);
+int trace_dumper_write_to_record_file(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file);
 
 void trace_dumper_update_written_record_count(struct trace_record_file *record_file);
 

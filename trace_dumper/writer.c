@@ -193,9 +193,6 @@ int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct trace_r
 	if (conf->low_latency_write) {
 		ret = trace_dumper_write_via_mmapping(conf, record_file, iov, iovcnt);
 		if ((ret < 0) && (EAGAIN == errno)) {
-			// Controlled data throw. For now just log
-			// TODO: Increment a counter in the record file to indicate record loss.
-			// NOTE: This should probably be handled at a higher layer.
 			const size_t len = total_iovec_len(iov, iovcnt);
 			record_file->records_discarded += len / TRACE_RECORD_SIZE;
 			const struct trace_output_mmap_info const *info = record_file->mapping_info;
@@ -301,16 +298,16 @@ int trace_dumper_write_via_file_io(const struct trace_dumper_configuration_s *co
     return expected_bytes;
 }
 
-int trace_dumper_write_to_record_file(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, int iovcnt)
+int trace_dumper_write_to_record_file(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file)
 {
-	int num_warn_bytes = total_iovec_len(record_file->iov, iovcnt);
+	int num_warn_bytes = total_iovec_len(record_file->iov, record_file->iov_count);
 	if (num_warn_bytes > 0) {
 		if (is_closed(record_file)) {
 				errno = EBADF;
 				return -1;
 		}
 
-		if (trace_dumper_write(conf, record_file, record_file->iov, iovcnt, FALSE) != num_warn_bytes) {
+		if (trace_dumper_write(conf, record_file, record_file->iov, record_file->iov_count, FALSE) != num_warn_bytes) {
 			syslog(LOG_USER|LOG_ERR,
 					"Trace dumper encountered the following error while writing %d bytes to the file %s: %s",
 					num_warn_bytes, record_file->filename, strerror(errno));
@@ -318,6 +315,7 @@ int trace_dumper_write_to_record_file(struct trace_dumper_configuration_s *conf,
 		}
     }
 
+	record_file->iov_count = 0;
 	return num_warn_bytes;
 }
 
@@ -652,7 +650,8 @@ int trace_dumper_write_via_mmapping(
 
 		if (NULL != record_file->post_write_validator) {
 			record_file->ts.started_validation = trace_get_nsec();
-			record_file->validator_last_result = record_file->post_write_validator(write_start, len / TRACE_RECORD_SIZE, TRUE, record_file->validator_context);
+			record_file->validator_last_result = record_file->post_write_validator(
+			        write_start, len / TRACE_RECORD_SIZE, TRACE_VALIDATOR_FIX_ERRORS ^ record_file->validator_flags_override, record_file->validator_context);
 			record_file->ts.finished_validation = trace_get_nsec();
 
 
@@ -661,7 +660,7 @@ int trace_dumper_write_via_mmapping(
 				ERR("Unrecoverable error while validating records in", record_file->filename, validation_result, recs_written_so_far, write_start, len);
 				syslog(LOG_USER|LOG_ERR, "Validation returned error result %d while writing to file %s",
 						record_file->validator_last_result, record_file->filename);
-				record_file->mapping_info->lasterr = EPROTO;
+				record_file->mapping_info->lasterr = errno;
 				return record_file->validator_last_result;
 			}
 			else if (validation_result > 0) {
