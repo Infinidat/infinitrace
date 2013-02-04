@@ -13,7 +13,7 @@ ALL_TARGETS=libtrace simple_trace_reader dump_file_diags reader
 ifeq ($(TARGET_PLATFORM),linux-gnu)
        EXTRA_LIBS+=-lrt
        LIBTRACEUTIL_OBJS+=trace_clock.o
-       ALL_TARGETS+=libtraceuser trace_dumper trace_instrumentor
+       ALL_TARGETS+=libtraceuser trace_dumper trace_instrumentor libtrace_so
 endif
 
 ifndef DISABLE_OPT  # Make sure to set this variable when building on Mac inside Eclipse, otherwise debugging will fail
@@ -26,6 +26,8 @@ trace_dumper: libtrace libtraceutil $(DUMPER_OBJS)
 
 libtrace: $(LIBTRACE_OBJS) libtraceutil
 	ar rcs libtrace.a $(LIBTRACE_OBJS)
+	
+libtrace_so: libtrace
 	gcc -shared -g $(LIBTRACE_OBJS) -L. -ltraceutil -o traces.so
 
 libtraceuser: $(LIBTRACEUSER_OBJS)
@@ -51,10 +53,17 @@ interactive_reader: trace_parser.h
 dump_file_diags: libtraceutil tools/dump_file_diags.o trace_defs.h
 	gcc -L. tools/dump_file_diags.o -ltraceutil -o tools/dump_file_diags
 
-trace_instrumentor/trace_instrumentor.o: CXXFLAGS := $(shell llvm-config --cxxflags) -g
-trace_instrumentor/trace_instrumentor.o: LDFLAGS := $(shell llvm-config --libs --ldflags)
-trace_instrumentor: trace_instrumentor/trace_instrumentor.o
-	gcc $(LDFLAGS) -shared trace_instrumentor/trace_instrumentor.o  -o trace_instrumentor/trace_instrumentor.so
+ifeq ($(TARGET_PLATFORM),linux-gnu)
+
+TRACE_INSTROMENTOR_OBJS=trace_instrumentor/trace_instrumentor.o trace_instrumentor/trace_call.o trace_instrumentor/trace_param.o trace_instrumentor/util.o
+
+$(TRACE_INSTROMENTOR_OBJS): CXXFLAGS := $(shell llvm-config --cxxflags) -g
+$(TRACE_INSTROMENTOR_OBJS): LDFLAGS := $(shell llvm-config --libs --ldflags)
+
+trace_instrumentor: $(TRACE_INSTROMENTOR_OBJS)
+	g++ $(LDFLAGS) -shared $(TRACE_INSTROMENTOR_OBJS) -o trace_instrumentor/trace_instrumentor.so
+	
+endif
 
 clean:
 	rm -f *.o trace_reader/simple_trace_reader.o reader trace_reader/simple_trace_reader trace_dumper/*.o trace_instrumentor/*.o tools/*.o trace_instrumentor/*.so trace_dumper/trace_dumper trace_reader/trace_reader *so *.a
