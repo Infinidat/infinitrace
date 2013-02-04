@@ -152,7 +152,7 @@ static bool_t record_ends_trace(volatile const struct trace_record *ending_candi
 static volatile const struct trace_record *n_records_after(volatile const struct trace_record *rec, const struct trace_mapped_records *mapped_records, ssize_t n)
 {
     const size_t idx =  rec - mapped_records->records;
-    assert(idx < mapped_records->imutab->max_records);
+    assert(idx < mapped_records->imutab->max_records + (size_t)labs(n));
     return mapped_records->records + ((idx + n) & mapped_records->imutab->max_records_mask);
 }
 
