@@ -90,6 +90,8 @@ TraceParam(
         return (0 != (flags & TRACE_PARAM_FLAG_CSTR)) || !const_str.empty();
     }
 
+    bool isZeroLength() const { return isConstString(); } // Parameter that doesn't take any space per-trace, only in the call description structure.
+
     bool isArray() const {
         return 0 != (flags & TRACE_PARAM_FLAG_VARRAY);
     }

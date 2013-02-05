@@ -24,6 +24,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <assert.h>
 #include <sstream>
 
 #include "util.h"
@@ -214,7 +215,7 @@ std::string TraceCall::varlength_getTraceWriteExpression() const
 {
     std::stringstream start_record;
     bool varlength_encountered = isRepr();
-    unsigned buf_left = TRACE_RECORD_PAYLOAD_SIZE - 4;
+    unsigned buf_left = TRACE_RECORD_PAYLOAD_SIZE - sizeof(static_cast<struct trace_record *>(NULL)->u.typed.log_id);
 
      for (unsigned int i = 0; i < args.size(); i++) {
         const TraceParam &param = args[i];
@@ -226,6 +227,9 @@ std::string TraceCall::varlength_getTraceWriteExpression() const
             else {
                 start_record << constlength_writeSimpleValue(param.expression, param.type_name, param.is_pointer, param.is_reference, param.size, buf_left);
             }
+        }
+        else if (param.isZeroLength()) {
+            continue;
         }
         else {
             if (! varlength_encountered) {
@@ -257,7 +261,7 @@ std::string TraceCall::varlength_getTraceWriteExpression() const
 
             else {
                 // TODO: Handle variable length arrays and records, which are currently ignored.
-                assert (param.isConstString() || param.isArray() || param.isRecord());
+                assert (param.isArray() || param.isRecord());
             }
         }
      }
@@ -315,7 +319,7 @@ std::string TraceCall::varlength_getFullTraceWriteExpression() const
 {
     std::stringstream alloc_record;
     alloc_record << allocRecordArray();
-    alloc_record << "unsigned char *__typed_buf = " << getPayloadExpr() << " + " << sizeof(static_cast<struct trace_record *>(NULL)->u.typed.log_id)  << "; ";
+    alloc_record << "unsigned char *__typed_buf; ";
     std::stringstream start_record;
     start_record << varlength_initializeTypedRecord();
     start_record << varlength_getTraceWriteExpression();

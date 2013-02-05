@@ -28,9 +28,11 @@
 #include <iostream>
 #include <vector>
 #include <set>
+#include <memory>
 
 #include "../trace_user.h"
 #include "../trace_str_util.h"
+#include "../array_length.h"
 #include "../trace_lib.h"
 #include "trace_call.h"
 #include "util.h"
@@ -425,18 +427,26 @@ bool TraceParam::fromType(QualType type, bool fill_unknown_type) {
 
 bool TraceParam::fromExpr(const Expr *trace_param, bool deref_pointer)
 {
-    if (deref_pointer && parseStringParam(trace_param)) {
-        return true;
-    } else if (parseHexBufParam(trace_param)) {
-        return true;
-    } else if (parseEnumTypeParam(trace_param)) {
-        return true;
-    } else if (deref_pointer && parseRecordTypeParam(trace_param)) {
-        return true;
-    } else if (deref_pointer && parseClassTypeParam(trace_param)) {
-        return true;
-    } else if (parseBasicTypeParam(trace_param)) {
-        return true;
+     static const struct {
+        bool deref_via_pointer;
+        bool (TraceParam::* parser)(const Expr *);
+    } parsers[] = {
+            { true,  &TraceParam::parseStringParam},
+            { false, &TraceParam::parseHexBufParam },
+            { false, &TraceParam::parseEnumTypeParam },
+            { true,  &TraceParam::parseClassTypeParam },
+            { true,  &TraceParam::parseRecordTypeParam },
+            { false, &TraceParam::parseBasicTypeParam }
+    };
+
+    for (unsigned i = 0; i < ARRAY_LENGTH(parsers); i++) {
+        if ( parsers[i].deref_via_pointer && ! deref_pointer ) {
+            continue;
+        }
+
+        if ((this->*parsers[i].parser)(trace_param)) {
+            return true;
+        }
     }
 
     return false;
@@ -484,12 +494,7 @@ bool TraceParam::parseClassTypeParam(const Expr *expr)
 {
     const Type *type = expr->getType().getTypePtr();
 
-
-    if (!type->isPointerType()) {
-        return false;
-    }
-
-    const Type *pointeeType = type->getPointeeType().split().first;
+    const Type *pointeeType = (type->isPointerType() || type->isReferenceType()) ? type->getPointeeType().split().first : type;
     if (!pointeeType->isClassType()) {
         return false;
     }
@@ -526,12 +531,12 @@ bool TraceParam::parseClassTypeParam(const Expr *expr)
         Diags.Report(ast.getFullLoc(call_expr->getLocStart()), MultipleReprCallsDiag) << call_expr->getSourceRange();
     }
 
-    TraceCall *_trace_call = new TraceCall(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
+    std::auto_ptr<TraceCall> _trace_call(new TraceCall(Out, Diags, ast, Rewrite, referencedTypes, globalTraces));
     if (!_trace_call->fromCallExpr(call_expr)) {
         return false;
     }
 
-    trace_call = _trace_call;
+    trace_call = _trace_call.release();
     // TODO: Unique name, don't add duplicate logs
     std::string _type_name = normalizeTypeName(QualType(pointeeType, 0).getAsString());
     std::stringstream trace_call_name;
@@ -540,7 +545,9 @@ bool TraceParam::parseClassTypeParam(const Expr *expr)
     trace_call->trace_call_name = trace_call_name.str();
     method_generated =  true;
     flags |= TRACE_PARAM_FLAG_NESTED_LOG;
-    expression = "(" + getLiteralExpr(ast, Rewrite, expr) + ")->" + STR(TRACE_REPR_INTERNAL_METHOD_NAME);
+    const std::string literal_expression = getLiteralExpr(ast, Rewrite, expr);
+    const std::string deref_operator = type->isPointerType() ? "->" : ".";
+    expression = "(" + literal_expression + ")" + deref_operator + STR(TRACE_REPR_INTERNAL_METHOD_NAME);
     type_name = QualType(pointeeType, 0).getAsString();
 
     return true;

@@ -62,7 +62,7 @@ static void *do_log(void *)
 			}
 			else {
 				fill_int_arr(s.arr, (i + static_cast<int>(thread)) % 17);
-				WARN(thread, ": iteration", i, "s=", &s);
+				WARN(thread, ": iteration", i, "s=", s);
 			}
 		}
 		else {
