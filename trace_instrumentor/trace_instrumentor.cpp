@@ -310,7 +310,7 @@ void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
     enum trace_severity severity = TRACE_SEV_FUNC_TRACE;
 
 
-    if (NULL != strstr(D->getQualifiedNameAsString().c_str(), "_trace_represent")) {
+    if (NULL != strstr(D->getQualifiedNameAsString().c_str(), STR(TRACE_REPR_INTERNAL_METHOD_NAME))) {
         goto exit;
     }
     
@@ -669,7 +669,7 @@ void StmtIterator::VisitReturnStmt(ReturnStmt *S)
         return;
     }
     
-    if (NULL != strstr(FD->getQualifiedNameAsString().c_str(), "_trace_represent")) {
+    if (NULL != strstr(FD->getQualifiedNameAsString().c_str(), STR(TRACE_REPR_INTERNAL_METHOD_NAME))) {
         return;
     }
 
@@ -898,7 +898,7 @@ void StmtIterator::VisitCallExpr(CallExpr *S)
     TraceCall trace_call(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
     bool successfully_parsed = trace_call.fromCallExpr(S);
     if (successfully_parsed) {
-        if (getCallExprFunctionName(S).compare("REPR") == 0) {
+        if (getCallExprFunctionName(S).compare(STR(TRACE_REPR_CALL_NAME)) == 0) {
             trace_call.expandWithoutDeclaration();
         } else {
             trace_call.expand();

@@ -38,6 +38,7 @@
 #include "../trace_user.h"
 #include "../trace_clock.h"
 #include "../trace_str_util.h"
+#include "../file_naming.h"
 #include "trace_dumper.h"
 #include "metadata.h"
 #include "open_close.h"

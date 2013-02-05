@@ -21,6 +21,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include <sys/mman.h>
 #include "trace_defs.h"
 #include "trace_lib.h"
+#include "file_naming.h"
 #include "trace_metadata_util.h"
 
 

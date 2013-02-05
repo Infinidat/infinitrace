@@ -24,13 +24,6 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 extern "C" {
 #endif
 
-#define TRACE_SHM_ID "_trace_shm_"
-#define TRACE_DYNAMIC_SUFFIX "_dynamic_trace_data"
-#define TRACE_STATIC_SUFFIX  "_static_trace_metadata"
-/* Format strings with a %d placeholder for the pid */
-#define TRACE_DYNAMIC_DATA_REGION_NAME_FMT TRACE_SHM_ID "%d" TRACE_DYNAMIC_SUFFIX
-#define TRACE_STATIC_DATA_REGION_NAME_FMT  TRACE_SHM_ID "%d" TRACE_STATIC_SUFFIX
-
 #include "trace_defs.h"
 #include "trace_macros.h"
 #include <stdlib.h>
@@ -40,7 +33,7 @@ extern "C" {
 #endif
 
 /* Modify __repr__ method declarations and definitions to use the argument list required by the trace runtime. */
-#define __repr__ _trace_represent( \
+#define __repr__ TRACE_REPR_INTERNAL_METHOD_NAME ( \
 		unsigned char*& __typed_buf         __attribute__((unused)), \
 		struct trace_record* __records      __attribute__((unused)), \
 		unsigned int& __rec_idx             __attribute__((unused)), \

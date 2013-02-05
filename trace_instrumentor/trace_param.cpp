@@ -500,7 +500,7 @@ bool TraceParam::parseClassTypeParam(const Expr *expr)
     for (CXXRecordDecl::method_iterator method = RD->method_begin();
          method != RD->method_end();
          ++method) {
-        if (method->getNameAsString().compare("_trace_represent") == 0) {
+        if (method->getNameAsString().compare(STR(TRACE_REPR_INTERNAL_METHOD_NAME)) == 0) {
             if (!method->hasInlineBody()) {
                 Diags.Report(ast.getFullLoc(method->getLocStart()), NonInlineTraceRepresentDiag) << method->getSourceRange();
                 return false;
@@ -517,7 +517,7 @@ bool TraceParam::parseClassTypeParam(const Expr *expr)
 
     FunctionCallerFinder finder;
     int call_count;
-    CallExpr *call_expr = finder.functionHasFunctionCall(MD->getBody(), "REPR", &call_count);
+    CallExpr *call_expr = finder.functionHasFunctionCall(MD->getBody(), STR(TRACE_REPR_CALL_NAME), &call_count);
     if (call_expr == NULL) {
         return false;
     }
@@ -540,7 +540,7 @@ bool TraceParam::parseClassTypeParam(const Expr *expr)
     trace_call->trace_call_name = trace_call_name.str();
     method_generated =  true;
     flags |= TRACE_PARAM_FLAG_NESTED_LOG;
-    expression = "(" + getLiteralExpr(ast, Rewrite, expr) + ")->_trace_represent";
+    expression = "(" + getLiteralExpr(ast, Rewrite, expr) + ")->" + STR(TRACE_REPR_INTERNAL_METHOD_NAME);
     type_name = QualType(pointeeType, 0).getAsString();
 
     return true;

@@ -20,7 +20,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "trace_lib.h"
 #include "trace_user.h"
 
-void REPR()
+void TRACE_REPR_CALL_NAME ()
 {
 }
 

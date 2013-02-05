@@ -496,7 +496,7 @@ bool TraceCall::fromCallExpr(CallExpr *expr) {
     args.clear();
     severity = TRACE_SEV_INVALID;
     std::string function_name = getCallExprFunctionName(expr);
-    is_repr = (function_name.compare("REPR") == 0);
+    is_repr = (function_name.compare(STR(TRACE_REPR_CALL_NAME)) == 0);
     enum trace_severity _severity = functionNameToTraceSeverity(function_name);
     if ((_severity < TRACE_SEV__MIN || _severity > TRACE_SEV__MAX)) {
         if (!is_repr) {

@@ -37,6 +37,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "trace_metadata_util.h"
 #include "trace_clock.h"
 #include "bool.h"
+#include "file_naming.h"
 #include "halt.h"
 
 /* Global per process/thread data structures */

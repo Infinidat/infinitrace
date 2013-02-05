@@ -122,6 +122,8 @@ typedef unsigned trace_generation_t;
 #error "TRACE_FORMAT_VERSION must be defined"
 #endif
 
+#define TRACE_REPR_INTERNAL_METHOD_NAME _trace_represent
+#define TRACE_REPR_CALL_NAME REPR
 
 enum trace_severity {
 	TRACE_SEV_INVALID = 0,
@@ -160,7 +162,7 @@ enum trace_rec_type {
 
     TRACE_REC_TYPE_END_OF_FILE = 7,
 
-    /* Inserted to indicate data loss */
+    /* Reserved. In the future it may be inserted to indicate data loss */
     TRACE_REC_TYPE_DATA_LOSS = 8,
 };
 

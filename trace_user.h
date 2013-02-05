@@ -27,7 +27,7 @@ extern "C" {
 void TRACE__fini(void);// __attribute__((destructor));
 
 #ifndef __repr__    
-#define __repr__ _trace_represent()
+#define __repr__ TRACE_REPR_INTERNAL_METHOD_NAME ()
 #endif
     
 typedef unsigned char hex_t;
@@ -52,7 +52,7 @@ typedef unsigned char hex_t;
 #define CALL_INVALID __attribute__((error("traces: Trace symbol name should not appear in final code, this is a bug. Contact Yotam Rubin <yotamrubin@gmail.com> and report a bug")))
 #ifdef __cplusplus
 
-void REPR(...) CALL_INVALID;
+void TRACE_REPR_CALL_NAME (...) CALL_INVALID;
 
 #define TRACE_SEV_X(ignored, sev) void sev(...) CALL_INVALID;
 
@@ -62,7 +62,7 @@ TRACE_SEVERITY_DEF
     
 #else
 
-void REPR() CALL_INVALID;
+void TRACE_REPR_CALL_NAME () CALL_INVALID;
 
 #define TRACE_SEV_X(ignored, sev) void sev() CALL_INVALID;
 
@@ -81,7 +81,7 @@ TRACE_SEVERITY_DEF
 
 #else /* __TRACE_INSTRUMENTATION */
 #ifdef __cplusplus
-void REPR(...);
+void TRACE_REPR_CALL_NAME (...);
 
 #define TRACE_SEV_X(ignored, sev) void sev(...);
 
@@ -90,7 +90,7 @@ TRACE_SEVERITY_DEF
 #undef TRACE_SEV_X
 
 #else
-void REPR();
+void TRACE_REPR_CALL_NAME ();
 
 #define TRACE_SEV_X(ignored, sev) void sev();
 
