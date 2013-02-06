@@ -203,6 +203,9 @@ int trace_dumper_write(struct trace_dumper_configuration_s *conf, struct trace_r
 					conf->max_records_pending_write_via_mmap,
 					record_file->filename);
 		}
+		else {
+            trace_dumper_update_written_record_count(record_file);
+        }
 	}
 	else {
 		ret = trace_dumper_write_via_file_io(conf, record_file, iov, iovcnt);
@@ -448,6 +451,12 @@ static void *msync_mmapped_data(void *mmap_info_vp)
 	return NULL;
 }
 
+static bool_t record_file_name_is_fixed(const struct trace_dumper_configuration_s *conf, const struct trace_record_file *record_file)
+{
+    return  ((record_file == &conf->record_file)       && conf->fixed_output_filename) ||
+            ((record_file == &conf->notification_file) && (conf->fixed_notification_filename));
+}
+
 static int setup_mmapping(const struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file)
 {
 	if (is_closed(record_file)) {
@@ -468,7 +477,10 @@ static int setup_mmapping(const struct trace_dumper_configuration_s *conf, struc
 	record_file->mapping_info->fd = record_file->fd;
 	record_file->mapping_info->next_flush_ts = trace_get_nsec_monotonic() + conf->max_flush_interval;
 
-	const size_t len = ROUND_UP((conf->max_records_per_file + conf->max_records_per_file/4) * TRACE_RECORD_SIZE, record_file->mapping_info->preferred_write_bytes);
+	const size_t mmapping_len_records = record_file_name_is_fixed(conf, record_file) ?
+	        16 * conf->max_records_per_file :
+	        conf->max_records_per_file + conf->max_records_per_file/4;
+	const size_t len = ROUND_UP(mmapping_len_records * TRACE_RECORD_SIZE, record_file->mapping_info->preferred_write_bytes);
 	record_file->mapping_info->base = (struct trace_record *)
 			mmap(NULL, len, PROT_READ|PROT_WRITE, MAP_SHARED, record_file->fd, 0);
 	if (MAP_FAILED == record_file->mapping_info->base) {

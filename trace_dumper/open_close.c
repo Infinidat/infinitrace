@@ -323,9 +323,10 @@ static int close_file(struct trace_record_file *file, bool_t wait_for_flush) {
 
 int close_record_file(struct trace_dumper_configuration_s *conf)
 {
-    int rc = close_file(&conf->record_file, conf->stopping);
 
-    if (is_closed(&conf->record_file)) {
+    int rc = close_file(&conf->record_file, conf->stopping || conf->fixed_output_filename);
+
+    if (0 == rc) {
 
     	conf->last_flush_offset = 0;
     	conf->header_written = FALSE;

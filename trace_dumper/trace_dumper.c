@@ -364,7 +364,6 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 
 	if (!premature_call) {
 		dump_header_rec.u.dump_header.total_dump_size = total_written_records - 1;
-		trace_dumper_update_written_record_count(&conf->notification_file);
 		trace_dumper_update_written_record_count(&conf->record_file);
 		dump_header_rec.u.dump_header.first_chunk_offset = conf->record_file.records_written + 1;
 
@@ -374,8 +373,8 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 
 		if (possibly_write_iovecs_to_disk(conf, total_written_records, cur_ts) < 0) {
 			assert(0 != errno);
-			WARN("Writing records did not complete successfully. After adjustment: errno=", errno, rc, num_iovecs, total_written_records, cur_ts);
-			return rc;
+			WARN("Writing records did not complete successfully. errno=", errno, num_iovecs, total_written_records, cur_ts);
+			return -1;
 		}
 
 		report_record_loss(&conf->record_file);

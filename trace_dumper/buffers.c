@@ -420,6 +420,11 @@ static void check_discarded_buffer(const struct trace_mapped_buffer *mapped_buff
 	}
 }
 
+#define REPORT_BUF_ERR(descr) do { \
+    ERR(descr " for buffer pid=", mapped_buffer->pid, mapped_buffer->name, "errno=", errno, strerror(errno)); \
+    syslog(LOG_USER|LOG_WARNING, descr " for buffer %s (pid %u) errno=%d - %s", mapped_buffer->name, mapped_buffer->pid, errno, strerror(errno)); \
+    } while (0)
+
 /* Immediately discard all the dumper resources for a buffer regardless of whether or not the traced process has ended. */
 static void discard_buffer_unconditionally(struct trace_mapped_buffer *mapped_buffer)
 {
@@ -430,7 +435,7 @@ static void discard_buffer_unconditionally(struct trace_mapped_buffer *mapped_bu
     	mapped_buffer->metadata.base_address = MAP_FAILED;
     }
     else {
-    	syslog(LOG_USER|LOG_WARNING, "Error unmapping metadata for buffer %s: %s", mapped_buffer->name, strerror(errno));
+        REPORT_BUF_ERR("Error unmapping metadata for buffer");
     }
 
     rc = close(mapped_buffer->metadata.metadata_fd);
@@ -438,7 +443,7 @@ static void discard_buffer_unconditionally(struct trace_mapped_buffer *mapped_bu
     	mapped_buffer->metadata.metadata_fd = -1;
     }
     else {
-		syslog(LOG_USER|LOG_WARNING, "Error closing metadata buffer %s: %s", mapped_buffer->name, strerror(errno));
+        REPORT_BUF_ERR("Error closing metadata");
 	}
 
     rc = munmap(mapped_buffer->records_buffer_base_address, mapped_buffer->records_buffer_size);
@@ -446,7 +451,7 @@ static void discard_buffer_unconditionally(struct trace_mapped_buffer *mapped_bu
     	mapped_buffer->records_buffer_base_address = MAP_FAILED;
     }
     else {
-        syslog(LOG_USER|LOG_WARNING, "Error unmapping records for buffer %s: %s", mapped_buffer->name, strerror(errno));
+        REPORT_BUF_ERR("Error unmapping records for buffer");
     }
 
     rc = close(mapped_buffer->record_buffer_fd);
@@ -454,7 +459,7 @@ static void discard_buffer_unconditionally(struct trace_mapped_buffer *mapped_bu
 		mapped_buffer->record_buffer_fd = -1;
 	}
 	else {
-		syslog(LOG_USER|LOG_WARNING, "Error closing records for buffer %s: %s", mapped_buffer->name, strerror(errno));
+	    REPORT_BUF_ERR("Error closing records for buffer");
 	}
 }
 
@@ -468,14 +473,16 @@ void discard_buffer(struct trace_dumper_configuration_s *conf, struct trace_mapp
 
     int rc = delete_shm_files(mapped_buffer->pid);
     if (0 != rc) {
-    	syslog(LOG_USER|LOG_WARNING, "Error deleting shm files for buffer %s, pid %u: %s", mapped_buffer->name, mapped_buffer->pid, strerror(errno));
+        REPORT_BUF_ERR("Error deleting shm files");
     }
 
     if (conf->trace_online && (TRACE_PARSER__free_buffer_context_by_pid(&(conf->parser), mapped_buffer->pid) < 0)) {
-    	syslog(LOG_USER|LOG_WARNING, "Failed to free trace parser resources associated with the process %s, pid %u: %s", mapped_buffer->name, mapped_buffer->pid, strerror(errno));
+        REPORT_BUF_ERR("Failed to free trace parser resources");
     }
 
     if (! PidList__insertable(&conf->dead_pids)) {
+        WARN("Trace dumper has too many pids pending removal, exceeding the limit of",  (int)PidList_NUM_ELEMENTS,
+                ". Not enough space to insert pid", mapped_buffer->pid, mapped_buffer->name);
     	syslog(LOG_USER|LOG_WARNING, "Trace dumper has too many pids pending removal, exceeding the limit of %d. Not enough space to insert pid %u for process %s",
     			PidList_NUM_ELEMENTS, mapped_buffer->pid, mapped_buffer->name);
     }
@@ -496,11 +503,9 @@ void discard_buffer(struct trace_dumper_configuration_s *conf, struct trace_mapp
     int buffers_remaining = MappedBuffers__element_count(&conf->mapped_buffers);
     syslog(LOG_USER|LOG_INFO, "Discarded %d instance(s) of the buffer for %s pid %u, %d mapped buffer(s) remaining",
     		removed_count,  mapped_buffer->name, mapped_buffer->pid, buffers_remaining);
-
-    if (0 == buffers_remaining) {
-    	close_all_files(conf);
-    }
 }
+
+#undef REPORT_BUF_ERR
 
 void discard_all_buffers_immediately(struct trace_dumper_configuration_s *conf)
 {
