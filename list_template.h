@@ -166,9 +166,7 @@ int listname##__find_element(const listname *self, listdatatype *element)     \
 {                                                                       \
 	const int element_count = listname##__element_count(self);          \
 	for (int i = 0; i < element_count; i++) {                           \
-	    listdatatype *tmp_element = NULL;                               \
-		listname##__get_element_ptr(self, i, &tmp_element);             \
-		if (0 == memcmp(element, tmp_element, sizeof(*element))) {      \
+		if (0 == memcmp(element, self->elements + i, sizeof(*element))) {      \
 			return i;                                                   \
 		}                                                               \
 	}                                                                   \

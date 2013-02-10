@@ -237,7 +237,7 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
         goto unmap_static;
     }
 
-    MappedBuffers__get_element_ptr(&conf->mapped_buffers, MappedBuffers__element_count(&conf->mapped_buffers) - 1, &new_mapped_buffer);
+    assert(0 == MappedBuffers__get_element_ptr(&conf->mapped_buffers, MappedBuffers__element_count(&conf->mapped_buffers) - 1, &new_mapped_buffer));
     memset(new_mapped_buffer, 0, sizeof(*new_mapped_buffer));
     if (static_log_data_region_size > MAX_METADATA_SIZE) {
         ERR("Error, metadata size too large for", static_log_data_region->name, pid, static_log_data_region_size);
@@ -329,7 +329,7 @@ static bool_t buffer_mapped(struct trace_dumper_configuration_s * conf, unsigned
     int i;
     for (i = 0; i < MappedBuffers__element_count(&conf->mapped_buffers); i++) {
         struct trace_mapped_buffer *mapped_buffer;
-        MappedBuffers__get_element_ptr(&conf->mapped_buffers, i, &mapped_buffer);
+        assert(0 == MappedBuffers__get_element_ptr(&conf->mapped_buffers, i, &mapped_buffer));
         if (mapped_buffer->pid == pid) {
             return TRUE;
         }
