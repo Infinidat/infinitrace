@@ -185,6 +185,10 @@ int parse_commandline(struct trace_dumper_configuration_s *conf, int argc, char 
             break;
         case 'p':
             conf->attach_to_pid = optarg;
+            if (atoi(conf->attach_to_pid) <= 0) {
+                fprintf(stderr, "Invalid process-id to attach specified: %s\n", conf->attach_to_pid);
+                return -1;
+            }
             break;
         case 'w':
             conf->write_to_file = 1;

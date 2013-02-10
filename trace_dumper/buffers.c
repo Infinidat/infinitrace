@@ -315,6 +315,10 @@ close_static:
 delete_shm_files:
     delete_shm_files(pid);
 exit:
+    if ((ENOENT == errno) && !process_exists(pid)) {
+        errno = ESRCH;
+    }
+
 	if (0 != rc) {
 		const char *err_name = strerror(errno);
 		const char *proc_name = ((NULL == new_mapped_buffer) ? "(unknown)" : new_mapped_buffer->name);
@@ -551,7 +555,19 @@ int attach_and_map_buffers(struct trace_dumper_configuration_s *conf)
 	    if (!conf->attach_to_pid) {
 	        rc = map_new_buffers(conf);
 	    }  else {
-	        rc = map_buffer(conf, atoi(conf->attach_to_pid));
+	        const pid_t target_pid = atoi(conf->attach_to_pid);
+	        if (target_pid <= 0) {
+	            errno = EINVAL;
+	            rc = -1;
+	        }
+	        else do {
+	            rc = map_buffer(conf, target_pid);
+	            if ((0 == rc) || (ENOENT != errno)) {
+	                break;
+	            }
+	            const useconds_t retry_interval_ms = 10;
+	            usleep(1000 * retry_interval_ms);
+	        } while(process_exists(target_pid));
 	    }
 
 	    if (0 != rc) {
