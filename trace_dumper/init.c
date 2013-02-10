@@ -333,8 +333,17 @@ static int init_record_file(struct trace_record_file *record_file, size_t initia
 	return 0;
 }
 
+/* The dumper cannot assume that another process will clean-up its shared-memory objects, so we have to do this explicitly */
+static void set_trace_cleanup_for_dumper(void)
+{
+#ifdef __TRACE_INSTRUMENTATION
+    assert(0 == atexit(TRACE__fini));
+#endif
+}
+
 int init_dumper(struct trace_dumper_configuration_s *conf)
 {
+    set_trace_cleanup_for_dumper();
     clear_mapped_records(conf);
 
     if (!conf->write_to_file && !conf->online && conf->dump_online_statistics) {
