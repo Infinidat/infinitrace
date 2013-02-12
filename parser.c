@@ -121,9 +121,17 @@ static void SAY_ESCAPED_S(out_fd* out, const char* buf, size_t size) {
     }
 }
 
-static int ends_with_equal(const out_fd* out) {
-    return (out->i > 10 && out->buf[out->i-1] == '=');
+static void SAY_INT(out_fd* out, bool_t color_bool, bool_t force_hex, unsigned flags, unsigned value) {
+    SAY_COL(out, CYAN_B);
+    const bool_t hex = force_hex || (flags & TRACE_PARAM_FLAG_HEX);
+    SAY_F  (out, hex ? "0x%x" : (flags & TRACE_PARAM_FLAG_UNSIGNED) ? "%u" : "%d", value);
+    SAY_COL(out, ANSI_RESET);
 }
+
+static int ends_with_equal(const out_fd* out) {
+    return (out->i > 1 && out->buf[out->i-1] == '=');
+}
+
 
 CREATE_LIST_IMPLEMENTATION(BufferParseContextList, struct trace_parser_buffer_context)
 CREATE_LIST_IMPLEMENTATION(RecordsAccumulatorList, struct trace_record_accumulator)
@@ -708,7 +716,6 @@ static int format_typed_params(
     const char *delimiter = trace_kind == TRACE_LOG_DESCRIPTOR_KIND_FUNC_ENTRY ? ", " : " ";
     int first = 1;
     for (param = log_desc->params; (param->flags != 0); param++) {
-        const int hex_bool = (param->flags & TRACE_PARAM_FLAG_HEX) || parser->always_hex;
         int put_delimiter = 1; // (param + 1)->flags != 0 ;
         
         if (first) {
@@ -820,6 +827,15 @@ static int format_typed_params(
             /* integer data */
 #define GET_PDATA_VAL(TYPE) const TYPE _val = (*(const TYPE*)pdata); pdata += sizeof(_val)
 
+#define DISPLAY_VAL(TYPE)                               \
+        do if (describe_params) {                          \
+            SAY_COLORED(out, "<" #TYPE ">", CYAN_B);    \
+        }                                               \
+        else {                                          \
+            GET_PDATA_VAL(unsigned TYPE);               \
+            SAY_INT(out, color_bool, parser->always_hex, param->flags, _val); \
+        } while(0)
+
         case TRACE_PARAM_FLAG_ENUM: {
             if (describe_params) {
                 SAY_COL(out, CYAN_B);
@@ -837,48 +853,27 @@ static int format_typed_params(
             }
         } break;
         
-        case TRACE_PARAM_FLAG_NUM_8: {
-            if (describe_params) {
-                SAY_COLORED(out, "<char>", CYAN_B);
-            }
-            else {
-                GET_PDATA_VAL(unsigned char);
-                SAY_COL(out, CYAN_B);
-                SAY_F  (out, ( hex_bool ? "0x%x" : "%d" ), _val);
-                SAY_COL(out, ANSI_RESET);
-            }
-        } break;
+        case TRACE_PARAM_FLAG_NUM_8:
+            DISPLAY_VAL(char);
+            break;
         
-        case TRACE_PARAM_FLAG_NUM_16: {
-            if (describe_params) {
-                SAY_COLORED(out, "<short>", CYAN_B);
-            }
-            else {
-                GET_PDATA_VAL(unsigned short);
-                SAY_COL(out, CYAN_B);
-                SAY_F  (out, ( hex_bool ? "0x%x" : "%d" ), _val);
-            }
-        } break;
+        case TRACE_PARAM_FLAG_NUM_16:
+            DISPLAY_VAL(short);
+            break;
 
-        case TRACE_PARAM_FLAG_NUM_32: {
-            if (describe_params) {
-                SAY_COLORED(out, "<short>", CYAN_B);
-            }
-            else {
-                GET_PDATA_VAL(unsigned int);
-                SAY_COL(out, CYAN_B);
-                SAY_F  (out, ( hex_bool ? "0x%x" : "%d" ), _val);
-            }
-        } break;
+        case TRACE_PARAM_FLAG_NUM_32:
+            DISPLAY_VAL(int);
+            break;
 
         case TRACE_PARAM_FLAG_NUM_64: {
             if (describe_params) {
                 SAY_COLORED(out, "<long long>", CYAN_B);
             }
             else {
+                const bool_t hex_bool = (param->flags & TRACE_PARAM_FLAG_HEX) || parser->always_hex;
                 GET_PDATA_VAL(unsigned long long);
                 SAY_COL(out, CYAN_B);
-                SAY_F  (out, ( hex_bool ? "0x%llx" : "%lld" ), _val);
+                SAY_F  (out, ( hex_bool ? "0x%llx" : (param->flags & TRACE_PARAM_FLAG_UNSIGNED) ? "%llu" : "%lld" ), _val);
             }
         } break;
 
@@ -910,6 +905,9 @@ static int format_typed_params(
     (*bytes_processed) = (const char *) pdata - (const char *) typed_record;
     return out->i; // total_length;
 }
+
+#undef DISPLAY_VAL
+#undef GET_PDATA_VAL
 
 static const char * severity_to_str(unsigned int sev, int color_bool) {
 
