@@ -48,13 +48,13 @@ static void handle_overwrite(struct trace_dumper_configuration_s *conf)
     }
 
     if (conf->record_file.records_written - conf->last_overwrite_test_record_count > conf->max_records_per_second) {
-        conf->minimal_allowed_severity = MIN(conf->minimal_allowed_severity + 1, TRACE_SEV__MAX);
+        conf->minimal_allowed_severity = __TRACE_STDC_MIN(conf->minimal_allowed_severity + 1, TRACE_SEV__MAX);
         conf->next_possible_overwrite_relaxation = current_time + RELAXATION_BACKOFF;
         WARN("Overrwrite occurred. Wrote", conf->record_file.records_written - conf->last_overwrite_test_record_count,
              "records in a second. Minimal severity is now", conf->minimal_allowed_severity);
     } else {
         if (conf->minimal_allowed_severity && (current_time > conf->next_possible_overwrite_relaxation)) {
-            conf->minimal_allowed_severity = MAX(conf->minimal_allowed_severity - 1, 0);
+            conf->minimal_allowed_severity = __TRACE_STDC_MAX(conf->minimal_allowed_severity - 1, 0);
             INFO("Relaxing overwrite filter. Write", conf->record_file.records_written - conf->last_overwrite_test_record_count,
                  "records in a second. Minimal severity is now", conf->minimal_allowed_severity);
         }

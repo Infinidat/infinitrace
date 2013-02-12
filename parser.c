@@ -1501,7 +1501,7 @@ static void say_new_file(out_fd* out, trace_parser_t *parser, unsigned long long
     const int color_bool = parser->color;
     SAY_COL(out, ANSI_RESET);
     if (parser->show_timestamp)
-        SAY_S  (out, format_timestamp(MAX(ts, 0), parser->nanoseconds_ts, parser->compact_traces));
+        SAY_S  (out, format_timestamp(MAX(ts, 0ULL), parser->nanoseconds_ts, parser->compact_traces));
     SAY_S  (out, " [");
     SAY_COL(out, BLUE_B);
     SAY_S  (out, "Traces New Filename");

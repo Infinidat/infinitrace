@@ -175,8 +175,8 @@ enum trace_log_descriptor_kind {
     TRACE_LOG_DESCRIPTOR_KIND_EXPLICIT = 2,
 };
 
-#define TRACE_RECORD_SIZE           64
-#define TRACE_RECORD_PAYLOAD_SIZE   44
+#define TRACE_RECORD_SIZE           64U
+#define TRACE_RECORD_PAYLOAD_SIZE   44U
 #define TRACE_RECORD_HEADER_SIZE    (TRACE_RECORD_SIZE - TRACE_RECORD_PAYLOAD_SIZE)
 
   /* Indicate whether the current record is the first or last of a sequence. It's possible (and common) for both flags to be set */
