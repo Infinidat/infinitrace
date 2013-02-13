@@ -61,8 +61,10 @@ TraceCall(llvm::raw_ostream &out,
         UnknownTraceParamDiag = Diags.getCustomDiagID(clang::DiagnosticsEngine::Error,
                                                       "Unsupported trace parameter type");
         is_repr = false;
+        call_expr = NULL;
     }
 
+    ~TraceCall();
     bool fromCallExpr(clang::CallExpr *exp);
     bool isRepr() const { return is_repr; }
     void addTraceParam(TraceParam &param) { args.push_back(param); }

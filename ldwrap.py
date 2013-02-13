@@ -138,9 +138,12 @@ def main(args):
     f.close()
 
     if linker_direct:
+        xargs.append('--allow-multiple-definition')
         xargs.append('-T')
         xargs.append(script_file)
     else:
+        xargs.append('-Xlinker')
+        xargs.append('--allow-multiple-definition')
         xargs.append('-Xlinker')
         xargs.append('-T')
         xargs.append('-Xlinker')

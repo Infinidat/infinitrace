@@ -55,16 +55,9 @@ static inline std::string externGlobal(LangOptions const& langOpts)
     }
 }
 
-static bool traceCallReferenced(const std::set<TraceCall *> &traces, const std::string& trace_name)
+TraceCall::~TraceCall()
 {
-    for (std::set<TraceCall *>::iterator i = traces.begin(); i != traces.end(); i++) {
-        TraceCall *trace_call = *i;
-        if (trace_call->trace_call_name.compare(trace_name) == 0) {
-            return true;
-        }
-    }
-
-    return false;
+    globalTraces.erase(this);
 }
 
 std::string TraceCall::getTraceDeclaration() const
@@ -77,12 +70,12 @@ std::string TraceCall::getTraceDeclaration() const
         const TraceParam &param = args[i];
         param_name = "0";
         flags = param.stringifyTraceParamFlags();
-        if (param.param_name.size() > 0) {
+        if (! param.param_name.empty()) {
             flags += "| TRACE_PARAM_FLAG_NAMED_PARAM";
             param_name = "\"" + param.param_name + "\"";
         }
 
-        if (param.const_str.size() > 0) {
+        if (! param.const_str.empty()) {
             flags +=  "| TRACE_PARAM_FLAG_CSTR";
             str = "{\"" + param.const_str + "\"}";
         } else {
@@ -99,7 +92,10 @@ std::string TraceCall::getTraceDeclaration() const
     std::stringstream descriptor;
     descriptor << "static struct trace_param_descriptor " << trace_call_name << "_params[] = {";
     descriptor << params.str() << "};";
-    descriptor << "static struct trace_log_descriptor __attribute__((__section__(\".static_log_data\"))) " << trace_call_name << "= { ";
+    if (!isRepr()) {
+        descriptor << "static ";
+    }
+    descriptor << "struct trace_log_descriptor __attribute__((__section__(\".static_log_data\"))) " << trace_call_name << "= { ";
     descriptor << kind;
 #if (TRACE_FORMAT_VERSION >= TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA)
     descriptor << ", __LINE__";
@@ -135,6 +131,8 @@ const char *sev_to_str[] = {"INVALID", "FUNC_TRACE",
 
 std::string TraceCall::getSeverity() const
 {
+    assert(severity >= TRACE_SEV_INVALID);
+    assert(severity <= TRACE_SEV__MAX);
     return "TRACE_SEV_" + std::string(sev_to_str[severity]);
 }
 
@@ -244,17 +242,6 @@ std::string TraceCall::varlength_getTraceWriteExpression() const
             }
 
             else if (param.trace_call) {
-                // TODO: Need to check why we are calling traceCallReferenced(), and why it's doing a linear search.
-                // The whole point about using a set is that the item is only inserted if it's not there already.
-                if (!traceCallReferenced(globalTraces, param.trace_call->trace_call_name)) {
-                    globalTraces.insert(param.trace_call);
-                }
-
-                // TODO: Just do a single copy
-                std::string logid = "(&" + param.trace_call->trace_call_name + "- __static_log_information_start)";
-                std::string _type_name = "int";
-                start_record << varlength_writeSimpleValue(logid, _type_name, false, false);
-
                 start_record << param.expression;
                 start_record << "(__typed_buf, __records, __rec_idx, __records_array_len); ";
             }
@@ -427,7 +414,11 @@ void TraceCall::expand()
 void TraceCall::expandWithoutDeclaration()
 {
     std::string trace_write_expression = varlength_getTraceWriteExpression();
-    replaceExpr(call_expr, "if (current_trace_buffer != 0){"  + trace_write_expression + "}");
+    std::string declaration_substitute;
+    if (isRepr()) {
+        declaration_substitute = varlength_writeSimpleValue("__trace_repr_logid", "int", false, false);
+    }
+    replaceExpr(call_expr, "if (current_trace_buffer != 0){" + declaration_substitute + trace_write_expression + "}");
 }
 
 

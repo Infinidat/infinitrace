@@ -217,6 +217,7 @@ public:
     LangOptions langOpts;
     Decl *D;
     bool whitelistExceptions;
+    std::string enclosingClassDescriptorName;
 
     StmtIterator(llvm::raw_ostream& xOut, DiagnosticsEngine &_Diags, ASTContext &xAst, Rewriter *rewriter, SourceManager *sm, const LangOptions &_langOpts, Decl *_D, bool _whitelistExceptions, std::set<const Type *>&referenced_types, std::set<TraceCall *> &global_traces) : Out(xOut), Diags(_Diags), ast(xAst), Rewrite(rewriter), SM(sm), langOpts(_langOpts), D(_D), whitelistExceptions(_whitelistExceptions), referencedTypes(referenced_types), globalTraces(global_traces)  {};
 
@@ -311,6 +312,16 @@ void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
 
 
     if (NULL != strstr(D->getQualifiedNameAsString().c_str(), STR(TRACE_REPR_INTERNAL_METHOD_NAME))) {
+        const CXXMethodDecl *callee = static_cast<const CXXMethodDecl *>(D);
+        const QualType class_type = callee->getThisType(ast)->getPointeeType().getUnqualifiedType();
+        std::string _type_name = normalizeTypeName(class_type.getAsString());
+        if (! _type_name.empty()) {
+            std::string descriptor_name = _type_name + "_tracelog";
+            std::string logid_def =
+                    "const int __trace_repr_logid = &" + descriptor_name + " - __static_log_information_start; ";
+            Rewrite->InsertText(function_start, logid_def, true);
+            stmtiterator.enclosingClassDescriptorName = descriptor_name;
+        }
         goto exit;
     }
     
@@ -357,6 +368,7 @@ void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
     Rewrite->InsertText(function_start, "if (current_trace_buffer != 0){" + trace_call.getExpansion() + "trace_increment_nesting_level();}", true);
 exit:
     stmtiterator.Visit(D->getBody());
+    stmtiterator.enclosingClassDescriptorName = "";
 }
 
 void DeclIterator::VisitFieldDecl(FieldDecl *D) {
@@ -894,14 +906,16 @@ void StmtIterator::VisitArraySubscriptExpr(ArraySubscriptExpr *S)
 
 void StmtIterator::VisitCallExpr(CallExpr *S)
 {
-    
-    TraceCall trace_call(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
-    bool successfully_parsed = trace_call.fromCallExpr(S);
+    std::auto_ptr<TraceCall> trace_call(new TraceCall(Out, Diags, ast, Rewrite, referencedTypes, globalTraces));
+    bool successfully_parsed = trace_call->fromCallExpr(S);
     if (successfully_parsed) {
-        if (getCallExprFunctionName(S).compare(STR(TRACE_REPR_CALL_NAME)) == 0) {
-            trace_call.expandWithoutDeclaration();
+        if (trace_call->isRepr()) {
+            trace_call->expandWithoutDeclaration();
+            assert(! enclosingClassDescriptorName.empty());
+            trace_call->trace_call_name = enclosingClassDescriptorName;
+            globalTraces.insert(trace_call.release());
         } else {
-            trace_call.expand();
+            trace_call->expand();
         }
     }
     
@@ -1576,8 +1590,7 @@ public:
     }
 
     void buildGlobalTraces() {
-        std::set<TraceCall *>::iterator iter;
-        for (iter = globalTraces.begin(); iter != globalTraces.end(); ++iter) {
+        for (std::set<TraceCall *>::const_iterator iter = globalTraces.begin(); iter != globalTraces.end(); ++iter) {
             global_traces << (*iter)->getTraceDeclaration();
         }
     }
@@ -1586,10 +1599,7 @@ public:
     void writeGlobalTraces(ASTContext &C) {
         StructFinder struct_finder;
         RecordDecl *record_struct = struct_finder.findDeclByName(C.getTranslationUnitDecl(), "trace_log_descriptor");
-        if (record_struct == NULL) {
-            exit(1);
-            return;
-        }
+        assert(record_struct != NULL);
 
         SourceRange range = getDeclRange(SM, &C.getLangOptions(), record_struct, true);
         Rewrite.InsertText(range.getEnd(), global_traces.str());
@@ -1617,6 +1627,7 @@ public:
 private:
     std::set<const Type *> referencedTypes;
     std::set<TraceCall *> globalTraces;
+    std::set<std::string> classLogDescriptorsUsed;
     Rewriter Rewrite;
 };
 
@@ -1645,7 +1656,6 @@ protected:
         whitelistExceptions = false;
         for (unsigned i = 0, e = args.size(); i != e; ++i) {
             if (args[i].compare("disable-function-tracing") == 0) {
-                // printf("GREAT\n");
                 whitelistExceptions = true;
             }
         }
