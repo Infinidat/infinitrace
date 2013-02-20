@@ -232,7 +232,9 @@ bool TraceParam::parseBasicTypeParam(const Expr *expr)
         return false;
     }
 
-    bool parsed = parseBasicTypeParam(expr->getType().getCanonicalType());
+    QualType type_for_parsing = type->isIntegerType() ? type->getCanonicalTypeInternal() : expr->getType();
+
+    bool parsed = parseBasicTypeParam(type_for_parsing.getCanonicalType());
     if (!parsed) {
         return false;
     }
