@@ -40,6 +40,20 @@ std::string normalizeTypeName(std::string type_str) {
     return replaceAll(replaced, ":", "_");
 }
 
+static inline bool isCPlusPlus(LangOptions const& langOpts)
+{
+    return langOpts.CPlusPlus != 0;
+}
+
+std::string castTo(LangOptions const& langOpts, const std::string& orig_expr, const std::string& cast_type)
+{
+     if (isCPlusPlus(langOpts)) {
+         return "reinterpret_cast<" + cast_type + ">(" + orig_expr + ")";
+     } else {
+         return "(" + cast_type + ") (" + orig_expr + ")";
+     }
+}
+
 std::string getCallExprFunctionName(const clang::CallExpr *CE)
 {
     const FunctionDecl *callee = CE->getDirectCallee();

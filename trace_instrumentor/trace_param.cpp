@@ -158,13 +158,33 @@ std::string TraceParam::asString() const
     return os.str();
 }
 
+// Convert size in bytes to the appropriate flag value
+static unsigned size_to_flag(unsigned size)
+{
+    switch (size) {
+    case 1:
+        return TRACE_PARAM_FLAG_NUM_8;
+
+    case 2:
+        return TRACE_PARAM_FLAG_NUM_16;
+
+    case 4:
+        return TRACE_PARAM_FLAG_NUM_32;
+
+    case 8:
+        return TRACE_PARAM_FLAG_NUM_64;
+
+    default:
+        return 0;
+    }
+}
+
 bool TraceParam::parseBasicTypeParam(QualType qual_type)
 {
     const Type *type = qual_type.split().first;
-
+    size = ast.getTypeSize(type) / 8;
 
     if (type->isReferenceType() || type->isPointerType()) {
-        size = ast.getTypeSize(type);
         type_name = qual_type.getAsString();
 
         if (type->isReferenceType()) {
@@ -173,14 +193,8 @@ bool TraceParam::parseBasicTypeParam(QualType qual_type)
             is_pointer = true;
         }
 
-        flags = TRACE_PARAM_FLAG_HEX;
-        if (size == 64) {
-            flags |= TRACE_PARAM_FLAG_NUM_64;
-        } else {
-            flags |= TRACE_PARAM_FLAG_NUM_32;
-        }
-
-        size = ast.getTypeSize(type) / 8;
+        flags = TRACE_PARAM_FLAG_HEX | size_to_flag(size);
+        assert(flags & (TRACE_PARAM_FLAG_NUM_64 | TRACE_PARAM_FLAG_NUM_32));
         return true;
     }
 
@@ -196,24 +210,14 @@ bool TraceParam::parseBasicTypeParam(QualType qual_type)
         flags |= TRACE_PARAM_FLAG_UNSIGNED;
     }
 
-    switch (ast.getTypeSize(type)) {
-    case 8:
-        flags |= TRACE_PARAM_FLAG_NUM_8;
-        break;
-    case 16:
-        flags |= TRACE_PARAM_FLAG_NUM_16;
-        break;
-    case 32:
-        flags |= TRACE_PARAM_FLAG_NUM_32;
-        break;
-    case 64:
-        flags |= TRACE_PARAM_FLAG_NUM_64;
-        break;
-    default:
+    unsigned size_flag = size_to_flag(size);
+    if (size_flag) {
+        flags |= size_flag;
+    }
+    else {
         return false;
     }
 
-    size = ast.getTypeSize(type) / 8;
     type_name = QualType(qual_type.split().first, 0).getAsString();
     if (type_name.compare("_Bool") == 0) {
             type_name = "bool";
@@ -305,7 +309,7 @@ bool TraceParam::parseEnumTypeParam(const Expr *expr)
 bool TraceParam::parseHexBufParam(const Expr *expr)
 {
     const Expr *stripped_expr = expr->IgnoreParens();
-    if (!isa<CStyleCastExpr>(stripped_expr)) {
+    if (!isa<CStyleCastExpr>(stripped_expr) && !isa<CXXReinterpretCastExpr>(stripped_expr)) {
         return false;
     }
 
@@ -330,17 +334,34 @@ bool TraceParam::parseHexBufParam(const Expr *expr)
         return false;
     }
 
-    flags |= TRACE_PARAM_FLAG_UNSIGNED | TRACE_PARAM_FLAG_VARRAY | TRACE_PARAM_FLAG_NUM_8 | TRACE_PARAM_FLAG_HEX;
+    flags |= TRACE_PARAM_FLAG_UNSIGNED | TRACE_PARAM_FLAG_HEX;
 
     if (isa<VariableArrayType>(A)) {
         const VariableArrayType *VAT = dyn_cast<VariableArrayType>(A);
         size_expression = getLiteralExpr(ast, Rewrite, VAT->getSizeExpr());
+        flags |= TRACE_PARAM_FLAG_NUM_8 | TRACE_PARAM_FLAG_VARRAY;
     } else if (isa<ConstantArrayType>(A)) {
         const ConstantArrayType *CAT = dyn_cast<ConstantArrayType>(A);
         size = CAT->getSize().getZExtValue();
+        unsigned size_flag = size_to_flag(size);
+        if (size_flag) {
+            flags |= size_flag;
+            std::stringstream _type;
+            _type << "uint" << size * 8 << "_t";
+            type_name = _type.str();
+        }
+        else {
+            flags |= TRACE_PARAM_FLAG_NUM_8 | TRACE_PARAM_FLAG_VARRAY;
+        }
     }
 
-    expression = getLiteralExpr(ast, Rewrite, expr);
+    std::string lit_expr = getLiteralExpr(ast, Rewrite, expr);
+    if (flags & TRACE_PARAM_FLAG_VARRAY) {
+        expression = lit_expr;
+    }
+    else {
+        expression = "*(" + castTo(ast.getLangOptions(), lit_expr, "const " + type_name + " *") + ")";
+    }
 
     return true;
 }

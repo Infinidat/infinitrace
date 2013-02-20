@@ -47,6 +47,9 @@ std::string getCallExprFunctionName(const clang::CallExpr *CE);
 
 std::string getLiteralExpr(clang::ASTContext &ast, clang::Rewriter *Rewrite, const clang::Stmt *S);
 
+std::string castTo(clang::LangOptions const& langOpts, const std::string& orig_expr, const std::string& cast_type);
+
+
 // A macro that stringizes its argument
 #define STR_AUX(s) (#s)
 #define STR(s) STR_AUX(s)

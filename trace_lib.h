@@ -28,6 +28,8 @@ extern "C" {
 #include "trace_macros.h"
 #include <stdlib.h>
 #include <sys/types.h>
+#include <stdint.h>
+
 #ifdef __repr__
 #undef __repr__
 #endif

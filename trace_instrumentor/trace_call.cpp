@@ -32,29 +32,6 @@
 
 using namespace clang;
 
-static inline bool isCPlusPlus(LangOptions const& langOpts)
-{
-    return langOpts.CPlusPlus == 1;
-}
-
-static inline std::string castTo(LangOptions const& langOpts, const std::string& orig_expr, const std::string& cast_type)
-{
-     if (isCPlusPlus(langOpts)) {
-         return "reinterpret_cast<" + cast_type + ">(" + orig_expr + ")";
-     } else {
-         return "(" + cast_type + ") (" + orig_expr + ")";
-     }
- }
-
-static inline std::string externGlobal(LangOptions const& langOpts)
-{
-    if (isCPlusPlus(langOpts)) {
-        return "extern \"C\"";
-    } else {
-        return "extern";
-    }
-}
-
 TraceCall::~TraceCall()
 {
     globalTraces.erase(this);

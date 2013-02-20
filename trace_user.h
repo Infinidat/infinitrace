@@ -31,7 +31,13 @@ void TRACE__fini(void);// __attribute__((destructor));
 #endif
     
 typedef unsigned char hex_t;
-#define HEX_REPR(x, size) (hex_t (*)[size]) x
+#ifdef __cplusplus
+#define HEX_REPR(x, size) reinterpret_cast<const hex_t (*)[size]>(x)
+#else
+#define HEX_REPR(x, size) (hex_t (*)[size]) (x)
+#endif
+
+#define TRACE_INT_AS_HEX(x) HEX_REPR(&(x), sizeof(x))
 
 /* Function instrumentation */
 #define NO_INSTRUMENT __attribute__((no_instrument_function))
