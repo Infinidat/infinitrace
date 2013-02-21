@@ -30,14 +30,25 @@ void TRACE__fini(void);// __attribute__((destructor));
 #define __repr__ TRACE_REPR_INTERNAL_METHOD_NAME ()
 #endif
     
-typedef unsigned char hex_t;
+typedef unsigned char TRACE_HEX_REPR_TYPE_NAME;
 #ifdef __cplusplus
-#define HEX_REPR(x, size) reinterpret_cast<const hex_t (*)[size]>(x)
+#define HEX_REPR(ptr, size) reinterpret_cast<const TRACE_HEX_REPR_TYPE_NAME (*)[size]>(ptr)
 #else
-#define HEX_REPR(x, size) (hex_t (*)[size]) (x)
+#define HEX_REPR(ptr, size) (TRACE_HEX_REPR_TYPE_NAME (*)[size]) (ptr)
 #endif
 
 #define TRACE_INT_AS_HEX(x) HEX_REPR(&(x), sizeof(x))
+#define TRACE_NAMED_PARAM(name, value) TRACE_PARAM_NAME_INDICATOR_PREFIX #name, value
+#define TRACE_NAMED_INT_AS_HEX(x) TRACE_NAMED_PARAM(x, TRACE_INT_AS_HEX(x))
+
+/* TRACE_INT_AS_HEX requires that its argument be addressable (i.e. can have its address taken via "&").
+ * In order to allow non-addressable expressions to be used we define a macro which creates a temporary copy
+ * of the value at hand on the stack */
+#ifdef __cplusplus
+#define TRACE_MAKE_EXPR_ADDRESSABLE(x) ( *static_cast<__typeof__(x) *>(__builtin_alloca(sizeof(x))) = (x) )
+#else
+#define TRACE_MAKE_EXPR_ADDRESSABLE(x) ( *(__typeof__(x) *) __builtin_alloca(sizeof(x)) = (x) )
+#endif
 
 /* Function instrumentation */
 #define NO_INSTRUMENT __attribute__((no_instrument_function))

@@ -79,7 +79,7 @@ TraceParam(
         }
     }
     bool isSimple() const {
-        if (flags & (TRACE_PARAM_FLAG_ENUM | TRACE_PARAM_FLAG_NUM_8 | TRACE_PARAM_FLAG_NUM_16 | TRACE_PARAM_FLAG_NUM_32 | TRACE_PARAM_FLAG_NUM_64) && !(flags & TRACE_PARAM_FLAG_VARRAY)) {
+        if ((flags & (TRACE_PARAM_FLAG_ENUM | TRACE_PARAM_FLAG_NUM_8 | TRACE_PARAM_FLAG_NUM_16 | TRACE_PARAM_FLAG_NUM_32 | TRACE_PARAM_FLAG_NUM_64)) && !(flags & TRACE_PARAM_FLAG_VARRAY)) {
             return true;
         } else {
             return false;
@@ -116,7 +116,14 @@ TraceParam(
         }
     }
 
-    void setConstStr(std::string str) {
+    bool isParamNameIndicator() const {
+        return isConstString() &&
+                (const_str.compare(0, sizeof(TRACE_PARAM_NAME_INDICATOR_PREFIX) - 1, TRACE_PARAM_NAME_INDICATOR_PREFIX) == 0);
+    }
+
+    std::string getSubsequentParamName() const;
+
+    void setConstStr(const std::string& str) {
         flags |= TRACE_PARAM_FLAG_CSTR;
         const_str = str;
     }

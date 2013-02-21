@@ -124,6 +124,8 @@ typedef unsigned trace_generation_t;
 
 #define TRACE_REPR_INTERNAL_METHOD_NAME _trace_represent
 #define TRACE_REPR_CALL_NAME REPR
+#define TRACE_HEX_REPR_TYPE_NAME trace_hex_t
+#define TRACE_PARAM_NAME_INDICATOR_PREFIX "trace_param_name="
 
 enum trace_severity {
 	TRACE_SEV_INVALID = 0,

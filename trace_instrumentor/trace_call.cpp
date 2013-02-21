@@ -446,11 +446,22 @@ bool TraceCall::constantSizeTrace(void) const
 bool TraceCall::parseTraceParams(CallExpr *S, std::vector<TraceParam> &args)
 {
     Expr **call_args = S->getArgs();
+    std::string next_param_name;
+
     for (unsigned int i = 0; i < S->getNumArgs(); i++) {
         TraceParam trace_param(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
         trace_param.clear();
         if (trace_param.fromExpr(call_args[i], true)) {
-            if (trace_param.const_str.length() == 0 && valid_param_name(trace_param.expression)) {
+            if (trace_param.isParamNameIndicator()) {
+                next_param_name = trace_param.getSubsequentParamName();
+                continue;
+            }
+
+            if (! next_param_name.empty()) {
+                trace_param.param_name = next_param_name;
+                next_param_name.clear();
+            }
+            else if (trace_param.const_str.empty() && valid_param_name(trace_param.expression)) {
                 trace_param.param_name = trace_param.expression;
             }
 

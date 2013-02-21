@@ -179,6 +179,15 @@ static unsigned size_to_flag(unsigned size)
     }
 }
 
+std::string TraceParam::getSubsequentParamName() const
+{
+    if (isParamNameIndicator()) {
+        return const_str.substr(sizeof(TRACE_PARAM_NAME_INDICATOR_PREFIX) - 1, std::string::npos);
+    }
+
+    return "";
+}
+
 bool TraceParam::parseBasicTypeParam(QualType qual_type)
 {
     const Type *type = qual_type.split().first;
@@ -330,7 +339,7 @@ bool TraceParam::parseHexBufParam(const Expr *expr)
 
     const TypedefType *TDP = dyn_cast<TypedefType>(A->getElementType().split().first);
     const TypedefNameDecl *decl = TDP->getDecl();
-    if (decl->getDeclName().getAsString().compare("hex_t") != 0) {
+    if (decl->getDeclName().getAsString().compare(STR(TRACE_HEX_REPR_TYPE_NAME)) != 0) {
         return false;
     }
 
