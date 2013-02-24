@@ -145,7 +145,6 @@ static bool_t records_are_from_same_trace(volatile const struct trace_record *re
 }
 
 static bool_t record_ends_trace(volatile const struct trace_record *ending_candidate, volatile const struct trace_record *start_rec) {
-    assert(start_rec->termination & TRACE_TERMINATION_FIRST);
     return (ending_candidate->termination & TRACE_TERMINATION_LAST) || !records_are_from_same_trace(ending_candidate, start_rec);
 }
 
@@ -205,7 +204,13 @@ unsigned add_warn_records_to_iov(
                 assert(recs_covered >= 1);
                 assert(i + recs_covered <= count);
 
-                if (! records_are_from_same_trace(previous_record(rec, mapped_records), starting_rec)) {
+                volatile const struct trace_record *const ending_rec = previous_record(rec, mapped_records);
+                if (! ((starting_rec->termination & TRACE_TERMINATION_FIRST) && (ending_rec->termination & TRACE_TERMINATION_LAST)) ) {
+                    WARN("A trace record comprising", recs_covered, "physical records was skipped due to inconsistent termination flags",
+                            starting_rec, starting_rec->generation, starting_rec->termination, ending_rec, ending_rec->generation, ending_rec->termination);
+                    continue;
+                }
+                else if (! records_are_from_same_trace(ending_rec, starting_rec)) {
                     if (retries_left > 0) {
                        INFO("Unterminated record found while scanning for notifications, The scan will be retried", retries_left, iov_idx, i, recs_covered);
                        retries_left--;
