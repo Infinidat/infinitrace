@@ -71,6 +71,18 @@ TraceParam::TraceParam(
 
 }
 
+void TraceParam::clear(void)
+{
+    flags = 0;
+    const_str  = std::string();
+    expression = std::string();
+    type_name  = std::string();
+    param_name = std::string();
+    ast_expression = NULL;
+    is_pointer = false;
+    is_reference = false;
+}
+
 TraceParam& TraceParam::operator = ( const TraceParam& source )
 {
     const_str        = source.const_str;
@@ -477,11 +489,30 @@ bool TraceParam::fromExpr(const Expr *trace_param, bool deref_pointer)
         }
 
         if ((this->*parsers[i].parser)(trace_param)) {
+            ast_expression = trace_param;
             return true;
         }
     }
 
     return false;
+}
+
+bool TraceParam::inferParamName()
+{
+    if (isZeroLength()) {
+        return false;
+    }
+
+    const Expr *effective_expr = ast_expression;
+    if (isa<UnaryOperator>(ast_expression)) {
+        const UnaryOperator *const u_op = dyn_cast<UnaryOperator>(ast_expression);
+        if (UO_AddrOf == u_op->getOpcode()) {
+            effective_expr = u_op->getSubExpr();
+        }
+    }
+
+    param_name = normalizeExpr(getLiteralExpr(ast, Rewrite, effective_expr->IgnoreParens()));
+    return ! param_name.empty();
 }
 
 namespace {

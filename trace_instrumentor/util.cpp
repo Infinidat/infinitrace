@@ -21,7 +21,10 @@
 
 #include "util.h"
 
+#include <cctype>
+
 using namespace clang;
+using namespace std;
 
 std::string getLiteralExpr(ASTContext &ast, Rewriter *Rewrite, const clang::Stmt *S)
 {
@@ -38,6 +41,19 @@ std::string getLiteralExpr(ASTContext &ast, Rewriter *Rewrite, const clang::Stmt
 std::string normalizeTypeName(std::string type_str) {
     std::string replaced = replaceAll(type_str, " ", "_");
     return replaceAll(replaced, ":", "_");
+}
+
+std::string normalizeExpr(const std::string& expr)
+{
+    string normalized(expr);
+
+    for (size_t i = 0; i < expr.length(); i++) {
+        if (! isalnum(normalized[i])) {
+            normalized[i] = '_';
+        }
+    }
+
+    return normalized;
 }
 
 static inline bool isCPlusPlus(LangOptions const& langOpts)

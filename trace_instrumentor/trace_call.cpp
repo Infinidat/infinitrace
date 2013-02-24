@@ -409,24 +409,6 @@ enum trace_severity TraceCall::functionNameToTraceSeverity(std::string function_
     return trace_function_name_to_severity(function_name.c_str());
 }
 
-static bool valid_param_name(std::string &name)
-{
-    const char *ptr = name.c_str();
-    if (isdigit(*ptr) || ispunct(*ptr)) {
-        return false;
-    }
-
-    while (*ptr) {
-        char c = *ptr;
-        if (!isalnum(c) && c != '_') {
-            return false;
-        }
-        ptr++;
-    }
-
-    return true;
-}
-
 bool TraceCall::constantSizeTrace(void) const
 {
     for (unsigned int i = 0; i < args.size(); i++) {
@@ -461,8 +443,8 @@ bool TraceCall::parseTraceParams(CallExpr *S, std::vector<TraceParam> &args)
                 trace_param.param_name = next_param_name;
                 next_param_name.clear();
             }
-            else if (trace_param.const_str.empty() && valid_param_name(trace_param.expression)) {
-                trace_param.param_name = trace_param.expression;
+            else {
+                trace_param.inferParamName();
             }
 
             args.push_back(trace_param);

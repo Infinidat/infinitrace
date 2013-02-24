@@ -43,6 +43,8 @@ std::string& replaceAll(
 
 std::string normalizeTypeName(std::string type_str);
 
+std::string normalizeExpr(const std::string& expr);
+
 std::string getCallExprFunctionName(const clang::CallExpr *CE);
 
 std::string getLiteralExpr(clang::ASTContext &ast, clang::Rewriter *Rewrite, const clang::Stmt *S);

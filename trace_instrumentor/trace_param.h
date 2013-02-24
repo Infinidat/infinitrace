@@ -65,7 +65,7 @@ TraceParam(
     bool method_generated;
 
     unsigned int size;
-    void clear(void) { flags = 0; const_str = std::string(); expression = std::string(); is_pointer = false; is_reference = false;}
+    void clear();
 
     TraceParam& operator = ( const TraceParam& source );
     std::string stringifyTraceParamFlags() const;
@@ -128,6 +128,8 @@ TraceParam(
         const_str = str;
     }
 
+    bool inferParamName();
+
 private:
     std::string getLiteralString(const clang::Expr *expr);
     void referenceType(const clang::Type *type);
@@ -141,6 +143,8 @@ private:
     bool parseEnumTypeParam(clang::QualType type);
     bool parseEnumTypeParam(const clang::Expr *expr);
     bool parseClassTypeParam(const clang::Expr *expr);
+
+    const clang::Expr *ast_expression;
 };
 
 #endif /* __TRACE_PARAM_H__ */
