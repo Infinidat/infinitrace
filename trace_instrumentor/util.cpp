@@ -46,14 +46,22 @@ std::string normalizeTypeName(std::string type_str) {
 std::string normalizeExpr(const std::string& expr)
 {
     string normalized(expr);
+    replaceAll(normalized, "->", ".");
+    static const char preserve_chars[] = "_.";
 
-    for (size_t i = 0; i < expr.length(); i++) {
-        if (! isalnum(normalized[i])) {
+    unsigned n_trailing_underscores = 0;
+    for (size_t i = 0; i < normalized.length(); i++) {
+        if (! isalnum(normalized[i]) && (NULL == strchr(preserve_chars, normalized[i]))) {
             normalized[i] = '_';
+            n_trailing_underscores++;
+        }
+        else {
+            n_trailing_underscores = 0;
         }
     }
 
-    return normalized;
+    normalized.erase(normalized.length() - n_trailing_underscores, string::npos);
+    return replaceAll(normalized, "__", "_");
 }
 
 static inline bool isCPlusPlus(LangOptions const& langOpts)
