@@ -443,8 +443,8 @@ bool TraceCall::parseTraceParams(CallExpr *S, std::vector<TraceParam> &args)
                 trace_param.param_name = next_param_name;
                 next_param_name.clear();
             }
-            else {
-                trace_param.inferParamName();
+            else if (trace_param.inferParamName()){
+                trace_param.flags |= TRACE_PARAM_FLAG_NAME_INFERRED;
             }
 
             args.push_back(trace_param);

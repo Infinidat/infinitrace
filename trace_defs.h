@@ -386,7 +386,15 @@ enum trace_param_desc_flags {
      * A future version of the parser will display the value in describe_params mode (e.g. when displaying statistics)
      * instead of the type name */
     TRACE_PARAM_FLAG_CONST   = 0x40000,
-#endif
+
+#if (TRACE_FORMAT_VERSION >= 0xA3)
+
+    /* The parameter's name has been generated from an expression */
+    TRACE_PARAM_FLAG_NAME_INFERRED = 0x80000,
+
+#endif  /* TRACE_FORMAT_VERSION >= 0xA3 */
+
+#endif  /* TRACE_FORMAT_VERSION >= 0xA2 */
 };
 
 enum trace_file_header_flags {

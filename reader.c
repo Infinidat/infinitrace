@@ -12,6 +12,7 @@
 #include <time.h>
 #include <string.h>
 #include <strings.h>
+#include <ctype.h>
 #include <errno.h>
 #include <limits.h>
 #include <getopt.h>
@@ -41,7 +42,7 @@ struct trace_reader_conf {
     int tail;
     int no_color;
     int hex;
-    int hide_field_names;
+    enum trace_parser_param_name_disp_mode field_disp;
     int show_trace_file;
     int hide_funtion_name;
     int nanoseconds_ts;
@@ -87,11 +88,11 @@ static const char usage[] =
  -Q  --quota-max [num]   : Show no more than [num] traces (technicaly it's a filter, but 'gimme a break) \n\
  -A  --after     [num]   : Show [num] traces of the same thread after each hit (TBD: -B/C) \n\
  -F  --no-function       : Avoid displaying function names \n\
- -O  --no-field-name     : Avoid displaying field names at named variables \n\
  -L  --show-trace-file   : Display faked log messages with trace's file name \n\
  -E  --no-timestamp      : Avoid displaying timestamp, process name/id (mnemonic - EMPty) \n\
  -M  --compact-traces    : Compact trace output \n\
  -P  --nano-timestamp    : Print timestamps as raw nano-seconds-since-Epoch units \n\
+ -O  --field-names [a[ll] | e[xplicit] (default) | f[ield] | n[one]]: Parameter name display mode \n\
  \n\
     Filters: \n\
  -t  --time   [time]     : Used once or twice to set a time range. [time] may be nanoseconds int, or time format string \n\
@@ -142,12 +143,12 @@ static const struct option longopts[] = {
     { "quota-max"       , required_argument, 0, 'Q'},
     { "after"           , required_argument, 0, 'A'},
     { "no-function"     , 0, 0, 'F'},
-    { "no-field-name"   , 0, 0, 'O'},
     { "no-timestamp"    , 0, 0, 'E'},
     { "show-trace-file" , 0, 0, 'L'},
     { "no-timestamp"    , 0, 0, 'E'},
     { "compact-trace"   , 0, 0, 'M'},
     { "nano-timestamp"  , 0, 0, 'P'},
+    { "field-names"     , optional_argument, 0, 'O'},
 
     { "time"            , required_argument, 0, 't'},
     { "level"           , required_argument, 0, 'l'},
@@ -349,6 +350,7 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
     short_opts_from_long_opts(shortopts, longopts);
 
     conf->op_type = OP_TYPE_DUMP_FILE;
+    conf->field_disp = TRACE_PARSER_PARAM_NAME_DISP_EXPLICIT;
 
     while ((o = getopt_long(argc, (char **)argv, shortopts, longopts, &longindex)) != EOF) {
 		switch (o) {
@@ -363,7 +365,28 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
 			break;
 
         case 'O':
-            conf->hide_field_names = TRUE;
+            if (optarg) {
+                switch(tolower(optarg[0])) {
+                case 'a':
+                    conf->field_disp = TRACE_PARSER_PARAM_NAME_DISP_ALL;
+                    break;
+                case 'e':
+                     conf->field_disp = TRACE_PARSER_PARAM_NAME_DISP_EXPLICIT;
+                     break;
+                case 'f':
+                     conf->field_disp = TRACE_PARSER_PARAM_NAME_DISP_LAST_FIELD;
+                     break;
+                case '\0':
+                case 'n':
+                     conf->field_disp = TRACE_PARSER_PARAM_NAME_DISP_NONE;
+                     break;
+                default:
+                    exit_usage(NULL, "-O [option] : Option must be one of a[ll] | e[xplicit] | f[ield] | n[one]");
+                }
+            }
+            else {
+                conf->field_disp = TRACE_PARSER_PARAM_NAME_DISP_NONE;
+            }
             break;
         case 'F':
             conf->hide_funtion_name = TRUE;
@@ -456,7 +479,7 @@ static void set_parser_params(const struct trace_reader_conf *conf, trace_parser
     parser->show_timestamp     = ! conf->empty_timestamp;
     parser->color              = ! conf->no_color;
     parser->indent             = conf->severity_level <= TRACE_SEV_FUNC_TRACE;
-    parser->hide_field_names   = conf->hide_field_names;
+    parser->field_disp         = conf->field_disp;
     parser->show_function_name = ! conf->hide_funtion_name; 
     parser->compact_traces     = conf->compact_trace;
     parser->always_hex         = conf->hex;

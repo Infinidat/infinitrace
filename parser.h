@@ -86,6 +86,13 @@ enum trace_input_stream_type {
     TRACE_INPUT_STREAM_TYPE_SEEKABLE_FILE
 };
 
+enum trace_parser_param_name_disp_mode {
+    TRACE_PARSER_PARAM_NAME_DISP_NONE = 0,
+    TRACE_PARSER_PARAM_NAME_DISP_ALL = 1,
+    TRACE_PARSER_PARAM_NAME_DISP_EXPLICIT,
+    TRACE_PARSER_PARAM_NAME_DISP_LAST_FIELD,
+};
+
 #define RECORD_DUMP_CONTEXTS (150)
 struct record_dump_context_s {
     long long start_offset;
@@ -132,7 +139,7 @@ typedef struct trace_parser {
     bool_t silent_mode;
     int inotify_fd;
     int inotify_descriptor;
-    int hide_field_names;
+    enum trace_parser_param_name_disp_mode field_disp;
     int show_function_name;
     const struct trace_record_matcher_spec_s *record_filter;
     unsigned int ignored_records_count;

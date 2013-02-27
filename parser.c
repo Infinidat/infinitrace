@@ -439,6 +439,44 @@ static int init_types_hash(struct trace_parser_buffer_context *context) {
 	return 0;
 }
 
+static void adjust_param_names(const trace_parser_t *parser, struct trace_log_descriptor *descriptors, unsigned long descriptor_count) {
+    if (parser->file_info.format_version < TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA) {
+        return;   /* Irrelevant, old file version with smaller type descriptors, which doesn't yet define TRACE_PARAM_FLAG_NAME_INFERRED */
+    }
+
+    if (parser->field_disp == TRACE_PARSER_PARAM_NAME_DISP_NONE || parser->field_disp == TRACE_PARSER_PARAM_NAME_DISP_ALL) {
+        return;
+    }
+
+    for (unsigned long i = 0; i < descriptor_count; i++) {
+        for (struct trace_param_descriptor *param = (struct trace_param_descriptor *)(descriptors[i].params); param->flags != 0; param++) {
+            if (param->flags & TRACE_PARAM_FLAG_NAME_INFERRED) {
+                switch (parser->field_disp) {
+                case TRACE_PARSER_PARAM_NAME_DISP_EXPLICIT:
+                    param->flags &= ~TRACE_PARAM_FLAG_NAMED_PARAM;
+                    break;
+
+                case TRACE_PARSER_PARAM_NAME_DISP_LAST_FIELD: {
+                        const char *const dot_pos = strrchr(param->param_name, '.');
+                        if (dot_pos) {
+                            param->param_name = dot_pos + 1;
+                        }
+                    }
+                    break;
+
+                case TRACE_PARSER_PARAM_NAME_DISP_NONE:
+                case TRACE_PARSER_PARAM_NAME_DISP_ALL:
+                default:
+                    assert(0);
+                    break;
+                }
+            }
+        }
+    }
+
+    return;
+}
+
 static int accumulate_metadata(trace_parser_t *parser, const struct trace_record *rec, trace_parser_event_handler_t handler, void *arg)
 {
     struct trace_parser_buffer_context *context = get_buffer_context_by_pid(parser, rec->pid);
@@ -467,8 +505,8 @@ static int accumulate_metadata(trace_parser_t *parser, const struct trace_record
         	trace_array_strcpy(context->name, "core");
         else
         	trace_array_strcpy(context->name, context->metadata->name);
-        // context->name[sizeof(context->name) - 1] = '\0';
 
+        adjust_param_names(parser, context->descriptors, context->metadata->log_descriptor_count);
         if (0 != init_types_hash(context)) {
         	return -1;
         }
@@ -725,13 +763,12 @@ static int format_typed_params(
                 SAY_S  (out, "<-- ");
         }
 
-        if (param->flags & TRACE_PARAM_FLAG_NAMED_PARAM) {
-            if (trace_kind == TRACE_LOG_DESCRIPTOR_KIND_FUNC_ENTRY ||
-                ! parser->hide_field_names) {
+        if ((param->flags & TRACE_PARAM_FLAG_NAMED_PARAM) &&
+            (trace_kind == TRACE_LOG_DESCRIPTOR_KIND_FUNC_ENTRY || parser->field_disp) &&
+             param->param_name[0]) {
                 SAY_COL(out, WHITE_B);
                 SAY_S  (out, param->param_name);
                 SAY_S  (out, "=");
-            }
         }
 
         switch (param->flags &

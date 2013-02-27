@@ -104,52 +104,28 @@ std::string TraceParam::stringifyTraceParamFlags() const
 {
     std::stringstream trace_flags;
     trace_flags << "0";
-    if (flags & TRACE_PARAM_FLAG_NUM_8) {
-        trace_flags << " | TRACE_PARAM_FLAG_NUM_8";
-    }
-    if (flags & TRACE_PARAM_FLAG_NUM_16) {
-        trace_flags << " | TRACE_PARAM_FLAG_NUM_16";
-    }
-    if (flags & TRACE_PARAM_FLAG_NUM_32) {
-        trace_flags << " | TRACE_PARAM_FLAG_NUM_32";
-    }
-    if (flags & TRACE_PARAM_FLAG_NUM_64) {
-        trace_flags << " | TRACE_PARAM_FLAG_NUM_64";
-    }
-    if (flags & TRACE_PARAM_FLAG_VARRAY) {
-        trace_flags << " | TRACE_PARAM_FLAG_VARRAY";
-    }
-    if (flags & TRACE_PARAM_FLAG_CSTR) {
-        trace_flags << " | TRACE_PARAM_FLAG_CSTR";
-    }
-    if (flags & TRACE_PARAM_FLAG_STR) {
-        trace_flags << " | TRACE_PARAM_FLAG_STR";
-    }
-    if (flags & TRACE_PARAM_FLAG_HEX) {
-        trace_flags << " | TRACE_PARAM_FLAG_HEX";
-    }
-    if (flags & TRACE_PARAM_FLAG_UNSIGNED) {
-        trace_flags << " | TRACE_PARAM_FLAG_UNSIGNED";
-    }
-    if (flags & TRACE_PARAM_FLAG_ZERO) {
-        trace_flags << " | TRACE_PARAM_FLAG_ZERO";
-    }
-    if (flags & TRACE_PARAM_FLAG_ENUM) {
-        trace_flags << " | TRACE_PARAM_FLAG_ENUM";
-    }
-    if (flags & TRACE_PARAM_FLAG_RECORD) {
-        trace_flags << " | TRACE_PARAM_FLAG_RECORD";
-    }
-    if (flags & TRACE_PARAM_FLAG_ENTER) {
-        trace_flags << " | TRACE_PARAM_FLAG_ENTER";
-    }
-    if (flags & TRACE_PARAM_FLAG_LEAVE) {
-        trace_flags << " | TRACE_PARAM_FLAG_LEAVE";
-    }
 
-    if (flags & TRACE_PARAM_FLAG_NESTED_LOG) {
-        trace_flags << " | TRACE_PARAM_FLAG_NESTED_LOG";
-    }
+#define POSSIBLY_ADD_FLAG(p) if (flags & p) { trace_flags << " | " #p; }
+
+    POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_NUM_8);
+    POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_NUM_16);
+    POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_NUM_32);
+    POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_NUM_64);
+    POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_VARRAY);
+    POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_CSTR);
+    POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_STR);
+    POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_HEX);
+    POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_UNSIGNED);
+    POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_ZERO);
+    POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_ENUM);
+    POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_RECORD);
+    POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_ENTER);
+    POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_LEAVE);
+    POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_NESTED_LOG);
+    POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_CONST);
+    POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_NAME_INFERRED);
+
+#undef POSSIBLY_ADD_FLAG
 
     return trace_flags.str();
 }
@@ -511,8 +487,9 @@ bool TraceParam::inferParamName()
         }
     }
 
-    param_name = normalizeExpr(getLiteralExpr(ast, Rewrite, effective_expr->IgnoreParens()));
-    return ! param_name.empty();
+    const std::string lit_expr = getLiteralExpr(ast, Rewrite, effective_expr->IgnoreParens());
+    param_name = normalizeExpr(lit_expr);
+    return ! param_name.empty() && (lit_expr != param_name);
 }
 
 namespace {
