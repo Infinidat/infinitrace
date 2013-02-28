@@ -1,6 +1,8 @@
-CFLAGS=-I. -c -Wall -g -std=gnu99 -fPIC
+CPPFLAGS=-I. -c -Wall -g -fPIC
+CFLAGS=-std=gnu99
+CXXFLAGS=-fno-rtti
 LIBTRACE_OBJS=trace_metadata_util.o trace_parser.o halt.o hashmap.o validator.o
-LIBPARSER_OBJS=timeformat.o parser.o filter.o parser_mmap.o hashmap.o trace_metadata_util.o
+LIBPARSER_OBJS=timeformat.o parser.o renderer.o filter.o parser_mmap.o hashmap.o trace_metadata_util.o
 LIBTRACEUSER_OBJS=trace_metadata_util.o trace_user.o halt.o trace_clock.o
 LIBTRACEUTIL_OBJS=opt_util.o trace_str_util.o file_naming.o
 DUMPER_OBJS=trace_dumper/trace_dumper.o trace_dumper/filesystem.o trace_dumper/writer.o trace_dumper/write_prep.o trace_dumper/buffers.o trace_dumper/init.o trace_dumper/open_close.o trace_dumper/metadata.o trace_dumper/housekeeping.o trace_user_stubs.o
@@ -43,7 +45,7 @@ simple_trace_reader: libtrace libtraceutil trace_reader/simple_trace_reader.o
 	gcc -L. trace_reader/simple_trace_reader.o -ltrace -ltraceutil $(EXTRA_LIBS) -o trace_reader/simple_trace_reader
 
 reader: libparser libtraceutil reader.o
-	gcc -L. reader.o -lparser -ltraceutil -lz $(EXTRA_LIBS) -o reader
+	g++ -L. reader.o -lparser -ltraceutil -lz $(EXTRA_LIBS) -o reader
 
 interactive_reader: trace_parser.h
 	h2xml  -c -I. trace_parser.h -o _trace_parser_ctypes.xml

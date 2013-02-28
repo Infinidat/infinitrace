@@ -9,6 +9,11 @@
 #ifndef __HASHMAP_H__
 #define __HASHMAP_H__
 
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define MAP_MISSING -3  /* No such element */
 #define MAP_FULL -2 	/* Hashmap is full */
 #define MAP_OMEM -1 	/* Out of Memory */
@@ -18,7 +23,7 @@
  * any_t is a pointer.  This allows you to put arbitrary structures in
  * the hashmap.
  */
-typedef void *any_t;
+typedef const void *any_t;
 
 /*
  * PFany is a pointer to a function that can take two any_t arguments
@@ -83,5 +88,20 @@ extern int hashmap_length(map_t in);
  */
 extern int hashmap_put_int(map_t in, unsigned int int_key, any_t value) ;
 extern int hashmap_get_int(map_t in, unsigned int int_key, any_t *arg);
+
+#ifdef __cplusplus
+}  /* extern "C" */
+
+// Hide the ugly casts that are required in order to convert any_t to arbitrary pointer types
+
+// Convert any_t to a const pointer to type T
+template <class T> static inline const	T* any_t2cp(any_t a) { return static_cast<const T*>(a); }
+
+// Convert any_t to a pointer to type T
+template <class T> static inline		T* any_t2p (any_t a) { return const_cast<T*>(any_t2cp<T>(a)); }
+
+
+
+#endif
 
 #endif /* __HASHMAP_H__ */

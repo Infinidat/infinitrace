@@ -28,7 +28,7 @@ objs = [Object(target = S + '.o', source = S + '.c', CCFLAGS = optflags)  for S 
 srcs = xn_env.AutoSplit('''trace_parser.c validator.c''') + objs
 xn_env.BuildStaticLibraries(target = 'tracereader', source = srcs, CCFLAGS = optflags)
 
-srcs = xn_env.AutoSplit('''timeformat.c parser.c filter.c parser_mmap.c''') + objs
+srcs = xn_env.AutoSplit('''timeformat.c parser.c filter.c parser_mmap.c renderer.cpp''') + objs
 xn_env.BuildStaticLibraries(target = 'reader', source = srcs, CCFLAGS = optflags)
 
 srcs = xn_env.AutoSplit('''opt_util.c trace_str_util.c trace_clock.c file_naming.c''')
@@ -38,7 +38,7 @@ xn_env.Append(LIBPATH = Dir('.'))
 
 with TracesDisabled(xn_env) as untraced_env:
     optflags=Split("""$CCFLAGS -Wall -O2""")
-    srcs = untraced_env.AutoSplit('''reader.c''')
+    srcs = untraced_env.AutoSplit('''reader.c dummy.cpp''')
     libs = ["reader", "rt", "trace_util"]
     prog = untraced_env.XnProgram(target = "reader", source = srcs, LIBS = libs, CCFLAGS = optflags, LINKFLAGS="-lz")
     untraced_env.Alias('xn', prog)

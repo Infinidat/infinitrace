@@ -241,6 +241,78 @@ typedef unsigned int trace_log_id_t;
 
 #define TRACE_TIMESTAMP_FMT_STRING "%llu"
 
+/* Formats for the payload field of struct trace_record defined below */
+
+/* Payload for TRACE_REC_TYPE_TYPED */
+struct trace_record_typed {
+    trace_log_id_t log_id;	/* Index to the array of log descriptors in the metadata */
+	unsigned char payload[];
+};
+
+/* Payload for TRACE_REC_TYPE_FILE_HEADER */
+struct trace_record_file_header {
+	char machine_id[TRACE_MACHINE_ID_SIZE];	/* machine hostname, truncated to TRACE_MACHINE_ID_SIZE - 1 characters */
+    unsigned short format_version;						/* Revision of the file format */
+    unsigned short flags;
+    unsigned char  reserved[4];
+    unsigned int magic;		/* Should contain TRACE_MAGIC_FILE_HEADER */
+};
+
+/* Payload for TRACE_REC_TYPE_METADATA_HEADER */
+struct trace_record_metadata {
+	unsigned int metadata_size_bytes;
+	trace_pid_t  dead_pids[4];  /* PIDs of processes that have ended and whose resources in the parser should be reclaimed. */
+
+	/* Protect against early versions of the dumper that did not zero-out the metadata header before writing. */
+	unsigned char reserved[TRACE_RECORD_PAYLOAD_SIZE - 4*sizeof(trace_pid_t) - 2*sizeof(unsigned)];
+	unsigned int metadata_magic;  /* Should contain TRACE_MAGIC_METADATA */
+};
+
+/* Payload for TRACE_REC_TYPE_DUMP_HEADER */
+struct trace_record_dump_header {
+	/* Offset in the file of the previous dump, allowing the file to be searched backwards. */
+	unsigned int prev_dump_offset;
+
+	/* Total number of trace records in the dump */
+	unsigned int total_dump_size;
+
+	/* Offset of the first chunk header in the dump */
+    unsigned int first_chunk_offset;
+
+    /* Number of records discarded since the last dump. */
+    trace_record_counter_t records_previously_discarded;
+};
+
+/* Payload for TRACE_REC_TYPE_BUFFER_CHUNK */
+struct trace_record_buffer_dump {
+	/* Last offset containing metadata for the current traced process */
+	unsigned int last_metadata_offset;
+
+	/* Previous chunk for the current traced process. */
+	unsigned int prev_chunk_offset;
+
+	/* Offset of the dump to which this chunk belongs */
+	unsigned int dump_header_offset;
+
+	/* Time-stamp at which the dumper produced the record */
+	trace_ts_t ts;
+
+	/* Number of records in the chunk */
+	unsigned int records;
+
+	/* A bit mask representing the severity levels that may be found in this chunk */
+	unsigned int severity_type;
+    unsigned int lost_records;
+};
+
+/* Payload for TRACE_REC_TYPE_DATA_LOSS */
+/* Note: not implemented yet, will be revised and possibly merged with the chunk header */
+struct trace_record_data_loss {
+	unsigned int lost_records;
+	unsigned long long ts_start;
+	unsigned long long ts_end;
+};
+
 struct trace_record {
 	/* 20 bytes header */
 	trace_ts_t  ts;
@@ -260,76 +332,12 @@ struct trace_record {
 	union trace_record_u {
 		/* Used for records without a predefined payload structure, of types TRACE_REC_TYPE_METADATA_PAYLOAD and TRACE_REC_TYPE_END_OF_FILE */
 		unsigned char payload[TRACE_RECORD_PAYLOAD_SIZE];
-		
-		/* Payload for TRACE_REC_TYPE_TYPED */
-		struct trace_record_typed {
-		    trace_log_id_t log_id;	/* Index to the array of log descriptors in the metadata */
-			unsigned char payload[];
-		} typed;
-
-		/* Payload for TRACE_REC_TYPE_FILE_HEADER */
-		struct trace_record_file_header {
-			char machine_id[TRACE_MACHINE_ID_SIZE];	/* machine hostname, truncated to TRACE_MACHINE_ID_SIZE - 1 characters */
-            unsigned short format_version;						/* Revision of the file format */
-            unsigned short flags;
-            unsigned char  reserved[4];
-            unsigned int magic;		/* Should contain TRACE_MAGIC_FILE_HEADER */
-		} file_header;
-
-		/* Payload for TRACE_REC_TYPE_METADATA_HEADER */
-		struct trace_record_metadata {
-			unsigned int metadata_size_bytes;
-			trace_pid_t  dead_pids[4];  /* PIDs of processes that have ended and whose resources in the parser should be reclaimed. */
-
-			/* Protect against early versions of the dumper that did not zero-out the metadata header before writing. */
-			unsigned char reserved[TRACE_RECORD_PAYLOAD_SIZE - 4*sizeof(trace_pid_t) - 2*sizeof(unsigned)];
-			unsigned int metadata_magic;  /* Should contain TRACE_MAGIC_METADATA */
-		} metadata;
-
-		/* Payload for TRACE_REC_TYPE_DUMP_HEADER */
-		struct trace_record_dump_header {
-			/* Offset in the file of the previous dump, allowing the file to be searched backwards. */
-			unsigned int prev_dump_offset;
-
-			/* Total number of trace records in the dump */
-			unsigned int total_dump_size;
-
-			/* Offset of the first chunk header in the dump */
-            unsigned int first_chunk_offset;
-
-            /* Number of records discarded since the last dump. */
-            trace_record_counter_t records_previously_discarded;
-		} dump_header;
-
-		/* Payload for TRACE_REC_TYPE_BUFFER_CHUNK */
-		struct trace_record_buffer_dump {
-			/* Last offset containing metadata for the current traced process */
-			unsigned int last_metadata_offset;
-
-			/* Previous chunk for the current traced process. */
-			unsigned int prev_chunk_offset;
-
-			/* Offset of the dump to which this chunk belongs */
-			unsigned int dump_header_offset;
-
-			/* Time-stamp at which the dumper produced the record */
-			trace_ts_t ts;
-
-			/* Number of records in the chunk */
-			unsigned int records;
-
-			/* A bit mask representing the severity levels that may be found in this chunk */
-			unsigned int severity_type;
-            unsigned int lost_records;
-		} buffer_chunk;
-
-		/* Payload for TRACE_REC_TYPE_DATA_LOSS */
-		/* Note: not implemented yet, will be revised and possibly merged with the chunk header */
-		struct trace_record_data_loss {
-			unsigned int lost_records;
-			unsigned long long ts_start;
-			unsigned long long ts_end;
-		} data_loss;
+		struct trace_record_typed typed;
+		struct trace_record_file_header file_header;
+		struct trace_record_metadata metadata;
+		struct trace_record_dump_header dump_header;
+		struct trace_record_buffer_dump buffer_chunk;
+		struct trace_record_data_loss data_loss;
 	} __attribute__((packed)) u;
 } __attribute__((packed));
 

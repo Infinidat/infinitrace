@@ -15,5 +15,13 @@
 
  ***/
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 unsigned long long str_to_nano_seconds(const char* str);
 const char* format_timestamp(unsigned long long ts, int relative, int compact);
+
+#ifdef __cplusplus
+}
+#endif

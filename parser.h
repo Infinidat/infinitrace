@@ -23,6 +23,11 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "trace_defs.h"
 #include "hashmap.h"
 
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct trace_parser_buffer_context {
     struct trace_metadata_region *metadata;
     map_t type_hash;
@@ -163,5 +168,19 @@ static inline const struct trace_log_descriptor *get_log_descriptor(const struct
 {
     return (const struct trace_log_descriptor *)((const char *)(context->descriptors) + idx * context->metadata_log_desciptor_size);
 }
+
+
+/* Create the hash for looking up type definitions */
+
+struct trace_type_definition_mapped {
+    const struct trace_type_definition* def;
+    map_t map;
+};
+
+extern enum trace_severity trace_sev_mapping[];
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* __TRACE_PARSER_H__ */
