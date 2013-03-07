@@ -327,10 +327,12 @@ void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
     
     trace_call.setSeverity(severity);
     trace_call.setKind("TRACE_LOG_DESCRIPTOR_KIND_FUNC_ENTRY");
+    trace_call.initSourceLocation(&function_start);
     if (!shouldInstrumentFunctionDecl(D, whitelistExceptions)) {
         goto exit;
     }
     
+    // If the function has no return statement this is our opportunity to instrument the return from it.
     hasReturnStmts(stmt, has_returns);
     if (!has_returns || D->getResultType()->isVoidType()) {
         SourceLocation endLocation = stmt->getLocEnd();
@@ -343,6 +345,7 @@ void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
         enum trace_severity severity = TRACE_SEV_FUNC_TRACE;
         trace_call.setSeverity(severity);
         trace_call.setKind("TRACE_LOG_DESCRIPTOR_KIND_FUNC_LEAVE");
+        trace_call.initSourceLocation(&endLocation);
         trace_call.addTraceParam(function_name_param);
         Rewrite->ReplaceText(endLocation, 1, "{if (current_trace_buffer != 0) {trace_decrement_nesting_level(); " + trace_call.getExpansion() + "}}}");
     }
@@ -709,6 +712,7 @@ void StmtIterator::VisitReturnStmt(ReturnStmt *S)
     trace_call.setKind("TRACE_LOG_DESCRIPTOR_KIND_FUNC_LEAVE");
     trace_call.setSeverity(severity);
     trace_call.addTraceParam(function_name_param);
+    trace_call.initSourceLocation(&startLoc);
     if (NULL == S->getRetValue()) {
         goto expand;
     }

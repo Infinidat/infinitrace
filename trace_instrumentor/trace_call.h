@@ -48,21 +48,7 @@ TraceCall(llvm::raw_ostream &out,
         clang::ASTContext &_ast,
         clang::Rewriter *rewriter,
         std::set<const clang::Type *> &referenced_types,
-        std::set<TraceCall *> &global_traces) :
-            method_generated(false),
-            trace_call_name("tracelog"),
-            ast(_ast),
-            Diags(_Diags),
-            Out(out),
-            Rewrite(rewriter),
-            referencedTypes(referenced_types),
-            globalTraces(global_traces){
-
-        UnknownTraceParamDiag = Diags.getCustomDiagID(clang::DiagnosticsEngine::Error,
-                                                      "Unsupported trace parameter type");
-        is_repr = false;
-        call_expr = NULL;
-    }
+        std::set<TraceCall *> &global_traces);
 
     ~TraceCall();
     bool fromCallExpr(clang::CallExpr *exp);
@@ -74,6 +60,8 @@ TraceCall(llvm::raw_ostream &out,
     void expand();
     void expandWithoutDeclaration();
     std::string getTraceDeclaration() const;
+    bool initSourceLocation(const clang::SourceLocation *src_loc = NULL);
+    bool isSourceLocationValid() const { return NULL != m_source_file; }
     
     bool method_generated;
     std::string trace_call_name;
@@ -88,6 +76,8 @@ private:
     bool is_repr;
     const char *kind;
     clang::Rewriter *Rewrite;
+    const char *m_source_file;
+    unsigned    m_source_line;
 
     unsigned UnknownTraceParamDiag;
     
@@ -125,6 +115,10 @@ private:
     std::string commitRecords() const;
     bool constantSizeTrace() const;
     void unknownTraceParam(const clang::Expr *trace_param) const;
+
+    static std::string s_default_trace_call_name;
+    std::string generateTraceCallName();
+    bool hasSpecificCallName() const { return ! (trace_call_name.empty() || trace_call_name == s_default_trace_call_name); }
 
     std::string getFullTraceWriteExpression() const;
     std::string constlength_getTraceWriteExpression(unsigned int& buf_left) const;

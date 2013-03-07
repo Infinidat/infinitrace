@@ -27,14 +27,86 @@
 #include <assert.h>
 #include <sstream>
 
+#include "clang/Basic/FileManager.h"
+
 #include "util.h"
 #include "trace_call.h"
 
 using namespace clang;
 
+TraceCall::TraceCall(llvm::raw_ostream &out,
+        clang::DiagnosticsEngine &_Diags,
+        clang::ASTContext &_ast,
+        clang::Rewriter *rewriter,
+        std::set<const clang::Type *> &referenced_types,
+        std::set<TraceCall *> &global_traces) :
+            method_generated(false),
+            trace_call_name(s_default_trace_call_name),
+            ast(_ast),
+            Diags(_Diags),
+            Out(out),
+            Rewrite(rewriter),
+            referencedTypes(referenced_types),
+            globalTraces(global_traces)
+{
+
+	UnknownTraceParamDiag = Diags.getCustomDiagID(clang::DiagnosticsEngine::Error,
+												  "Unsupported trace parameter type");
+	is_repr		  = false;
+	call_expr 	  = NULL;
+	m_source_file = NULL;
+	m_source_line = 0;
+}
+
 TraceCall::~TraceCall()
 {
     globalTraces.erase(this);
+}
+
+bool TraceCall::initSourceLocation(const clang::SourceLocation *src_loc)
+{
+	SourceLocation loc;
+	if (src_loc) {
+		loc = *src_loc;
+	}
+	else if (call_expr) {
+		loc = call_expr->getLocStart();
+	}
+
+	if (loc.isValid()) {
+
+		const SourceManager& sm(Rewrite->getSourceMgr());
+		PresumedLoc presumed_loc = sm.getPresumedLoc(sm.getSpellingLoc(loc));
+		if (presumed_loc.isValid()) {
+			m_source_file = presumed_loc.getFilename();
+			m_source_line = presumed_loc.getLine();
+		}
+		else {
+			std::pair<FileID, unsigned> loc_info = sm.getDecomposedSpellingLoc(loc);
+			m_source_line = loc_info.second;
+			const FileEntry *file_ent = sm.getFileEntryForID(loc_info.first);
+			m_source_file = file_ent->getName();
+		}
+
+		return isSourceLocationValid();
+	}
+
+	return false;
+}
+
+std::string TraceCall::s_default_trace_call_name("__tracelog");
+
+std::string TraceCall::generateTraceCallName()
+{
+	std::stringstream name;
+	name << s_default_trace_call_name;
+
+	if (initSourceLocation()) {
+		name << '_' << normalizeStr(m_source_file) << '_' << (m_source_line % (1U << TRACE_LOG_DESCRIPTOR_SRC_LINE_NBITS));
+	}
+
+	trace_call_name = name.str();
+	return trace_call_name;
 }
 
 std::string TraceCall::getTraceDeclaration() const
@@ -65,22 +137,34 @@ std::string TraceCall::getTraceDeclaration() const
         params << "{" << flags << ", " << param_name << "," << str << "},";
     }
 
-    params << "{0, 0, {0}}";
+    params << "{0, 0, {0}}"; 	// sentinel
     std::stringstream descriptor;
     descriptor << "static struct trace_param_descriptor " << trace_call_name << "_params[] = {";
     descriptor << params.str() << "};";
     if (!isRepr()) {
         descriptor << "static ";
     }
-    descriptor << "struct trace_log_descriptor __attribute__((__section__(\".static_log_data\"))) " << trace_call_name << "= { ";
+    descriptor << "struct trace_log_descriptor __attribute__((__section__(\".static_log_data\"))) " << trace_call_name << " = { ";
     descriptor << kind;
 #if (TRACE_FORMAT_VERSION >= TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA)
-    descriptor << ", __LINE__";
+    descriptor << ", ";
+    if (isSourceLocationValid()) {
+    	descriptor  << m_source_line;
+    }
+    else {
+    	descriptor << "__LINE__";
+    }
     descriptor << ", " << getSeverity();
 #endif
     descriptor << ", " << trace_call_name << "_params" << ", ";
 #if (TRACE_FORMAT_VERSION >= TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA)
-    descriptor << "__FILE__, __FUNCTION__" ;
+    if (isSourceLocationValid()) {
+    	descriptor << '"' << m_source_file  << '"';
+    }
+    else {
+    	descriptor << "__FILE__";
+    }
+    descriptor << " , __FUNCTION__" ;
 #endif
     descriptor << " };";
 
@@ -152,7 +236,7 @@ std::string TraceCall::initializeOpeningTypedRecord(const std::string& deref_ope
     std::stringstream code;
     const std::string rec_expr("__records[__rec_idx]");
 
-    code << rec_expr << deref_operator << "u.typed.log_id = &tracelog - __static_log_information_start;";
+    code << rec_expr << deref_operator << "u.typed.log_id = &" << trace_call_name << " - __static_log_information_start;";
     return code.str();
 }
 
@@ -476,7 +560,10 @@ bool TraceCall::fromCallExpr(CallExpr *expr) {
     }
 
     call_expr = expr;
-    return true;
+    if (!hasSpecificCallName()) {
+    	generateTraceCallName();
+    }
+    return !trace_call_name.empty();
 }
 
 

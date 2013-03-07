@@ -421,10 +421,13 @@ struct trace_param_descriptor {
 
 /* Descriptor for an individual instance of logging in the code, e.g. an invocation of DEBUG(), etc.
  * NOTE: The size of this data structure should be kept no greater than 32 bytes. Otherwise the linker script created by ldwrap.py will have to be changed */
+
+#define TRACE_LOG_DESCRIPTOR_SRC_LINE_NBITS 20
+
 struct trace_log_descriptor {
     enum trace_log_descriptor_kind kind;	/* Function entry/exit or typed record */
 #if (TRACE_FORMAT_VERSION >= TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA)
-    unsigned line : 20;		/* Line in the code where the trace appears */
+    unsigned line : TRACE_LOG_DESCRIPTOR_SRC_LINE_NBITS; /* Line in the code where the trace appears */
     unsigned severity : 4;	/* A value from the trace_severity enum */
 #endif
     const struct trace_param_descriptor *params;
