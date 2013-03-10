@@ -400,6 +400,9 @@ enum trace_param_desc_flags {
     /* The parameter's name has been generated from an expression */
     TRACE_PARAM_FLAG_NAME_INFERRED = 0x80000,
 
+    /* Indicate that a number uses floating-point representation */
+    TRACE_PARAM_FLAG_NUM_FLOAT 	= 0x100000,
+
 #endif  /* TRACE_FORMAT_VERSION >= 0xA3 */
 
 #endif  /* TRACE_FORMAT_VERSION >= 0xA2 */

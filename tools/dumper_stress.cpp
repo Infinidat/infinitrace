@@ -27,7 +27,7 @@ inline static void fill_int_arr(int arr[], int start)
 
 class container {
 public:
-	int b;
+	unsigned short b;
 	int arr[INT_ARRAY_LEN];
 	void __repr__ { REPR(TRACE_NAMED_INT_AS_HEX(b), arr[0], arr[1] , arr[2], arr[3], arr[4], arr[5], arr[6], arr[7], arr[8], arr[9]); }
 };
@@ -49,6 +49,7 @@ static void *do_log(void *)
 	memcpy(semi_long_text, long_text, sizeof(semi_long_text));
 	semi_long_text[sizeof(semi_long_text) - 1] = '\0';
 
+	DEBUG("Even with a tiger on-board", TRACE_NAMED_PARAM(Pi, 3.1415926), "and sqrt_2 is around", static_cast<float>(1.414));
 	for (int i = 0; i < n_thread_iters; i++) {
 		if (i & 0xFFF) {
 			INFO(thread, ": iteration", i);
@@ -62,7 +63,7 @@ static void *do_log(void *)
 			}
 			else {
 				fill_int_arr(s.arr, (i + static_cast<int>(thread)) % 17);
-				WARN(thread, ": iteration", i, "s=", s);
+				WARN(thread, ": iteration", i, s.b, s);
 			}
 		}
 		else {

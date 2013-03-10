@@ -123,6 +123,12 @@ static void SAY_INT(out_fd_t* out, bool_t color_bool, bool_t force_hex, unsigned
     SAY_COL(out, ANSI_RESET);
 }
 
+static void SAY_FLOAT(out_fd_t* out, bool_t color_bool, double value) {
+    SAY_COL(out, CYAN_B);
+    SAY_F  (out, "%f", value);
+    SAY_COL(out, ANSI_RESET);
+}
+
 static int ends_with_equal(const out_fd_t* out) {
     return (out->i > 1 && out->buf[out->i-1] == '=');
 }
@@ -225,6 +231,7 @@ int TRACE_PARSER__render_typed_params_flat(
                  TRACE_PARAM_FLAG_NUM_16  |
                  TRACE_PARAM_FLAG_NUM_32  |
                  TRACE_PARAM_FLAG_NUM_64  |
+                 TRACE_PARAM_FLAG_NUM_FLOAT	 |
                  TRACE_PARAM_FLAG_CSTR    |
                  TRACE_PARAM_FLAG_VARRAY  |
                  TRACE_PARAM_FLAG_NESTED_LOG)) {
@@ -312,13 +319,23 @@ int TRACE_PARSER__render_typed_params_flat(
             /* integer data */
 #define GET_PDATA_VAL(TYPE) const TYPE _val = (*reinterpret_cast<const TYPE*>(pdata)); pdata += sizeof(_val)
 
-#define DISPLAY_VAL(TYPE)                               \
-        do if (describe_params) {                          \
-            SAY_COLORED(out, "<" #TYPE ">", CYAN_B);    \
-        }                                               \
+#define SHOW_DESCR_IF_NECESSARY(TYPE)					\
+		if (describe_params) {                          \
+			SAY_COLORED(out, "<" #TYPE ">", CYAN_B);    \
+		}                                               \
+
+#define DISPLAY_INT(TYPE)                               \
+        do SHOW_DESCR_IF_NECESSARY(TYPE)				\
         else {                                          \
             GET_PDATA_VAL(unsigned TYPE);               \
             SAY_INT(out, color_bool, parser->always_hex, param->flags, _val); \
+        } while(0)
+
+#define DISPLAY_FLOAT(TYPE)			\
+        do SHOW_DESCR_IF_NECESSARY(TYPE)				\
+        else {                                          \
+            GET_PDATA_VAL(TYPE);               \
+            SAY_FLOAT(out, color_bool, _val); \
         } while(0)
 
         case TRACE_PARAM_FLAG_ENUM: {
@@ -339,21 +356,27 @@ int TRACE_PARSER__render_typed_params_flat(
         } break;
 
         case TRACE_PARAM_FLAG_NUM_8:
-            DISPLAY_VAL(char);
+            DISPLAY_INT(char);
             break;
 
         case TRACE_PARAM_FLAG_NUM_16:
-            DISPLAY_VAL(short);
+            DISPLAY_INT(short);
             break;
 
         case TRACE_PARAM_FLAG_NUM_32:
-            DISPLAY_VAL(int);
+            DISPLAY_INT(int);
             break;
 
+        case TRACE_PARAM_FLAG_NUM_32 | TRACE_PARAM_FLAG_NUM_FLOAT:
+			DISPLAY_FLOAT(float);
+			break;
+
+        case TRACE_PARAM_FLAG_NUM_64 | TRACE_PARAM_FLAG_NUM_FLOAT:
+			DISPLAY_FLOAT(double);
+			break;
+
         case TRACE_PARAM_FLAG_NUM_64: {
-            if (describe_params) {
-                SAY_COLORED(out, "<long long>", CYAN_B);
-            }
+        	SHOW_DESCR_IF_NECESSARY(long long)
             else {
                 const bool_t hex_bool = (param->flags & TRACE_PARAM_FLAG_HEX) || parser->always_hex;
                 GET_PDATA_VAL(unsigned long long);
@@ -391,7 +414,9 @@ int TRACE_PARSER__render_typed_params_flat(
     return out->i; // total_length;
 }
 
-#undef DISPLAY_VAL
+#undef DISPLAY_INT
+#undef DISPLAY_FLOAT
+#undef SHOW_DESCR_IF_NECESSARY
 #undef GET_PDATA_VAL
 
 static const char * severity_to_str(unsigned int sev, int color_bool) {

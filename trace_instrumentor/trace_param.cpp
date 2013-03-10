@@ -111,6 +111,7 @@ std::string TraceParam::stringifyTraceParamFlags() const
     POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_NUM_16);
     POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_NUM_32);
     POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_NUM_64);
+    POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_NUM_FLOAT);
     POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_VARRAY);
     POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_CSTR);
     POSSIBLY_ADD_FLAG(TRACE_PARAM_FLAG_STR);
@@ -199,12 +200,15 @@ bool TraceParam::parseBasicTypeParam(QualType qual_type)
         return false;
     }
 
-    if (!type->isIntegerType()) {
-        return false;
+    if (type->isIntegerType()) {
+    	if (!type->isSignedIntegerType()) {
+			flags |= TRACE_PARAM_FLAG_UNSIGNED;
+		}
     }
-
-    if (!type->isSignedIntegerType()) {
-        flags |= TRACE_PARAM_FLAG_UNSIGNED;
+    else if (type->isRealFloatingType()) {
+    	flags |= TRACE_PARAM_FLAG_NUM_FLOAT;
+    } else {
+    	return false;
     }
 
     unsigned size_flag = size_to_flag(size);
@@ -226,16 +230,17 @@ bool TraceParam::parseBasicTypeParam(QualType qual_type)
 
 bool TraceParam::parseBasicTypeParam(const Expr *expr)
 {
-    const Expr *stripped_expr = expr->IgnoreImpCasts();
+    const Expr *const stripped_expr = expr->IgnoreImpCasts();
 
-    const Type *type = get_expr_type(stripped_expr);
+    const Type *const type = get_expr_type(stripped_expr);
     if (NULL == type) {
         return false;
     }
 
-    QualType type_for_parsing = type->isIntegerType() ? type->getCanonicalTypeInternal() : expr->getType();
+    const QualType type_for_parsing =
+    		(type->isIntegerType() || type->isRealFloatingType()) ? type->getCanonicalTypeInternal() : expr->getType();
 
-    bool parsed = parseBasicTypeParam(type_for_parsing.getCanonicalType());
+    const bool parsed = parseBasicTypeParam(type_for_parsing.getCanonicalType());
     if (!parsed) {
         return false;
     }
