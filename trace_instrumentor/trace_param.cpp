@@ -62,12 +62,14 @@ TraceParam::TraceParam(
         type_name("0"),
         trace_call(NULL) {
     clear();
-    NonInlineTraceRepresentDiag = Diags.getCustomDiagID(clang::DiagnosticsEngine::Error,
-                                                     "non inline __repr__ isn't supported");
+    NonInlineTraceRepresentDiag = Diags.getCustomDiagID(clang::DiagnosticsEngine::Warning,
+                                                  "Unable to check the validity of __repr__ because it is not defined in-line");
     MultipleReprCallsDiag = Diags.getCustomDiagID(clang::DiagnosticsEngine::Error,
-                                                  "a __repr__ function may only have a single call to REPR() (showing last call to REPR)");
+                                                  "A __repr__ function may only have a single call to REPR() (showing last call to REPR)");
     EmptyLiteralStringDiag = Diags.getCustomDiagID(clang::DiagnosticsEngine::Warning,
                                                   "Empty literal string in trace has no effect");
+    TraceParamDependentType = Diags.getCustomDiagID(clang::DiagnosticsEngine::Error,
+    											  "The type of a trace parameter must not depend on a template argument");
 
 }
 
@@ -469,11 +471,22 @@ bool TraceParam::fromExpr(const Expr *trace_param, bool deref_pointer)
             continue;
         }
 
+
         if ((this->*parsers[i].parser)(trace_param)) {
             ast_expression = trace_param;
             return true;
         }
     }
+
+    // We were unable to match the type of a trace parameter, so try to produce a diagnostic.
+    if (trace_param->getType()->isDependentType()) {
+    	// TODO: Check why this is never reached, even when it should be ...
+    	// Apparently the statement iterator dispatch code doesn't call VisitCallExpr() when
+    	// it encounters a call expression with template dependent arguments, so we never get here.
+
+    	// Type depends on a template and can't be determined while the code is being instrumented.
+    	Diags.Report(ast.getFullLoc(trace_param->getLocStart()), TraceParamDependentType) << trace_param->getSourceRange();
+	}
 
     return false;
 }
@@ -551,12 +564,10 @@ bool TraceParam::parseClassTypeParam(const Expr *expr)
          method != RD->method_end();
          ++method) {
         if (method->getNameAsString().compare(STR(TRACE_REPR_INTERNAL_METHOD_NAME)) == 0) {
+            MD = *method;
             if (!method->hasInlineBody()) {
                 Diags.Report(ast.getFullLoc(method->getLocStart()), NonInlineTraceRepresentDiag) << method->getSourceRange();
-                return false;
             }
-
-            MD = *method;
             break;
         }
     }
@@ -565,28 +576,25 @@ bool TraceParam::parseClassTypeParam(const Expr *expr)
         return false;
     }
 
-    FunctionCallerFinder finder;
-    int call_count;
-    CallExpr *call_expr = finder.functionHasFunctionCall(MD->getBody(), STR(TRACE_REPR_CALL_NAME), &call_count);
-    if (call_expr == NULL) {
-        return false;
+	const std::string full_type_name = QualType(pointeeType, 0).getAsString();
+	const bool is_template = (full_type_name.rfind('>') != std::string::npos);
+	if (MD->hasInlineBody() && ! is_template) {
+		FunctionCallerFinder finder;
+		int call_count;
+		CallExpr *call_expr = finder.functionHasFunctionCall(MD->getBody(), STR(TRACE_REPR_CALL_NAME), &call_count);
+		if (call_expr == NULL) {
+			return false;
+		}
+
+		if (call_count > 1) {
+			Diags.Report(ast.getFullLoc(call_expr->getLocStart()), MultipleReprCallsDiag) << call_expr->getSourceRange();
+		}
     }
 
-    if (call_count > 1) {
-        Diags.Report(ast.getFullLoc(call_expr->getLocStart()), MultipleReprCallsDiag) << call_expr->getSourceRange();
-    }
-
-    std::auto_ptr<TraceCall> _trace_call(new TraceCall(Out, Diags, ast, Rewrite, referencedTypes, globalTraces));
-    if (!_trace_call->fromCallExpr(call_expr)) {
-        return false;
-    }
-
-    trace_call = _trace_call.release();
-    // TODO: Unique name, don't add duplicate logs
-    std::string _type_name = normalizeTypeName(QualType(pointeeType, 0).getAsString());
     std::stringstream trace_call_name;
-    trace_call_name << _type_name;
-    trace_call_name << "_tracelog";
+    trace_call_name << TraceCall::s_default_trace_call_name;
+    trace_call_name << normalizeTypeName(full_type_name);
+    trace_call = new TraceCall(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
     trace_call->trace_call_name = trace_call_name.str();
     method_generated =  true;
     flags |= TRACE_PARAM_FLAG_NESTED_LOG;

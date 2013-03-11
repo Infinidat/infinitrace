@@ -218,6 +218,7 @@ public:
     Decl *D;
     bool whitelistExceptions;
     std::string enclosingClassDescriptorName;
+    std::string functionName;
 
     StmtIterator(llvm::raw_ostream& xOut, DiagnosticsEngine &_Diags, ASTContext &xAst, Rewriter *rewriter, SourceManager *sm, const LangOptions &_langOpts, Decl *_D, bool _whitelistExceptions, std::set<const Type *>&referenced_types, std::set<TraceCall *> &global_traces) : Out(xOut), Diags(_Diags), ast(xAst), Rewrite(rewriter), SM(sm), langOpts(_langOpts), D(_D), whitelistExceptions(_whitelistExceptions), referencedTypes(referenced_types), globalTraces(global_traces)  {};
 
@@ -283,46 +284,52 @@ SourceLocation DeclIterator::getFunctionBodyStart(Stmt *FB)
 
 void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
 
-    if (NULL != strstr(D->getQualifiedNameAsString().c_str(), "std::")) {
+	const std::string qual_name = D->getQualifiedNameAsString();
+    if (NULL != strstr(qual_name.c_str(), "std::")) {
         return;
     }
     
+    CXXRecordDecl *class_decl = NULL;
+    CXXMethodDecl *method_decl = NULL;
     if (isa<CXXMethodDecl>(D)) {
-        CXXMethodDecl *method_decl = dyn_cast<CXXMethodDecl>(D);
-        CXXRecordDecl *class_decl = method_decl->getParent();
-        if (class_decl->isDependentType()) {
-            return;
-        }
+        method_decl = dyn_cast<CXXMethodDecl>(D);
+        class_decl  = method_decl->getParent();
     }
     
     if (!(D->hasBody()  &&  D->isThisDeclarationADefinition())) {
         return;
     }
     StmtIterator stmtiterator(Out, Diags, ast, Rewrite, SM, langOpts, D, whitelistExceptions, referencedTypes, globalTraces);
+    stmtiterator.functionName = D->getNameAsString();
 
     bool has_returns = false;
     Stmt *stmt = D->getBody();
     SourceLocation function_start = getFunctionBodyStart(stmt);
     TraceParam trace_param(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
     TraceParam function_name_param(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
-    function_name_param.setConstStr(D->getQualifiedNameAsString());
+    function_name_param.setConstStr(qual_name);
     TraceCall trace_call(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
     trace_call.addTraceParam(function_name_param);
     enum trace_severity severity = TRACE_SEV_FUNC_TRACE;
 
-
-    if (NULL != strstr(D->getQualifiedNameAsString().c_str(), STR(TRACE_REPR_INTERNAL_METHOD_NAME))) {
-        const CXXMethodDecl *callee = static_cast<const CXXMethodDecl *>(D);
-        const QualType class_type = callee->getThisType(ast)->getPointeeType().getUnqualifiedType();
-        std::string _type_name = normalizeTypeName(class_type.getAsString());
-        if (! _type_name.empty()) {
-            std::string descriptor_name = _type_name + "_tracelog";
+    if (class_decl) {
+		if (NULL != strstr(qual_name.c_str(), STR(TRACE_REPR_INTERNAL_METHOD_NAME))) {
+			// This is a __repr__ call
+			const QualType class_type = class_decl->getTypeForDecl()->getCanonicalTypeUnqualified();
+			std::string _type_name = normalizeTypeName(class_type.getAsString());
+			assert(! _type_name.empty()) ;
+			std::string descriptor_name = TraceCall::s_default_trace_call_name + "_" + _type_name;
             std::string logid_def =
                     "const int __trace_repr_logid = &" + descriptor_name + " - __static_log_information_start; ";
             Rewrite->InsertText(function_start, logid_def, true);
             stmtiterator.enclosingClassDescriptorName = descriptor_name;
-        }
-        goto exit;
+			goto exit;
+		}
+
+		// Avoid instrumenting methods that are part of template classes.
+		if (class_decl->isDependentType()) {
+			return;
+		}
     }
     
     trace_call.setSeverity(severity);
@@ -339,7 +346,7 @@ void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
         TraceParam trace_param(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
         TraceParam function_name_param(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
 
-        function_name_param.setConstStr(D->getQualifiedNameAsString());
+        function_name_param.setConstStr(qual_name);
     
         TraceCall trace_call(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
         enum trace_severity severity = TRACE_SEV_FUNC_TRACE;
@@ -371,6 +378,7 @@ void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
     Rewrite->InsertText(function_start, "if (current_trace_buffer != 0){" + trace_call.getExpansion() + "trace_increment_nesting_level();}", true);
 exit:
     stmtiterator.Visit(D->getBody());
+    stmtiterator.functionName = "";
     stmtiterator.enclosingClassDescriptorName = "";
 }
 
@@ -424,34 +432,42 @@ void DeclIterator::VisitLinkageSpecDecl(LinkageSpecDecl *D) {
 }
 
 void DeclIterator::VisitFunctionTemplateDecl(FunctionTemplateDecl *D) {
+	VisitFunctionDecl(D->getTemplatedDecl());
     return;
-    return;
+#if 0
     for (FunctionTemplateDecl::spec_iterator I = D->spec_begin(), E = D->spec_end();
          I != E; ++I) {
         Visit(*I);
     }
 
-  return VisitRedeclarableTemplateDecl(D);
+    return VisitRedeclarableTemplateDecl(D);
+#endif
 }
 
 void DeclIterator::VisitClassTemplateDecl(ClassTemplateDecl *D) {
-    return;
+
+	VisitRecordDecl(D->getTemplatedDecl());
+	return;
+#if 0
     for (ClassTemplateDecl::spec_iterator I = D->spec_begin(), E = D->spec_end();
          I != E; ++I) {
         Visit(*I);
     }
 
     VisitRedeclarableTemplateDecl(D);
+#endif
 }
 
 void DeclIterator::VisitTemplateDecl(const TemplateDecl *D) {
     return;
-  // if (const TemplateTemplateParmDecl *TTP =
-  //     dyn_cast<TemplateTemplateParmDecl>(D)) {
-  //     return;
-  // } else {
-  //   Visit(D->getTemplatedDecl());
-  // }
+#if 0
+   if (const TemplateTemplateParmDecl *TTP =
+       dyn_cast<TemplateTemplateParmDecl>(D)) {
+       return;
+   } else {
+     Visit(D->getTemplatedDecl());
+   }
+#endif
 }
 
 static SourceRange getDeclRange(SourceManager *SM, const LangOptions *langOpts, const clang::Decl *D, bool with_semicolon)
@@ -914,13 +930,16 @@ void StmtIterator::VisitCallExpr(CallExpr *S)
     bool successfully_parsed = trace_call->fromCallExpr(S);
     if (successfully_parsed) {
         if (trace_call->isRepr()) {
-            trace_call->expandWithoutDeclaration();
+            trace_call->expandRepr();
             assert(! enclosingClassDescriptorName.empty());
             trace_call->trace_call_name = enclosingClassDescriptorName;
-            globalTraces.insert(trace_call.release());
+
         } else {
-            trace_call->expand();
+        	assert(!functionName.empty());
+        	trace_call->enclosing_function_name = functionName;
+            trace_call->expandWithDeclaration("", true);
         }
+        globalTraces.insert(trace_call.release());
     }
     
     VisitExpr(S);

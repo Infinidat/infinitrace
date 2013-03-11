@@ -38,9 +38,14 @@ std::string getLiteralExpr(ASTContext &ast, Rewriter *Rewrite, const clang::Stmt
     return std::string(startBuf, Size);
 }
 
-std::string normalizeTypeName(std::string type_str) {
-    std::string replaced = replaceAll(type_str, " ", "_");
-    return replaceAll(replaced, ":", "_");
+std::string normalizeTypeName(const std::string& type_str) {
+	// Find and chop off any template arguments
+	const std::string::size_type template_arg_pos = type_str.find('<');
+	std::string replaced = type_str.substr(0, template_arg_pos);
+
+	// Reeplace spaces and scope resolution (::) operators with _
+	replaced = replaceAll(replaced, " ", "_");
+    return replaceAll(replaced, "::", "_");
 }
 
 std::string normalizeStr(const char *source_str, const char *preserve_chars)

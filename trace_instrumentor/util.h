@@ -41,7 +41,7 @@ std::string& replaceAll(
      const std::string& replaceWhat,
      const std::string& replaceWithWhat);
 
-std::string normalizeTypeName(std::string type_str);
+std::string normalizeTypeName(const std::string& type_str);
 
 std::string normalizeStr(const char *source_str, const char *preserve_chars = "");
 

@@ -43,6 +43,7 @@ public:
     unsigned NonInlineTraceRepresentDiag;
     unsigned MultipleReprCallsDiag;
     unsigned EmptyLiteralStringDiag;
+    unsigned TraceParamDependentType;
 TraceParam(
         llvm::raw_ostream &out,
         clang::DiagnosticsEngine &_Diags,

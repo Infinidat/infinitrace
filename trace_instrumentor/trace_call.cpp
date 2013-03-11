@@ -94,7 +94,7 @@ bool TraceCall::initSourceLocation(const clang::SourceLocation *src_loc)
 	return false;
 }
 
-std::string TraceCall::s_default_trace_call_name("__tracelog");
+std::string TraceCall::s_default_trace_call_name("__trace_log_meta");
 
 std::string TraceCall::generateTraceCallName()
 {
@@ -164,14 +164,14 @@ std::string TraceCall::getTraceDeclaration() const
     else {
     	descriptor << "__FILE__";
     }
-    descriptor << " , __FUNCTION__" ;
+    descriptor << " , \"" << enclosing_function_name << '"' ;
 #endif
     descriptor << " };";
 
     return descriptor.str();
 }
 
-void TraceCall::replaceExpr(const Expr *expr, std::string replacement)
+void TraceCall::replaceExpr(const Expr *expr, const std::string& replacement)
 {
     SourceRange source_range = expr->getSourceRange();
     unsigned int size = Rewrite->getRangeSize(source_range);
@@ -180,7 +180,7 @@ void TraceCall::replaceExpr(const Expr *expr, std::string replacement)
 }
 
 
-const char *sev_to_str[] = {"INVALID", "FUNC_TRACE",
+static const char *sev_to_str[] = {"INVALID", "FUNC_TRACE",
 
 #define TRACE_SEV_X(ignored, sev) #sev,
 
@@ -466,22 +466,31 @@ void TraceCall::expand()
 {
     std::string declaration = getTraceDeclaration();
     std::string trace_write_expression = getFullTraceWriteExpression();
-    static const char sev_threshold_expr[] = "((TRACE_SEV_INVALID != trace_thread_severity_threshold) ? trace_thread_severity_threshold : trace_runtime_control_get_default_min_sev())";
-    replaceExpr(call_expr, "{" + declaration + "if ((" +
-        getSeverity() +  ">= " + sev_threshold_expr + ") && (current_trace_buffer != 0)){"  + trace_write_expression + "}}");
+    expandWithDeclaration(declaration, true);
 }
 
 /* Expand a recursive trace call via REPR */
-void TraceCall::expandWithoutDeclaration()
+void TraceCall::expandRepr()
 {
-    std::string trace_write_expression = varlength_getTraceWriteExpression();
-    std::string declaration_substitute;
-    if (isRepr()) {
-        declaration_substitute = varlength_writeSimpleValue("__trace_repr_logid", "int", false, false);
-    }
-    replaceExpr(call_expr, "if (current_trace_buffer != 0){" + declaration_substitute + trace_write_expression + "}");
+	assert(isRepr());
+	std::string declaration_substitute = varlength_writeSimpleValue("__trace_repr_logid", "int", false, false);
+	expandWithDeclaration(declaration_substitute, false);
 }
 
+void TraceCall::expandWithDeclaration(const std::string& declaration, bool check_threshold)
+{
+    std::stringstream replaced;
+    replaced << "if ((current_trace_buffer != 0)";
+    if (check_threshold) {
+		static const char sev_threshold_expr[] = "((TRACE_SEV_INVALID != trace_thread_severity_threshold) ? trace_thread_severity_threshold : trace_runtime_control_get_default_min_sev())";
+		replaced << " && (" << getSeverity() <<  " >= " << sev_threshold_expr << ")";
+	}
+
+    std::string expr = isRepr() ? varlength_getTraceWriteExpression() : getFullTraceWriteExpression();
+    replaced << ") { " << declaration << expr << " }";
+
+    replaceExpr(call_expr, replaced.str());
+}
 
 void TraceCall::unknownTraceParam(const Expr *trace_param) const
 {

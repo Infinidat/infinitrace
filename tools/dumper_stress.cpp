@@ -7,6 +7,7 @@
 #include <signal.h>
 #include <assert.h>
 #include <errno.h>
+#include <utility>
 #include "common/traces/trace_defs.h"
 #include "common/traces/trace_user.h"
 #include "common/traces/array_length.h"
@@ -24,6 +25,20 @@ inline static void fill_int_arr(int arr[], int start)
 		arr[i] = start + i;
 	}
 }
+
+template <typename T> T div2(T val) {
+	DEBUG("Dividing", static_cast<double>(val), "by 2");
+	return val / static_cast<T>(2);
+}
+
+template <typename T1, typename T2>
+class my_pair : public std::pair<T1, T2> {
+public:
+	my_pair(const T1& a, const T2& b) : std::pair<T1, T2>(a, b) {}
+	void __repr__ const {
+		REPR("A nice pair of", static_cast<long long>(this->first), static_cast<unsigned long>(this->second));
+	}
+};
 
 class container {
 public:
@@ -43,12 +58,14 @@ static void *do_log(void *)
 	pthread_t thread = pthread_self();
 	container s;
 
-	s.b = 0x42;
+	s.b = div2<short>(0x84);
 	size_t nchars = sizeof(long_text) - 1;
 	char semi_long_text[800];
 	memcpy(semi_long_text, long_text, sizeof(semi_long_text));
 	semi_long_text[sizeof(semi_long_text) - 1] = '\0';
 
+	my_pair<short, int> __attribute__((unused)) p(-2, 32);
+	DEBUG("Do they make", p, "?");
 	DEBUG("Even with a tiger on-board", TRACE_NAMED_PARAM(Pi, 3.1415926), "and sqrt_2 is around", static_cast<float>(1.414));
 	for (int i = 0; i < n_thread_iters; i++) {
 		if (i & 0xFFF) {

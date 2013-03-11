@@ -58,13 +58,16 @@ TraceCall(llvm::raw_ostream &out,
     void setKind(const char *_kind) { kind = _kind; }
     std::string getExpansion() const;
     void expand();
-    void expandWithoutDeclaration();
+    void expandRepr();
+    void expandWithDeclaration(const std::string& declaration = "", bool check_threshold = true);
     std::string getTraceDeclaration() const;
     bool initSourceLocation(const clang::SourceLocation *src_loc = NULL);
     bool isSourceLocationValid() const { return NULL != m_source_file; }
     
     bool method_generated;
     std::string trace_call_name;
+    std::string enclosing_function_name;
+    static std::string s_default_trace_call_name;
     
 private:
     clang::ASTContext &ast;
@@ -89,7 +92,7 @@ private:
     std::string getLiteralString(const clang::Expr *expr);
     void createTraceDeclaration(clang::CallExpr *S, unsigned int severity, std::vector<TraceParam> &args);
     bool prepareSingleTraceParam(const clang::Expr *trace_param, TraceParam &parsed_trace_param);
-    void replaceExpr(const clang::Expr *expr, std::string replacement);
+    void replaceExpr(const clang::Expr *expr, const std::string& replacement);
 
     std::string getSeverity() const;
     std::string getSeverityExpr() const;
@@ -116,7 +119,6 @@ private:
     bool constantSizeTrace() const;
     void unknownTraceParam(const clang::Expr *trace_param) const;
 
-    static std::string s_default_trace_call_name;
     std::string generateTraceCallName();
     bool hasSpecificCallName() const { return ! (trace_call_name.empty() || trace_call_name == s_default_trace_call_name); }
 
