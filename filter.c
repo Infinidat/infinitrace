@@ -28,6 +28,7 @@
 #include <string.h>
 #include <limits.h>
 #include <assert.h>
+#include <stdint.h>
 
 #include "bool.h"
 #include "timeformat.h"
@@ -410,7 +411,18 @@ static bool_t record_params_contain_value(
     const unsigned char *pdata = typed_record->payload;
     unsigned long long param_value = 0;
     for (; param->flags != 0; param++) {
-        unsigned long long value_mask = 0;
+    	unsigned integer_size = 0;
+
+#define FOUND_INT(n_bits) {												\
+	param_value = (unsigned long long)(*(uint##n_bits##_t *)(pdata));	\
+        integer_size = n_bits / 8;										\
+        pdata += integer_size;											\
+    }
+
+#define CASE_INT_N(n_bits)					\
+	case TRACE_PARAM_FLAG_NUM_##n_bits :	\
+	FOUND_INT(n_bits)						\
+		break;
 
         switch(param->flags &
                (TRACE_PARAM_FLAG_ENUM    |
@@ -418,38 +430,20 @@ static bool_t record_params_contain_value(
                 TRACE_PARAM_FLAG_NUM_16  |
                 TRACE_PARAM_FLAG_NUM_32  |
                 TRACE_PARAM_FLAG_NUM_64  |
+                TRACE_PARAM_FLAG_NUM_FLOAT	 |
                 TRACE_PARAM_FLAG_VARRAY  |
                 TRACE_PARAM_FLAG_NESTED_LOG)) {
 
-        case TRACE_PARAM_FLAG_ENUM: {
-            value_mask = ULLONG_MAX;
-            param_value = (unsigned long long) (*(unsigned int *)(pdata));
-            pdata += sizeof(unsigned int);
-        } break;
+        case TRACE_PARAM_FLAG_ENUM:
+            FOUND_INT(32)
+            break;
 
-        case TRACE_PARAM_FLAG_NUM_8: {
-            value_mask = 0xff;
-            param_value = (unsigned long long) (*(unsigned char *)(pdata));
-            pdata += sizeof(char);
-        } break;
+        CASE_INT_N(8)
+        CASE_INT_N(16)
+        CASE_INT_N(32)
+        CASE_INT_N(64)
 
-        case TRACE_PARAM_FLAG_NUM_16: {
-            value_mask = 0xffff;
-            param_value = (unsigned long long) (*(unsigned short *)(pdata));
-            pdata += sizeof(unsigned short);
-        } break;
-
-        case TRACE_PARAM_FLAG_NUM_32: {
-            value_mask = 0xffffffff;
-            param_value = (unsigned long long) (*(unsigned int *)(pdata));
-            pdata += sizeof(unsigned int);
-        } break;
-
-        case TRACE_PARAM_FLAG_NUM_64: {
-            value_mask = ULLONG_MAX;
-            param_value = *((unsigned long long *) (pdata));
-            pdata += sizeof(unsigned long long);
-        } break;
+        // TODO: Add support for searching floating-point values as well.
 
         case TRACE_PARAM_FLAG_VARRAY: {
             while (1) {
@@ -475,7 +469,7 @@ static bool_t record_params_contain_value(
             continue;
         }
 
-        if ( (value_mask)
+        if ( (integer_size)
              &&
 
              ((param_name == NULL) ||
@@ -485,10 +479,10 @@ static bool_t record_params_contain_value(
              &&
 
              (compare_type == '>' ?
-              (value_mask&value) < param_value :
+              (value) < param_value :
               compare_type == '<' ?
-              (value_mask&value) > param_value :
-              (value_mask&value) == param_value
+              (value) > param_value :
+              (value) == param_value
              )
              )
             return TRUE;
