@@ -509,7 +509,7 @@ static struct trace_record *accumulate_record(trace_parser_t *parser, const stru
 }
 
 struct log_occurrences {
-    char template[512];
+    char *tmpl;
     unsigned int occurrences;
 };
 
@@ -575,7 +575,7 @@ static void dump_stats_pool(const log_stats_pool_t stats_pool)
         
         for (j = 0; j < stats->max_log_count; j++) {
             if (stats->logs[j].occurrences) {
-                printf("%-10d : %-100s\n", stats->logs[j].occurrences, stats->logs[j].template);
+                printf("%-10d : %-100s\n", stats->logs[j].occurrences, stats->logs[j].tmpl);
             }
         }
 
@@ -1166,7 +1166,7 @@ static int dump_metadata(trace_parser_t *parser, enum trace_parser_event_e event
 
     struct trace_parser_buffer_context *context = (struct trace_parser_buffer_context *) event_data;
     unsigned int i;
-    char formatted_template[512];
+    char formatted_template[8192];
     for (i = 0; i < context->metadata->log_descriptor_count; i++) {
         log_id_to_log_template(parser, context, i, formatted_template, sizeof(formatted_template));
         if (printf("(%05d) %s\n", i, formatted_template) < 0) {
@@ -1196,12 +1196,11 @@ static struct log_stats *get_buffer_log_stats(log_stats_pool_t pool, struct trac
         return NULL;
     }
 
-    stats->logs = malloc(buffer->metadata->log_descriptor_count * sizeof(struct log_occurrences));
+    stats->logs = calloc(buffer->metadata->log_descriptor_count, sizeof(struct log_occurrences));
     if (NULL == stats->logs) {
         return NULL;
     }
 
-    memset(stats->logs, 0, buffer->metadata->log_descriptor_count * sizeof(struct log_occurrences));
     stats->max_log_count = buffer->metadata->log_descriptor_count;
     stats->buffer_context = buffer;
     return stats;
@@ -1211,7 +1210,7 @@ static int count_entries(trace_parser_t *parser, enum trace_parser_event_e event
 {
     log_stats_pool_t *stats_pool = (log_stats_pool_t *) arg;
     struct log_stats *stats;
-    char template[sizeof(stats->logs->template)];
+    char tmpl[8192];
     
     if (event == TRACE_PARSER_BUFFER_CHUNK_HEADER_PROCESSED) {
         struct parser_buffer_chunk_processed *chunk_processed = (struct parser_buffer_chunk_processed *) event_data;
@@ -1238,16 +1237,17 @@ static int count_entries(trace_parser_t *parser, enum trace_parser_event_e event
     }
     
     unsigned int metadata_index = complete_typed_record->record->u.typed.log_id;
-    if (metadata_index >= stats->max_log_count) {
-        abort();
-    }
+    assert(metadata_index < stats->max_log_count);
 
-    if (stats->logs[metadata_index].template[0] == '\0') {
-        log_id_to_log_template(parser, complete_typed_record->buffer, metadata_index, template, sizeof(template));
-        trace_strncpy_and_terminate(stats->logs[metadata_index].template, template, sizeof(stats->logs[metadata_index].template));
+    if (NULL == stats->logs[metadata_index].tmpl) {
+        if (log_id_to_log_template(parser, complete_typed_record->buffer, metadata_index, tmpl, sizeof(tmpl)) < 0) {
+            return -1;
+        }
+        stats->logs[metadata_index].tmpl = strdup(tmpl);
         stats->logs[metadata_index].occurrences = 1;
         stats->unique_count++;
     } else {
+        assert(stats->logs[metadata_index].occurrences >= 1);
         stats->logs[metadata_index].occurrences++;
     }
     
@@ -1261,6 +1261,14 @@ static void free_stats_pool(log_stats_pool_t stats_pool)
     for (i = 0; i < LOG_STATS_POOL_LENGTH; i++) {
         if (!stats_pool[i].allocated) {
             continue;
+        }
+
+        unsigned int j;
+        for (j = 0; j < stats_pool[i].data.max_log_count; j++ ) {
+            char *const tmpl = stats_pool[i].data.logs[j].tmpl;
+            if (NULL != tmpl) {
+                free(tmpl);
+            }
         }
 
         free(stats_pool[i].data.logs);
@@ -1280,6 +1288,9 @@ int TRACE_PARSER__dump_statistics(trace_parser_t *parser)
         int rc = process_next_record_from_file(parser, parser->record_filter, count_entries, (void *) log_stats_pool, NULL);
         count++;
         if (0 != rc) {
+            if (ENODATA != rc) {
+                return rc;
+            }
             break;
         }
     }
