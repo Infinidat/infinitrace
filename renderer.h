@@ -59,6 +59,9 @@ int TRACE_PARSER__format_typed_record(
 
 int log_id_to_log_template(struct trace_parser *parser, struct trace_parser_buffer_context *context, int log_id, char *formatted_record, int formatted_record_size);
 
+typedef char log_id_size_info_output_buf_t[64];
+int log_id_format_sizes(struct trace_parser_buffer_context *context, trace_log_id_t log_id, int avg_size, log_id_size_info_output_buf_t size_info);
+
 void say_new_file(struct out_fd* out, struct trace_parser *parser, trace_ts_t ts);
 
 void out_init(struct out_fd* out);

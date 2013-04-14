@@ -407,6 +407,11 @@ int TRACE_PARSER__render_typed_params_flat(
         SAY_C  (out, ' ');
         SAY_C  (out, '<');
         SAY_S  (out, log_desc->function);
+
+        if (describe_params) {
+            SAY_F(out, "() %s:%u", log_desc->file, log_desc->line);
+        }
+
         SAY_C  (out, '>');
     }
     SAY_COL(out, ANSI_RESET);
@@ -509,12 +514,13 @@ int TRACE_PARSER__format_typed_record(
 }
 
 
-static int get_minimal_log_id_size(const struct trace_parser_buffer_context *context, unsigned int log_id, bool_t *exact_size)
+static int get_minimal_log_id_size(const struct trace_parser_buffer_context *context, trace_log_id_t log_id, bool_t *exact_size)
 {
     const struct trace_log_descriptor *log_desc;
     const struct trace_param_descriptor *param;
     int minimal_log_id_size = sizeof(log_id);
     if (log_id >= context->metadata->log_descriptor_count) {
+        errno = EINVAL;
         return -1;
     }
 
@@ -523,7 +529,7 @@ static int get_minimal_log_id_size(const struct trace_parser_buffer_context *con
     *exact_size = TRUE;
     for (param = log_desc->params; (param->flags != 0); param++) {
         if (param->flags & TRACE_PARAM_FLAG_NESTED_LOG) {
-            minimal_log_id_size = sizeof(log_id);
+            minimal_log_id_size += sizeof(log_id);
             *exact_size = FALSE;
             continue;
         }
@@ -563,19 +569,38 @@ static int get_minimal_log_id_size(const struct trace_parser_buffer_context *con
     return minimal_log_id_size;
 }
 
+static bool_t validate_sizes(bool_t exact_size, unsigned avg_size, unsigned minimal_log_size)
+{
+    if (exact_size) {
+        const unsigned expected_phys_recs = (minimal_log_size + TRACE_RECORD_PAYLOAD_SIZE - 1) / TRACE_RECORD_PAYLOAD_SIZE;
+        return expected_phys_recs * TRACE_RECORD_SIZE == avg_size;
+    }
+    else {
+        return avg_size >= minimal_log_size;
+    }
+}
+
+int log_id_format_sizes(struct trace_parser_buffer_context *context, trace_log_id_t log_id, int avg_size, log_id_size_info_output_buf_t size_info)
+{
+    bool_t exact_size = FALSE;
+    unsigned int minimal_log_size = get_minimal_log_id_size(context, log_id, &exact_size);
+    const char *const exact_indicator = exact_size ? "*" : "";
+
+    unsigned pos = sprintf(size_info, "<%03d%-1s", minimal_log_size, exact_indicator);
+    if (avg_size >= 0) {
+        assert(validate_sizes(exact_size, avg_size, minimal_log_size));
+        pos += sprintf(size_info + pos, "/%4d", avg_size);
+    }
+    pos += sprintf(size_info + pos, ">");
+    assert(pos < sizeof(log_id_size_info_output_buf_t));
+
+    return pos;
+}
 
 int log_id_to_log_template(struct trace_parser *parser, struct trace_parser_buffer_context *context, int log_id, char *formatted_record, int formatted_record_size)
 {
     int total_length = 0;
-    bool_t exact_size = FALSE;
-
     formatted_record[0] = '\0';
-
-    const char *exact_indicator = "*";
-    unsigned int minimal_log_size = get_minimal_log_id_size(context, log_id, &exact_size);
-    if (!exact_size) {
-        exact_indicator = "";
-    }
 
 #define APPEND_FORMATTED_TEXT(...) do {                                   \
         int _len_ = snprintf(&formatted_record[total_length],             \
@@ -593,22 +618,13 @@ int log_id_to_log_template(struct trace_parser *parser, struct trace_parser_buff
         APPEND_FORMATTED_TEXT("%s ", severity_str);
     }
 
-    if (parser->color) {
-        APPEND_FORMATTED_TEXT(_F_MAGENTA("%-20s") _ANSI_DEFAULTS(" [") _F_BLUE_BOLD("%5d") _ANSI_DEFAULTS("] <%03d%-1s> "),
-                              context->name, context->id, minimal_log_size, exact_indicator);
-    } else {
-        APPEND_FORMATTED_TEXT("%-20s [%5d] <%03d%-1s> ", context->name, context->id, minimal_log_size, exact_indicator);
-    }
-
+#undef APPEND_FORMATTED_TEXT
 
     struct trace_record_typed record;
     record.log_id = log_id;
     int bytes_processed = 0;
 
-    if (parser->file_info.format_version >= TRACE_FORMAT_VERSION_INTRODUCED_FILE_FUNCTION_METADATA) {
-        APPEND_FORMATTED_TEXT("[%s:%u - %s()] ", descriptor->file, descriptor->line, descriptor->function);
-    }
-#undef APPEND_FORMATTED_TEXT
+
     struct out_fd out;
     out_init(&out);
     int ret = TRACE_PARSER__render_typed_params(parser, context, &record, &bytes_processed, &out, TRUE);
@@ -624,7 +640,7 @@ int log_id_to_log_template(struct trace_parser *parser, struct trace_parser_buff
     formatted_record += total_length;
     memcpy (formatted_record, out.buf, out.i);
     formatted_record[out.i] = '\0';
-    return (bytes_processed > 0) ? 0 : -1;
+    return (bytes_processed > 0) ? out.i : -1;
 }
 
 void say_new_file(struct out_fd* out, trace_parser_t *parser, trace_ts_t ts) {

@@ -58,6 +58,7 @@ CREATE_LIST_PROTOTYPE(RecordsAccumulatorList, struct trace_record_accumulator, B
 struct parser_complete_typed_record {
     struct trace_record *record;
     struct trace_parser_buffer_context *buffer;
+    unsigned num_phys_records;
 };
 
 struct parser_buffer_chunk_processed {

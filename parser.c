@@ -457,15 +457,19 @@ static void free_accumulator(trace_parser_t *parser, const struct trace_record *
     }
 }
 
-static struct trace_record *accumulate_record(trace_parser_t *parser, const struct trace_record *rec, int forward)
+static struct trace_record *accumulate_record(trace_parser_t *parser, const struct trace_record *rec, unsigned *num_phys_records, bool_t forward)
 {
-    struct trace_record_accumulator *accumulator = get_accumulator(parser, rec);
-    if ((accumulator == NULL) && rec->termination == (TRACE_TERMINATION_FIRST | TRACE_TERMINATION_LAST)) {
+    if (rec->termination == (TRACE_TERMINATION_FIRST | TRACE_TERMINATION_LAST)) {
+        *num_phys_records = 1;
         return (struct trace_record *)rec;
     }
 
+    *num_phys_records = 0;
+    struct trace_record_accumulator *accumulator = get_accumulator(parser, rec);
     if (NULL == accumulator) {
-        if (!(rec->termination & TRACE_TERMINATION_FIRST)) {
+        if ( ( forward && !(rec->termination & TRACE_TERMINATION_FIRST)) ||
+             (!forward && !(rec->termination & TRACE_TERMINATION_LAST))) {
+            errno = EINVAL;
             return NULL;
         }        
 
@@ -484,10 +488,11 @@ static struct trace_record *accumulate_record(trace_parser_t *parser, const stru
         accumulator->severity = rec->severity;
         accumulator->data_offset = TRACE_RECORD_HEADER_SIZE;
 
-        memcpy(accumulator->accumulated_data, (char *) rec, TRACE_RECORD_HEADER_SIZE);
+        memcpy(accumulator->accumulated_data, rec, TRACE_RECORD_HEADER_SIZE);
     }
 
     if (accumulator->data_offset + TRACE_RECORD_PAYLOAD_SIZE >= sizeof(accumulator->accumulated_data)) {
+        errno = ENOMEM;
         return NULL;
     }
 
@@ -502,8 +507,12 @@ static struct trace_record *accumulate_record(trace_parser_t *parser, const stru
 
     if (((rec->termination & TRACE_TERMINATION_LAST) && forward) ||
         ((rec->termination & TRACE_TERMINATION_FIRST) && !forward)) {
+        const unsigned data_len = accumulator->data_offset - TRACE_RECORD_HEADER_SIZE;
+        assert(0 == data_len % TRACE_RECORD_PAYLOAD_SIZE);
+        *num_phys_records = data_len / TRACE_RECORD_PAYLOAD_SIZE;
         return (struct trace_record *) accumulator->accumulated_data;
     } else {
+        errno = EAGAIN;
         return NULL;
     }
 }
@@ -511,6 +520,8 @@ static struct trace_record *accumulate_record(trace_parser_t *parser, const stru
 struct log_occurrences {
     char *tmpl;
     unsigned int occurrences;
+    unsigned int cummulative_records;
+    trace_log_id_t log_id;
 };
 
 
@@ -574,8 +585,12 @@ static void dump_stats_pool(const log_stats_pool_t stats_pool)
         }
         
         for (j = 0; j < stats->max_log_count; j++) {
-            if (stats->logs[j].occurrences) {
-                printf("%-10d : %-100s\n", stats->logs[j].occurrences, stats->logs[j].tmpl);
+            const struct log_occurrences *const log = stats->logs + j;
+            const unsigned occurrences = log->occurrences;
+            if (occurrences > 0) {
+                log_id_size_info_output_buf_t size_info;
+                log_id_format_sizes(stats->buffer_context, log->log_id, log->cummulative_records * TRACE_RECORD_SIZE / occurrences, size_info);
+                printf("%-8d %s : %-100s\n", occurrences, size_info, log->tmpl);
             }
         }
 
@@ -594,26 +609,32 @@ static int process_typed_record(
 		trace_parser_t *parser,
 		bool_t accumulate_forward,
 		const struct trace_record *rec,
-		struct trace_record **out_record,
-		struct trace_parser_buffer_context **buffer)
+		struct parser_complete_typed_record *complete_typed_rec)
 {
-    struct trace_record *complete_record = accumulate_record(parser, rec, accumulate_forward);
+    struct trace_record *complete_record = accumulate_record(parser, rec, &(complete_typed_rec->num_phys_records), accumulate_forward);
     if (!complete_record) {
-        return EINVAL;
+        /* TODO: Check for errno values that differ from EAGAIN, and propagate the error as a handler event. */
+        return EAGAIN;
     }
 
-    *buffer = get_buffer_context_by_pid(parser, complete_record->pid);
-    complete_record->termination |= TRACE_TERMINATION_LAST;
-    *out_record = complete_record;
+    if (complete_typed_rec->num_phys_records > 1) {
+        assert(! (complete_record->termination & TRACE_TERMINATION_LAST));
+        complete_record->termination |= TRACE_TERMINATION_LAST;
+    }
+    else {
+        assert( (1 == complete_typed_rec->num_phys_records) &&
+                ((TRACE_TERMINATION_LAST | TRACE_TERMINATION_FIRST) == complete_record->termination));
+    }
 
-    if (NULL == *buffer) {
+    complete_typed_rec->record = complete_record;
+
+    complete_typed_rec->buffer = get_buffer_context_by_pid(parser, complete_record->pid);
+    if (NULL == complete_typed_rec->buffer) {
     	return ESRCH;
     }
 
     return 0;
 }
-
-// typedef int (*typed_record_processor_t)(trace_parser_t *parser, const struct trace_record *record, void *arg);
 
 static void ignore_next_n_records(trace_parser_t *parser, unsigned int ignore_count)
 {
@@ -919,8 +940,6 @@ static int process_single_record(
         iter_t* iter)
 {
     int rc = 0;
-    struct trace_parser_buffer_context *buffer = NULL;
-    struct trace_record *complete_record = NULL;
     struct parser_complete_typed_record complete_rec;
     *complete_typed_record_found = FALSE;
 
@@ -934,15 +953,13 @@ static int process_single_record(
             break;
         }
 
-        rc = process_typed_record(parser, accumulate_forward, record, &complete_record, &buffer);
+        rc = process_typed_record(parser, accumulate_forward, record, &complete_rec);
         switch (rc) {
         case 0: /* We passed a complete record */
-            complete_rec.buffer = buffer;
-            complete_rec.record = complete_record;
             if ((!parser->silent_mode &&
-                        match_record_with_match_expression(filter, buffer, complete_record, iter) &&
-                 after_count_push(iter, complete_record->tid, parser->after_count)) ||
-                (after_count_pop (iter, complete_record->tid))) {
+                        match_record_with_match_expression(filter, complete_rec.buffer, complete_rec.record, iter) &&
+                 after_count_push(iter, complete_rec.record->tid, parser->after_count)) ||
+                (after_count_pop (iter, complete_rec.record->tid))) {
 
             	rc = handler(parser, TRACE_PARSER_COMPLETE_TYPED_RECORD_PROCESSED, &complete_rec, arg);
                 if (0 == rc) {
@@ -950,10 +967,12 @@ static int process_single_record(
                 }
             }
 
-            free_accumulator(parser, complete_record);
+            if (complete_rec.num_phys_records > 1) {
+                free_accumulator(parser, complete_rec.record);
+            }
             break;
 
-        case EINVAL:  /* We passed a partial record, this is normal */
+        case EAGAIN:  /* We passed a partial record, this is normal */
         	rc = 0;
         	break;
 
@@ -1168,8 +1187,10 @@ static int dump_metadata(trace_parser_t *parser, enum trace_parser_event_e event
     unsigned int i;
     char formatted_template[8192];
     for (i = 0; i < context->metadata->log_descriptor_count; i++) {
+        log_id_size_info_output_buf_t size_info;
+        log_id_format_sizes(context, i, -1, size_info);
         log_id_to_log_template(parser, context, i, formatted_template, sizeof(formatted_template));
-        if (printf("(%05d) %s\n", i, formatted_template) < 0) {
+        if (printf("(%05d) %s %s\n", i, size_info, formatted_template) < 0) {
             return -1;
         }
     }
@@ -1206,7 +1227,7 @@ static struct log_stats *get_buffer_log_stats(log_stats_pool_t pool, struct trac
     return stats;
 }
 
-static int count_entries(trace_parser_t *parser, enum trace_parser_event_e event, void __attribute__((unused)) *event_data, void __attribute__((unused)) *arg)
+static int count_entries(trace_parser_t *parser, enum trace_parser_event_e event, void *event_data, void __attribute__((unused)) *arg)
 {
     log_stats_pool_t *stats_pool = (log_stats_pool_t *) arg;
     struct log_stats *stats;
@@ -1245,12 +1266,15 @@ static int count_entries(trace_parser_t *parser, enum trace_parser_event_e event
         }
         stats->logs[metadata_index].tmpl = strdup(tmpl);
         stats->logs[metadata_index].occurrences = 1;
+        stats->logs[metadata_index].log_id = metadata_index;
         stats->unique_count++;
     } else {
         assert(stats->logs[metadata_index].occurrences >= 1);
         stats->logs[metadata_index].occurrences++;
     }
     
+    stats->logs[metadata_index].cummulative_records += complete_typed_record->num_phys_records;
+
     stats->record_count_by_severity[complete_typed_record->record->severity]++;
     return 0;
 }
