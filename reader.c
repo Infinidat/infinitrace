@@ -487,6 +487,18 @@ static void set_parser_params(const struct trace_reader_conf *conf, trace_parser
     parser->free_dead_buffer_contexts = conf->free_dead_process_metadata;
 }
 
+static int init_parser_for_file(const struct trace_reader_conf *conf, trace_parser_t *parser, bool_t wait_for_input, const char *filename, trace_parser_event_handler_t event_handler)
+{
+    int rc = TRACE_PARSER__from_file(parser, wait_for_input, filename, event_handler, NULL);
+    if (0 != rc) {
+        fprintf(stderr, "Error %d opening file %s (%s)\n", errno, filename, strerror(errno));
+        return -1;
+    }
+    set_parser_params(conf, parser);
+    parser->show_filename = conf->show_trace_file ? filename : NULL;
+    return 0;
+}
+
 static int dump_all_files(struct trace_reader_conf *conf)
 {
     int error_occurred = 0;
@@ -496,13 +508,9 @@ static int dump_all_files(struct trace_reader_conf *conf)
     
     for (filenames = conf->files_to_process; *filenames; filenames++) {
     	const char *filename = *filenames;
-        int rc = TRACE_PARSER__from_file(&parser, conf->tail, filename, read_event_handler, NULL);
-        if (0 != rc) {
-            fprintf(stderr, "Error opening file %s (%s)\n", filename, strerror(errno));
+        if (0 != init_parser_for_file(conf, &parser, conf->tail, filename, read_event_handler)) {
             return EX_NOINPUT;
         }
-        set_parser_params(conf, &parser);
-        parser.show_filename = conf->show_trace_file ? filename : 0;
 
         if ((!error_occurred) && (TRACE_PARSER__dump(&parser) < 0)) {
         	error_occurred = errno;
@@ -528,13 +536,9 @@ static int dump_statistics_for_all_files(struct trace_reader_conf *conf)
     
     for (filenames = conf->files_to_process; *filenames; filenames++) {
      	const char *filename = *filenames;
-        int rc = TRACE_PARSER__from_file(&parser, FALSE, filename, read_event_handler, NULL);
-        if (0 != rc) {
-            fprintf(stderr, "Error opening file %s: %s\n", filename, strerror(errno));
+        if (0 != init_parser_for_file(conf, &parser, FALSE, filename, read_event_handler)) {
             return EX_NOINPUT;
         }
-
-        set_parser_params(conf, &parser);
 
         if (TRACE_PARSER__dump_statistics(&parser) < 0) {
         	error_occurred = errno;
@@ -556,11 +560,7 @@ static int dump_metadata_for_files(struct trace_reader_conf *conf)
     for (filenames = conf->files_to_process; *filenames; filenames++) {
      	const char *filename = *filenames;
 
-        int rc = TRACE_PARSER__from_file(&parser, FALSE, filename, read_event_handler, NULL);
-        set_parser_params(conf, &parser);
-
-        if (0 != rc) {
-            fprintf(stderr, "Error opening file %s\n", filename);
+     	if (0 != init_parser_for_file(conf, &parser, FALSE, filename, read_event_handler)) {
             return EX_NOINPUT;
         }
 

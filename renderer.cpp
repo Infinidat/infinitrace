@@ -646,9 +646,12 @@ int log_id_to_log_template(struct trace_parser *parser, struct trace_parser_buff
 void say_new_file(struct out_fd* out, trace_parser_t *parser, trace_ts_t ts) {
     const int color_bool = parser->color;
     SAY_COL(out, ANSI_RESET);
-    if (parser->show_timestamp)
+    if (parser->show_timestamp && ts) {
         SAY_S  (out, format_timestamp(MAX(ts, 0ULL), parser->nanoseconds_ts, parser->compact_traces));
-    SAY_S  (out, " [");
+        SAY_C  (out, ' ');
+    }
+
+    SAY_C  (out, '[');
     SAY_COL(out, BLUE_B);
     SAY_S  (out, "Traces New Filename");
     SAY_COL(out, ANSI_RESET);
@@ -657,7 +660,7 @@ void say_new_file(struct out_fd* out, trace_parser_t *parser, trace_ts_t ts) {
     SAY_S  (out, parser->show_filename);
     SAY_COL(out, ANSI_RESET);
     SAY_S  (out, "\n");
-    parser->show_filename = 0;
+    parser->show_filename = NULL;
 }
 
 

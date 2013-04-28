@@ -613,8 +613,7 @@ static int process_typed_record(
 {
     struct trace_record *complete_record = accumulate_record(parser, rec, &(complete_typed_rec->num_phys_records), accumulate_forward);
     if (!complete_record) {
-        /* TODO: Check for errno values that differ from EAGAIN, and propagate the error as a handler event. */
-        return EAGAIN;
+        return errno;
     }
 
     if (complete_typed_rec->num_phys_records > 1) {
@@ -627,7 +626,6 @@ static int process_typed_record(
     }
 
     complete_typed_rec->record = complete_record;
-
     complete_typed_rec->buffer = get_buffer_context_by_pid(parser, complete_record->pid);
     if (NULL == complete_typed_rec->buffer) {
     	return ESRCH;
@@ -812,7 +810,10 @@ static int process_dump_header_record(
 
         if (handler) {
             struct parser_buffer_chunk_processed chunk_processed = {buffer_chunk, buffer_context};
-            handler(parser, TRACE_PARSER_BUFFER_CHUNK_HEADER_PROCESSED, &chunk_processed, arg);
+            rc = handler(parser, TRACE_PARSER_BUFFER_CHUNK_HEADER_PROCESSED, &chunk_processed, arg);
+            if (rc < 0) {
+                return rc;
+            }
         }
         
         parser->buffer_dump_context.record_dump_contexts[i].start_offset = trace_file_current_offset(parser);
@@ -1004,6 +1005,7 @@ static int process_single_record(
         break;
     default:
         rc = -1;
+        errno = EINVAL;
         break;
     }
 
@@ -1299,6 +1301,15 @@ static void free_stats_pool(log_stats_pool_t stats_pool)
     }
 }
 
+static void possibly_display_filename_for_statistics(trace_parser_t *parser) {
+    if (parser->show_filename) {
+        out_fd_t out;
+        out_init(&out);
+        say_new_file(&out, parser, 0);
+        out_flush(&out);
+    }
+}
+
 int TRACE_PARSER__dump_statistics(trace_parser_t *parser)
 {
     if (parser->stream_type != TRACE_INPUT_STREAM_TYPE_SEEKABLE_FILE) {
@@ -1319,6 +1330,8 @@ int TRACE_PARSER__dump_statistics(trace_parser_t *parser)
         }
     }
 
+
+    possibly_display_filename_for_statistics(parser);
     dump_stats_pool(log_stats_pool);
     free_stats_pool(log_stats_pool);
     return 0;
