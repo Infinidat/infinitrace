@@ -125,7 +125,6 @@ static const char usage[] =
 		"\nIf the trace-file to be displayed is not specified the reader will attempt to detect it automatically\n"
 #endif
  ;
-    //    " -u  --function  [func]     Show only records generated from function [func] 
 
 static const char invalid_severity_msg[] = "Severity format may be a number, or " TRACE_LEVELS_STR;
 
@@ -499,81 +498,100 @@ static int init_parser_for_file(const struct trace_reader_conf *conf, trace_pars
     return 0;
 }
 
-static int dump_all_files(struct trace_reader_conf *conf)
+static int process_single_file_with_error_recovery(
+        const struct trace_reader_conf *conf,
+        const char *filename,
+        bool_t may_wait_for_input,
+        trace_parser_event_handler_t event_handler,
+        int (*file_handler)(trace_parser_t *)
+        )
 {
-    int error_occurred = 0;
-    const char **filenames;
     trace_parser_t parser;
-    conf->free_dead_process_metadata = TRUE;
-    
-    for (filenames = conf->files_to_process; *filenames; filenames++) {
-    	const char *filename = *filenames;
-        if (0 != init_parser_for_file(conf, &parser, conf->tail, filename, read_event_handler)) {
-            return EX_NOINPUT;
-        }
-
-        if ((!error_occurred) && (TRACE_PARSER__dump(&parser) < 0)) {
-        	error_occurred = errno;
-        	fprintf(stderr, "Record dumping from the file %s failed due to error: %s\n", filename, strerror(error_occurred));
-        }
-        TRACE_PARSER__fini(&parser);
+    if (0 != init_parser_for_file(conf, &parser, may_wait_for_input && conf->tail, filename, event_handler)) {
+        return EX_NOINPUT;
     }
 
-    if (error_occurred) {
-    	fprintf(stderr, "Trace has reader encountered the following error: %s",  strerror(error_occurred));
-    	return EX_IOERR;
+    const unsigned MAX_ERRS_PER_FILE = 20;  /* TODO: Consider making this configurable via trace_reader_conf*/
+    int error_occurred = 0;
+    unsigned err_count;
+    for (err_count = 0; err_count < MAX_ERRS_PER_FILE; err_count++) {
+        if (file_handler(&parser) >= 0) {
+            break;
+        }
+        else {
+            error_occurred = errno;
+            fprintf(stderr, "Error %d (%s) while processing the file %s\n", error_occurred, strerror(error_occurred), filename);
+            if (EINVAL != error_occurred) {
+                break;
+            }
+        }
+    }
+
+    TRACE_PARSER__fini(&parser);
+
+    if (err_count > 0) {
+        fprintf(stderr, "Encountered %u errors while processing the file %s, last of them with code %d (%s)\n",
+                err_count, filename, error_occurred, strerror(error_occurred));
+        if (err_count >= MAX_ERRS_PER_FILE) {
+            fprintf(stderr, "Quit processing the file %s due to too many errors\n", filename);
+        }
+
+        errno = error_occurred;
+        return EX_IOERR;
     }
 
     return 0;
 }
 
-static int dump_statistics_for_all_files(struct trace_reader_conf *conf)
+static void report_file_error_if_necessary(const char *last_err_file, int latest_err_code) {
+    if (NULL != last_err_file) {
+       fprintf(stderr, "Trace reader has encountered errors, last of them being %s in the file %s\n",
+               strerror(latest_err_code), last_err_file);
+   }
+}
+
+
+static int process_files_with_error_recovery(
+        const struct trace_reader_conf *conf,
+        bool_t may_wait_for_input,
+        int (*file_handler)(trace_parser_t *)
+        )
 {
+    const char *last_err_file = NULL;
+    int last_err_status = 0;
+    int latest_err_code = 0;
     const char **filenames;
-    trace_parser_t parser;
-    int error_occurred = 0;
-    conf->free_dead_process_metadata = FALSE;
     
     for (filenames = conf->files_to_process; *filenames; filenames++) {
-     	const char *filename = *filenames;
-        if (0 != init_parser_for_file(conf, &parser, FALSE, filename, read_event_handler)) {
-            return EX_NOINPUT;
+        const char *const filename = *filenames;
+        const int rc = process_single_file_with_error_recovery(conf, filename, may_wait_for_input, read_event_handler, file_handler);
+        if (0 != rc) {
+            latest_err_code = errno;
+            last_err_status = rc;
+            last_err_file = filename;
         }
-
-        if (TRACE_PARSER__dump_statistics(&parser) < 0) {
-        	error_occurred = errno;
-        	fprintf(stderr, "Error producing statistics from the file file %s: %s\n", filename, strerror(error_occurred));
-        }
-        TRACE_PARSER__fini(&parser);
     }
 
-    return error_occurred ? EX_IOERR : 0;
+    report_file_error_if_necessary(last_err_file, latest_err_code);
+    return last_err_status;
+}
+
+static int dump_all_files(struct trace_reader_conf *conf)
+{
+    conf->free_dead_process_metadata = TRUE;
+    return process_files_with_error_recovery(conf, TRUE, TRACE_PARSER__dump);
+}
+
+static int dump_statistics_for_all_files(struct trace_reader_conf *conf)
+{
+    conf->free_dead_process_metadata = FALSE;
+    return process_files_with_error_recovery(conf, FALSE, TRACE_PARSER__dump_statistics);
 }
 
 static int dump_metadata_for_files(struct trace_reader_conf *conf)
 {
-    trace_parser_t parser;
-    int error_occurred = 0;
-    const char **filenames;
     conf->free_dead_process_metadata = FALSE;
-    
-    for (filenames = conf->files_to_process; *filenames; filenames++) {
-     	const char *filename = *filenames;
-
-     	if (0 != init_parser_for_file(conf, &parser, FALSE, filename, read_event_handler)) {
-            return EX_NOINPUT;
-        }
-
-        if (TRACE_PARSER__dump_statistics(&parser) < 0) {
-			error_occurred = errno;
-			fprintf(stderr, "Error producing statistics from the file file %s: %s\n", filename, strerror(error_occurred));
-		}
-
-        TRACE_PARSER__dump_all_metadata(&parser);
-        TRACE_PARSER__fini(&parser);
-    }
-
-    return error_occurred ? EX_IOERR : 0;
+    return process_files_with_error_recovery(conf, FALSE, TRACE_PARSER__dump_all_metadata);
 }
 
 static void init_conf(struct trace_reader_conf *conf, int argc, const char **argv)

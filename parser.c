@@ -481,8 +481,8 @@ static struct trace_record *accumulate_record(trace_parser_t *parser, const stru
         if (0 != rc) {
             return NULL;
         }
+        assert(0 == RecordsAccumulatorList__get_element_ptr(&parser->records_accumulators, RecordsAccumulatorList__last_element_index(&parser->records_accumulators), &accumulator));
         
-        RecordsAccumulatorList__get_element_ptr(&parser->records_accumulators, RecordsAccumulatorList__last_element_index(&parser->records_accumulators), &accumulator);
         accumulator->tid = rec->tid;
         accumulator->ts = rec->ts;
         accumulator->severity = rec->severity;
@@ -555,24 +555,29 @@ int compare_log_occurrence_entries(const void *a, const void *b)
     return 1;
 }
 
+static void print_underlined(const char *header) {
+    puts(header);
+    const size_t len = strlen(header);
+    char *underline = alloca(len + 1);
+    memset(underline, '-', len);
+    underline[len] = '\0';
+    puts(underline);
+}
+
 static void dump_stats_pool(const log_stats_pool_t stats_pool)
 {
     unsigned int i, j;
     char header[512];
-    char underline[512];
     const struct log_stats *stats;
     for (i = 0; i < LOG_STATS_POOL_LENGTH; i++) {
         if (!stats_pool[i].allocated) {
             continue;
         }
         
-        snprintf(header, sizeof(header), "Statistics for buffer %s [%d]\n",
+        snprintf(header, sizeof(header), "Statistics for buffer %s [%d]",
                  stats_pool[i].data.buffer_context->name,
                  stats_pool[i].data.buffer_context->id);
-        memset(underline, '-', strlen(header));
-        underline[strlen(underline)] = '\0';
-        printf("%s", header);
-        printf("%s\n", underline);
+        print_underlined(header);
 
         stats = &stats_pool[i].data;
         qsort(stats->logs, stats->max_log_count, sizeof(stats->logs[0]), compare_log_occurrence_entries);
