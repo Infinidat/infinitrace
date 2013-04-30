@@ -469,7 +469,7 @@ static struct trace_record *accumulate_record(trace_parser_t *parser, const stru
     if (NULL == accumulator) {
         if ( ( forward && !(rec->termination & TRACE_TERMINATION_FIRST)) ||
              (!forward && !(rec->termination & TRACE_TERMINATION_LAST))) {
-            errno = EINVAL;
+            errno = (parser->wait_for_input) ? EAGAIN : EINVAL;
             return NULL;
         }        
 
