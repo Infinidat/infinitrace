@@ -1,3 +1,4 @@
+import os
 Import('xn_env')
 Import('TracesDisabled')
 
@@ -20,9 +21,11 @@ with TracesDisabled(xn_env) as untraced_env:
     lib = untraced_env.XnStaticLibrary(target = 'tracesstubs', source = srcs, CCFLAGS = optflags)
     untraced_env.Alias('xn', lib)
     
-    srcs = untraced_env.AutoSplit('''trace_user_stubs.c trace_user_stubs.i''')
-    lib = untraced_env.XnSharedLibrary(target = 'tracesstubs_swig', source = srcs, CCFLAGS = Split('-Wold-style-cast -w'), CXXFLAGS = Split('-g -ggdb'))
-    untraced_env.Alias('xn', lib)
+    run_swig = os.environ.get('XN_SWIG', 0)
+    if run_swig:
+    	srcs = untraced_env.AutoSplit('''trace_user_stubs.c trace_user_stubs.i''')
+    	lib = untraced_env.XnSharedLibrary(target = 'tracesstubs_swig', source = srcs, CCFLAGS = Split('-Wold-style-cast -w'), CXXFLAGS = Split('-g -ggdb'))
+    	untraced_env.Alias('xn', lib)
 
     srcs = xn_env.AutoSplit('''timeformat.c hashmap.c trace_metadata_util.c trace_parser.c''')
     lib = untraced_env.SharedLibrary(target = 'traces', source = srcs, CCFLAGS = optflags)
