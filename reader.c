@@ -51,6 +51,7 @@ struct trace_reader_conf {
     int free_dead_process_metadata;
     // long long from_time;
     int after_count;
+    unsigned max_errors_per_file;
     const char **files_to_process; /* A NULL terminated array of const char* */
     struct trace_record_matcher_spec_s *record_filter;
     struct trace_filter_collection filter;
@@ -350,6 +351,7 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
 
     conf->op_type = OP_TYPE_DUMP_FILE;
     conf->field_disp = TRACE_PARSER_PARAM_NAME_DISP_EXPLICIT;
+    conf->max_errors_per_file = 200;
 
     while ((o = getopt_long(argc, (char **)argv, shortopts, longopts, &longindex)) != EOF) {
 		switch (o) {
@@ -511,18 +513,26 @@ static int process_single_file_with_error_recovery(
         return EX_NOINPUT;
     }
 
-    const unsigned MAX_ERRS_PER_FILE = 20;  /* TODO: Consider making this configurable via trace_reader_conf*/
     int error_occurred = 0;
-    unsigned err_count;
-    for (err_count = 0; err_count < MAX_ERRS_PER_FILE; err_count++) {
+    unsigned records_rendered_count = parser.records_rendered_count;
+    unsigned err_count = 0;
+    while (err_count < conf->max_errors_per_file) {
         if (file_handler(&parser) >= 0) {
             break;
         }
         else {
             error_occurred = errno;
-            fprintf(stderr, "Error %d (%s) while processing the file %s\n", error_occurred, strerror(error_occurred), filename);
             if (EINVAL != error_occurred) {
+                fprintf(stderr, "Unrecoverable error %d (%s) while processing the file %s\n", error_occurred, strerror(error_occurred), filename);
+                err_count++;
                 break;
+            }
+
+            /* Check if there were valid records since the last error */
+            if (parser.records_rendered_count > records_rendered_count) {
+                fprintf(stderr, "Record corruption encountered at offset %#llx while processing the file %s\n", parser.file_info.current_offset, filename);
+                err_count++;
+                records_rendered_count = parser.records_rendered_count;
             }
         }
     }
@@ -532,7 +542,7 @@ static int process_single_file_with_error_recovery(
     if (err_count > 0) {
         fprintf(stderr, "Encountered %u errors while processing the file %s, last of them with code %d (%s)\n",
                 err_count, filename, error_occurred, strerror(error_occurred));
-        if (err_count >= MAX_ERRS_PER_FILE) {
+        if (err_count >= conf->max_errors_per_file) {
             fprintf(stderr, "Quit processing the file %s due to too many errors\n", filename);
         }
 

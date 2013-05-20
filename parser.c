@@ -1138,6 +1138,7 @@ static int dumper_event_handler(trace_parser_t *parser, enum trace_parser_event_
     	return -1;
     }
     out_flush(&out);
+    parser->records_rendered_count++;
     return 0;
 }
 

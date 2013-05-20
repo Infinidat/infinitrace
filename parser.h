@@ -152,6 +152,7 @@ typedef struct trace_parser {
     enum trace_input_stream_type stream_type;
     bool_t free_dead_buffer_contexts;
     int after_count;
+    unsigned records_rendered_count;
     const char* show_filename;
 } trace_parser_t;
 
