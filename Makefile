@@ -5,6 +5,7 @@ LIBTRACE_OBJS=trace_metadata_util.o trace_parser.o halt.o hashmap.o validator.o
 LIBPARSER_OBJS=timeformat.o parser.o renderer.o filter.o parser_mmap.o hashmap.o trace_metadata_util.o
 LIBTRACEUSER_OBJS=trace_metadata_util.o trace_user.o halt.o trace_clock.o
 LIBTRACEUTIL_OBJS=opt_util.o trace_str_util.o file_naming.o
+LIBSNAPPY_OBJS=snappy/snappy.o
 DUMPER_OBJS=trace_dumper/trace_dumper.o trace_dumper/filesystem.o trace_dumper/writer.o trace_dumper/write_prep.o trace_dumper/buffers.o trace_dumper/init.o trace_dumper/open_close.o trace_dumper/metadata.o trace_dumper/housekeeping.o trace_user_stubs.o
 
 TARGET_PLATFORM=$(shell gcc -v 2>&1|fgrep Target|cut -d':' -d' ' -f2|cut -d'-' -f 2,3)
@@ -38,6 +39,9 @@ libtraceuser: $(LIBTRACEUSER_OBJS)
 libtraceutil: $(LIBTRACEUTIL_OBJS)
 	ar rcs libtraceutil.a  $(LIBTRACEUTIL_OBJS)
 
+libsnappy: $(LIBSNAPPY_OBJS)
+	ar rcs libsnappy.a  $(LIBSNAPPY_OBJS)
+
 libparser: $(LIBPARSER_OBJS)
 	ar rsc libparser.a $(LIBPARSER_OBJS) 
 
@@ -68,4 +72,4 @@ trace_instrumentor: $(TRACE_INSTROMENTOR_OBJS)
 endif
 
 clean:
-	rm -f *.o trace_reader/simple_trace_reader.o reader trace_reader/simple_trace_reader trace_dumper/*.o trace_instrumentor/*.o tools/*.o trace_instrumentor/*.so trace_dumper/trace_dumper trace_reader/trace_reader *so *.a
+	rm -f *.o trace_reader/simple_trace_reader.o reader trace_reader/simple_trace_reader trace_dumper/*.o trace_instrumentor/*.o tools/*.o snappy/*.o trace_instrumentor/*.so trace_dumper/trace_dumper trace_reader/trace_reader *so *.a

@@ -6,7 +6,7 @@ Import('TracesDisabled')
 #-------------
 
 with TracesDisabled(xn_env) as untraced_env:
-    optflags=Split("""$CCFLAGS -Wall -O1""")
+    optflags=Split("""$CCFLAGS -Wall -O2""")
     lib = untraced_env.SConscript("trace_instrumentor/SConscript")
 
     srcs = untraced_env.AutoSplit('''trace_user.c trace_metadata_util_untraced.c  halt.c trace_clock_untraced.c''')
@@ -15,6 +15,10 @@ with TracesDisabled(xn_env) as untraced_env:
 
     srcs = untraced_env.AutoSplit('''opt_util_untraced.c trace_str_util_untraced.c file_naming_untraced.c untraced_trace_clock_untraced.o''')
     lib = untraced_env.XnStaticLibrary(target = 'trace_util', source = srcs, CCFLAGS = optflags)
+    untraced_env.Alias('xn', lib)
+    
+    srcs = untraced_env.AutoSplit('''snappy/snappy.c''')
+    lib = untraced_env.XnStaticLibrary(target = 'snappy', source = srcs, CCFLAGS = optflags, CPPDEFINES = {'NDEBUG': '1'})
     untraced_env.Alias('xn', lib)
 
     srcs = untraced_env.AutoSplit('''trace_user_stubs.c ''')
@@ -31,9 +35,11 @@ with TracesDisabled(xn_env) as untraced_env:
     lib = untraced_env.SharedLibrary(target = 'traces', source = srcs, CCFLAGS = optflags)
     xn_env.Alias('xn', lib)
 
-objs = [Object(target = S + '.o', source = S + '.c', CCFLAGS = optflags)  for S in 'trace_metadata_util', 'hashmap']
+safer_optflags=[f for f in optflags if not f.startswith('-O')] + ['-O1']
+
+objs = [Object(target = S + '.o', source = S + '.c', CCFLAGS = safer_optflags)  for S in 'trace_metadata_util', 'hashmap']
 srcs = xn_env.AutoSplit('''trace_parser.c validator.c''') + objs
-xn_env.BuildStaticLibraries(target = 'tracereader', source = srcs, CCFLAGS = optflags)
+xn_env.BuildStaticLibraries(target = 'tracereader', source = srcs, CCFLAGS = safer_optflags)
 
 srcs = xn_env.AutoSplit('''timeformat.c parser.c filter.c parser_mmap.c renderer.cpp''') + objs
 xn_env.BuildStaticLibraries(target = 'reader', source = srcs, CCFLAGS = optflags)
