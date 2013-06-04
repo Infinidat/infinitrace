@@ -518,14 +518,14 @@ unmap_file:
 
 free_mapping_info:
 	filename = record_file->filename;
+    base_addr = record_file->mapping_info->base;
+    ERR("Failed to create a memory mapping for", filename, TRACE_NAMED_PARAM(fd, record_file->fd),
+            base_addr, TRACE_NAMED_PARAM(mapping_len, record_file->mapping_info->mapping_len_bytes));
+
 	if (0 != close(record_file->fd)) {
 		ERR("Failed to close fd", record_file->fd, filename, errno);
 	}
 	record_file->fd = -1;
-
-
-	base_addr = record_file->mapping_info->base;
-	ERR("Failed to create a memory mapping for", filename, base_addr);
 
 	memset(record_file->mapping_info, -1, sizeof(*(record_file->mapping_info)));
 	free(record_file->mapping_info);
@@ -695,11 +695,13 @@ int trace_dumper_flush_mmapping(struct trace_record_file *record_file, bool_t sy
 	struct trace_output_mmap_info *mapping_info = record_file->mapping_info;
 	if (NULL != mapping_info) {
 		int rc = 0;
-		pthread_t worker_tid = mapping_info->tid;
-		int lasterr = mapping_info->lasterr;
+		const pthread_t worker_tid = mapping_info->tid;
+		const int lasterr = mapping_info->lasterr;
 
 		record_file->mapping_info = NULL;
 		mapping_info->writing_complete = TRUE;
+		INFO("Flushing the mapping for the file", record_file->filename, TRACE_NAMED_PARAM(fd, record_file->fd),
+		        synchronous, mapping_info, TRACE_NAMED_PARAM(tid, mapping_info->tid));
 		mapping_info = NULL;
 
 		const char *action = NULL;
@@ -713,16 +715,21 @@ int trace_dumper_flush_mmapping(struct trace_record_file *record_file, bool_t sy
 		}
 
 		if (0 != lasterr) {
+		    WARN("Detected error", lasterr, "while", action, "the thread", worker_tid);
 			syslog(LOG_WARNING|LOG_USER, "Found lasterr=%d (%s) found while %s the worker thread for the file %s. ",
 					lasterr, strerror(lasterr), action, record_file->filename);
 		}
 
 		if (0 != rc) {
+		    ERR("Error while", action, "the thread", worker_tid, rc);
 			syslog(LOG_WARNING|LOG_USER, "Error %d (%s) encountered while %s the worker thread for the file %s.",
 					rc, strerror(rc), action, record_file->filename);
 			errno = rc;
 			return -1;
 		}
+	}
+	else {
+	    INFO("Not flushing the file which has no memory mapping defined", record_file->filename, TRACE_NAMED_PARAM(fd, record_file->fd));
 	}
 	return 0;
 }

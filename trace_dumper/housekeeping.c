@@ -121,6 +121,7 @@ int do_housekeeping_if_necessary(struct trace_dumper_configuration_s *conf)
 
     int rc = reap_empty_dead_buffers(conf);
     if (0 != rc) {
+        ERR("reap_empty_dead_buffers returned", rc, TRACE_NAMED_PARAM(errno, errno), strerror(errno));
         syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while emptying dead buffers.", strerror(errno));
         return rc;
     }
@@ -131,6 +132,7 @@ int do_housekeeping_if_necessary(struct trace_dumper_configuration_s *conf)
     if (!conf->attach_to_pid && !conf->stopping) {
         rc = map_new_buffers(conf);
         if (0 != rc) {
+            ERR("map_new_buffers returned", rc, TRACE_NAMED_PARAM(errno, errno), strerror(errno));
             syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while mapping new buffers.", strerror(errno));
             return rc;
         }
@@ -138,14 +140,19 @@ int do_housekeeping_if_necessary(struct trace_dumper_configuration_s *conf)
 
     rc = unmap_discarded_buffers(conf);
     if (0 != rc) {
+        ERR("unmap_discarded_buffers returned", rc, TRACE_NAMED_PARAM(errno, errno), strerror(errno));
         syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while unmapping discarded buffers.", strerror(errno));
         return rc;
     }
 
     rc = prefetch_mmapped_pages(conf);
     if (0 != rc) {
-        ERR("Prefetching mapped pages returned", rc, errno, strerror(errno));
+        ERR("Prefetching mapped pages returned", rc, TRACE_NAMED_PARAM(errno, errno), strerror(errno));
         syslog(LOG_ERR|LOG_USER, "Prefetching mapped pages returned %d, errno=%d (%s)", rc, errno, strerror(errno));
+    }
+
+    if (conf->log_details) {
+        DEBUG("Finished housekeeping with", rc, TRACE_NAMED_PARAM(next_ts, conf->next_housekeeping_ts));
     }
     return rc;
 }

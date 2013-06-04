@@ -299,12 +299,16 @@ static int close_file(struct trace_record_file *file, bool_t wait_for_flush) {
 		}
 		else {
 			rc = close(file->fd);
+			INFO("Closed the file", file->filename, TRACE_NAMED_PARAM(fd, file->fd), rc);
 		}
 
 		if (0 == rc) {
 			file->fd = -1;
 		}
 	}
+	else {
+        INFO("Not closing the alreay closed file", file->filename, TRACE_NAMED_PARAM(fd, file->fd));
+    }
 
 	if (0 == rc) {
 		assert(is_closed(file));
@@ -387,7 +391,10 @@ unsigned request_file_operations(struct trace_dumper_configuration_s *conf, unsi
 int apply_requested_file_operations(struct trace_dumper_configuration_s *conf, unsigned op_mask)
 {
 	int rc = 0;
-	unsigned flags = conf->request_flags & op_mask;
+	const unsigned flags = conf->request_flags & op_mask;
+	if (0 != flags) {
+	    INFO("Performing requested file operations with", TRACE_INT_AS_HEX(flags), "=", TRACE_INT_AS_HEX(op_mask), "|", conf->request_flags);
+	}
 
 	if (flags & TRACE_REQ_CLOSE_NOTIFICATION_FILE) {
 		rc |= close_notification_file(conf);
