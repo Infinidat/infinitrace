@@ -27,10 +27,4 @@ int init_dumper(struct trace_dumper_configuration_s *conf);
 int set_signal_handling(void);
 struct trace_dumper_configuration_s *trace_dumper_get_configuration();
 
-static inline unsigned int get_allowed_online_severity_mask(const struct trace_dumper_configuration_s *conf)
-{
-    return ((conf->trace_online << TRACE_SEV_FUNC_TRACE) | (conf->debug_online << TRACE_SEV_DEBUG) | (conf->info_online << TRACE_SEV_INFO) |
-                                  (conf->warn_online << TRACE_SEV_WARN) | (conf->error_online << TRACE_SEV_ERR) | (conf->error_online << TRACE_SEV_FATAL));
-}
-
 #endif /* __TRACE_DUMPER_INIT_H_ */
