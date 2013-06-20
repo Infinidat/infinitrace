@@ -302,7 +302,7 @@ unsigned char *trace_copy_scalar_to_records(struct trace_record **records, unsig
 
 void trace_clear_record_remainder(struct trace_record *records, unsigned rec_idx, unsigned char *typed_buf)
 {
-    memset(typed_buf, 0xa5, bytes_left_in_buf(records, rec_idx, typed_buf));
+    memset(typed_buf, TRACE_UNUSED_SPACE_FILL_VALUE, bytes_left_in_buf(records, rec_idx, typed_buf));
 }
 
 static void update_last_committed_record(struct trace_records *records, trace_record_counter_t new_index)

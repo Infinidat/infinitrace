@@ -1,16 +1,16 @@
 CPPFLAGS=-I. -c -Wall -g -fPIC
 CFLAGS=-std=gnu99
 CXXFLAGS=-fno-rtti
-LIBTRACE_OBJS=trace_metadata_util.o trace_parser.o halt.o hashmap.o validator.o
-LIBPARSER_OBJS=timeformat.o parser.o renderer.o filter.o parser_mmap.o hashmap.o trace_metadata_util.o
+LIBTRACE_OBJS=trace_metadata_util.o halt.o 
+LIBPARSER_OBJS=timeformat.o parser.o renderer.o filter.o parser_mmap.o hashmap.o trace_metadata_util.o hashmap.o validator.o
 LIBTRACEUSER_OBJS=trace_metadata_util.o trace_user.o halt.o trace_clock.o
 LIBTRACEUTIL_OBJS=opt_util.o trace_str_util.o file_naming.o
 LIBSNAPPY_OBJS=snappy/snappy.o
-DUMPER_OBJS=trace_dumper/trace_dumper.o trace_dumper/filesystem.o trace_dumper/writer.o trace_dumper/write_prep.o trace_dumper/buffers.o trace_dumper/init.o trace_dumper/open_close.o trace_dumper/metadata.o trace_dumper/housekeeping.o trace_user_stubs.o
+DUMPER_OBJS=trace_dumper/trace_dumper.o trace_dumper/filesystem.o trace_dumper/events.o trace_dumper/writer.o trace_dumper/write_prep.o trace_dumper/buffers.o trace_dumper/init.o trace_dumper/open_close.o trace_dumper/metadata.o trace_dumper/housekeeping.o trace_user_stubs.o
 
 TARGET_PLATFORM=$(shell gcc -v 2>&1|fgrep Target|cut -d':' -d' ' -f2|cut -d'-' -f 2,3)
 EXTRA_LIBS=
-ALL_TARGETS=libtrace simple_trace_reader dump_file_diags reader 
+ALL_TARGETS=libtrace dump_file_diags reader 
 # Note that interactive_reader has been removed from the default build
  
 ifeq ($(TARGET_PLATFORM),linux-gnu)
@@ -25,7 +25,7 @@ endif
 
 all: $(ALL_TARGETS)
 trace_dumper: libtrace libtraceutil $(DUMPER_OBJS)
-	gcc -L.  $(DUMPER_OBJS) -ltrace -ltraceutil $(EXTRA_LIBS) -o trace_dumper/trace_dumper 
+	gcc -L.  $(DUMPER_OBJS) -ltrace -ltraceutil -lparser $(EXTRA_LIBS) -o trace_dumper/trace_dumper 
 
 libtrace: $(LIBTRACE_OBJS) libtraceutil
 	ar rcs libtrace.a $(LIBTRACE_OBJS)
@@ -45,16 +45,8 @@ libsnappy: $(LIBSNAPPY_OBJS)
 libparser: $(LIBPARSER_OBJS)
 	ar rsc libparser.a $(LIBPARSER_OBJS) 
 
-simple_trace_reader: libtrace libtraceutil trace_reader/simple_trace_reader.o
-	gcc -L. trace_reader/simple_trace_reader.o -ltrace -ltraceutil $(EXTRA_LIBS) -o trace_reader/simple_trace_reader
-
-reader: libparser libtraceutil reader.o
-	g++ -L. reader.o -lparser -ltraceutil -lz $(EXTRA_LIBS) -o reader
-
-interactive_reader: trace_parser.h
-	h2xml  -c -I. trace_parser.h -o _trace_parser_ctypes.xml
-	xml2py -k f -k e -k s _trace_parser_ctypes.xml > interactive_reader/_trace_parser_ctypes.py
-	rm _trace_parser_ctypes.xml
+reader: libparser libtraceutil libsnappy reader.o
+	g++ -L. reader.o -lparser -ltraceutil -lsnappy -lz $(EXTRA_LIBS) -o reader
 
 dump_file_diags: libtraceutil tools/dump_file_diags.o trace_defs.h
 	gcc -L. tools/dump_file_diags.o -ltraceutil -o tools/dump_file_diags

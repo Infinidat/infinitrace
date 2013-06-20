@@ -446,7 +446,7 @@ std::string TraceCall::constlength_getTraceWriteExpression(unsigned int& buf_lef
     }
 
     if (buf_left > 0) {
-        start_record << "__builtin_memset(" << constlength__writeSimpleValueCopyTargetExpr(buf_left) << ", 0xa5, " << buf_left << "); ";
+        start_record << "__builtin_memset(" << constlength__writeSimpleValueCopyTargetExpr(buf_left) << ", TRACE_UNUSED_SPACE_FILL_VALUE, " << buf_left << "); ";
     }
 
     return start_record.str();

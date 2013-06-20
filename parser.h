@@ -101,9 +101,11 @@ enum trace_parser_param_name_disp_mode {
 
 #define RECORD_DUMP_CONTEXTS (150)
 struct record_dump_context_s {
-    long long start_offset;
-    long long current_offset;
-    long long end_offset;
+    off64_t start_offset;
+    off64_t current_offset;
+    off64_t end_offset;
+    const struct trace_record *uncompressed_data;
+    unsigned flags;
 };
 
 struct buffer_dump_context_s {

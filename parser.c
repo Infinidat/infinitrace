@@ -35,6 +35,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include <assert.h>
 #include <sysexits.h>
 
+#include "snappy/snappy.h"
 #include "parser.h"
 #include "min_max.h"
 #include "array_length.h"
@@ -130,6 +131,26 @@ static void wait_and_inform_user(void)
 static inline bool_t record_has_null_header(const struct trace_record *rec)
 {
 	return 0 == *(__uint128_t *)rec;
+}
+
+static bool_t file_open(const trace_parser_t *parser)
+{
+    return (parser->file_info.fd >= 0);
+}
+
+static const struct trace_record *get_record_ptr_for_rec_offset(const trace_parser_t *parser, off64_t rec_offset)
+{
+    if (! file_open(parser)) {
+        errno = EBADF;
+        return NULL;
+    }
+
+    if (rec_offset * TRACE_RECORD_SIZE >= parser->file_info.end_offset) {
+        errno = EFAULT;
+        return NULL;
+    }
+
+    return (const struct trace_record *) (parser->file_info.file_base) + rec_offset;
 }
 
 static int read_next_record(trace_parser_t *parser, struct trace_record *record)
@@ -639,9 +660,44 @@ static int process_typed_record(
     return 0;
 }
 
-static void ignore_next_n_records(trace_parser_t *parser, unsigned int ignore_count)
+/* Seek to a specified point (see TRACE_PARSER__seek()), or if the resulting offset is beyond the end of the file - to the end of the file. */
+static off64_t capped_seek(trace_parser_t *parser,off64_t offset, int whence)
 {
-    parser->ignored_records_count = ignore_count;
+    int saved_errno = errno;
+    errno = 0;
+    off64_t new_offset = TRACE_PARSER__seek(parser, offset, whence);
+    if ((-1 == new_offset) && (ESPIPE == errno)) {
+        new_offset = TRACE_PARSER__seek(parser, 0, SEEK_END);
+    }
+
+    if (-1 != new_offset) {
+        errno = saved_errno;
+    }
+
+    return new_offset;
+}
+
+/* ignore_next_n_records: Ignore the subsequent ignore_count records, not including the current record. */
+static int ignore_next_n_records(trace_parser_t *parser, unsigned int ignore_count)
+{
+    switch (parser->stream_type) {
+    case TRACE_INPUT_STREAM_TYPE_NONSEEKABLE:
+        parser->ignored_records_count = ignore_count;
+        break;
+
+    case TRACE_INPUT_STREAM_TYPE_SEEKABLE_FILE:
+    {
+        if (-1 == capped_seek(parser, ignore_count + 1, SEEK_CUR)) {
+            return -1;
+        }
+        break;
+    }
+    default:
+        errno = EINVAL;
+        return -1;
+    }
+
+    return 0;
 }
 
 static bool_t match_record_dump_with_match_expression(
@@ -649,24 +705,16 @@ static bool_t match_record_dump_with_match_expression(
 		const struct trace_record *record,
 		const struct trace_parser_buffer_context *buffer_context);
 
-static void process_buffer_chunk_record(trace_parser_t *parser, const struct trace_record *buffer_chunk)
+static int process_buffer_chunk_record(trace_parser_t *parser, const struct trace_record *buffer_chunk)
 {
     const struct trace_record_buffer_dump *bd = &buffer_chunk->u.buffer_chunk;
     
-    if (bd->severity_type) {
-        if (parser->stream_type == TRACE_INPUT_STREAM_TYPE_NONSEEKABLE && !(match_record_dump_with_match_expression(parser->record_filter, buffer_chunk, NULL))) {
-            ignore_next_n_records(parser, bd->records);
-        }
+    if ((bd->severity_type) &&
+        !(match_record_dump_with_match_expression(parser->record_filter, buffer_chunk, NULL))) {
+        return ignore_next_n_records(parser, bd->records);
     }
-}
 
-static bool_t file_open(const trace_parser_t *parser)
-{
-    if (parser->file_info.fd >= 0) {
-        return TRUE;
-    } else {
-        return FALSE;
-    }
+    return 0;
 }
 
 static long long trace_file_current_offset(const trace_parser_t *parser)
@@ -677,12 +725,6 @@ static long long trace_file_current_offset(const trace_parser_t *parser)
     }
 
     return parser->file_info.current_offset / sizeof(struct trace_record);
-}
-
-static int read_record_at_offset(trace_parser_t *parser, long long offset, struct trace_record *record)
-{
-    parser->file_info.current_offset = offset * sizeof(struct trace_record);
-    return read_next_record(parser, record);
 }
 
 static int process_metadata(trace_parser_t *parser, const struct trace_record *record)
@@ -756,6 +798,71 @@ static bool_t match_record_dump_with_match_expression(
     return trace_filter_match_record_chunk(matcher, record, buffer_context->name);
 }
 
+static size_t num_compressed_bytes(const struct trace_record_buffer_dump *buffer_chunk)
+{
+    assert(buffer_chunk->flags & TRACE_CHUNK_HEADER_FLAG_COMPRESSED);
+    return TRACE_RECORD_SIZE * buffer_chunk->records - buffer_chunk->slack_bytes;
+}
+
+static ssize_t uncompressed_len(const struct trace_record *compressed_data, const struct trace_record_buffer_dump *buffer_chunk)
+{
+    size_t result = 0;
+    const bool_t is_valid = snappy_uncompressed_length((const char *)compressed_data, num_compressed_bytes(buffer_chunk), &result);
+    if (!is_valid) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    return result;
+}
+
+/* Uncompress a sequence of trace records representing compressed data to a into dynamically allocated buffer obtained via malloc */
+static struct trace_record *uncompress_records(
+        const struct trace_record *compressed_data,
+        const struct trace_record_buffer_dump *buffer_chunk,
+        size_t *n_uncompressed_recs)
+{
+    const ssize_t len = uncompressed_len(compressed_data, buffer_chunk);
+    if (len < 0) {
+        return NULL;
+    }
+
+    const size_t padding_len = (TRACE_RECORD_SIZE - len % TRACE_RECORD_SIZE) % TRACE_RECORD_SIZE;
+    assert(0 == (len + padding_len) % TRACE_RECORD_SIZE);
+
+    char *buf = malloc(len + padding_len);
+    if (NULL != buf) {
+        int rc = snappy_uncompress((const char *) compressed_data, num_compressed_bytes(buffer_chunk), buf);
+        if (rc >= 0) {
+            memset(buf + len, TRACE_UNUSED_SPACE_FILL_VALUE, padding_len);
+            *n_uncompressed_recs = (len + padding_len) / TRACE_RECORD_SIZE;
+        }
+        else {
+            free(buf);
+            buf = NULL;
+            errno = -rc;
+        }
+    }
+
+    return (struct trace_record *) buf;
+}
+
+static void clear_dump_header_context(trace_parser_t *parser)
+{
+    unsigned i;
+    for (i = 0; i < parser->buffer_dump_context.num_chunks; i++) {
+        struct record_dump_context_s *const ctx = parser->buffer_dump_context.record_dump_contexts + i;
+        if (NULL != ctx->uncompressed_data) {
+            assert(ctx->flags & TRACE_CHUNK_HEADER_FLAG_COMPRESSED);
+            free((void *)(ctx->uncompressed_data));
+        }
+
+        memset(ctx, 0, sizeof(*ctx));
+    }
+
+    parser->buffer_dump_context.num_chunks = 0;
+}
+
 static int process_dump_header_record(
 		trace_parser_t *parser,
 		const struct trace_record_matcher_spec_s *filter,
@@ -763,7 +870,7 @@ static int process_dump_header_record(
 		trace_parser_event_handler_t handler,
 		void *arg)
 {
-    const struct trace_record_dump_header *dump_header = &record->u.dump_header;
+    const struct trace_record_dump_header *const dump_header = &record->u.dump_header;
     struct trace_record_buffer_dump *buffer_chunk = NULL;
     struct trace_record tmp_record;
     unsigned int i = 0;
@@ -773,77 +880,117 @@ static int process_dump_header_record(
         return -1;
     }
 
-    long long current_offset = trace_file_current_offset(parser);
-    long long end_offset = dump_header->total_dump_size + trace_file_current_offset(parser);
+    clear_dump_header_context(parser);
+
+    off64_t current_offset = trace_file_current_offset(parser);
+    const off64_t end_offset = dump_header->total_dump_size + current_offset;
+    assert(TRACE_RECORD_SIZE * end_offset <= parser->file_info.end_offset);
     parser->buffer_dump_context.end_offset = end_offset;
     parser->buffer_dump_context.previous_dump_offset = dump_header->prev_dump_offset;
 
     while (current_offset < end_offset) {
+        rc = 0;
         if (i >= ARRAY_LENGTH(parser->buffer_dump_context.record_dump_contexts)) {
-            return -1;
+            errno = ENOMEM;
+            goto cleanup;
         }
 
         rc = read_next_record(parser, &tmp_record);
         if (0 != rc) {
-            return -1;
+            goto cleanup;
         }
 
         if (tmp_record.rec_type != TRACE_REC_TYPE_BUFFER_CHUNK) {
-            return -1;
+            errno = EINVAL;
+            goto cleanup;
         }
 
         
         buffer_chunk = &tmp_record.u.buffer_chunk;
-
         rc = process_metadata_if_needed(parser, &tmp_record);
         if (0 != rc) {
-            return -1;
+            goto cleanup;
         }
 
         struct trace_parser_buffer_context *buffer_context = get_buffer_context_by_pid(parser, tmp_record.pid);
         if (NULL == buffer_context) {
-            return -1;
+            goto cleanup;
         }
         
-        if (!(!parser->silent_mode && match_record_dump_with_match_expression(filter, &tmp_record, buffer_context))) {
-            current_offset = TRACE_PARSER__seek(parser, buffer_chunk->records, SEEK_CUR);
-            if (current_offset == -1) {
-            	return -1;
+        if (!parser->silent_mode && match_record_dump_with_match_expression(filter, &tmp_record, buffer_context)) {
+            if (handler) {
+                struct parser_buffer_chunk_processed chunk_processed = {buffer_chunk, buffer_context};
+                rc = handler(parser, TRACE_PARSER_BUFFER_CHUNK_HEADER_PROCESSED, &chunk_processed, arg);
+                if (rc < 0) {
+                    goto cleanup;
+                }
             }
-            continue;
+
+            parser->buffer_dump_context.record_dump_contexts[i].start_offset = trace_file_current_offset(parser);
+            parser->buffer_dump_context.record_dump_contexts[i].current_offset = parser->buffer_dump_context.record_dump_contexts[i].start_offset;
+            parser->buffer_dump_context.record_dump_contexts[i].flags = buffer_chunk->flags;
+            size_t n_uncompressed_recs = 0;
+            if (buffer_chunk->flags & TRACE_CHUNK_HEADER_FLAG_COMPRESSED) {
+                /* TODO: Handle interactive mode */
+                const struct trace_record *const compressed_data =
+                        get_record_ptr_for_rec_offset(parser, parser->buffer_dump_context.record_dump_contexts[i].start_offset);
+                if (NULL == compressed_data) {
+                    goto cleanup;
+                }
+
+                parser->buffer_dump_context.record_dump_contexts[i].uncompressed_data =
+                        uncompress_records(compressed_data, buffer_chunk, &n_uncompressed_recs);
+                if (NULL == parser->buffer_dump_context.record_dump_contexts[i].uncompressed_data) {
+                    goto cleanup;
+                }
+            }
+            else {
+                parser->buffer_dump_context.record_dump_contexts[i].uncompressed_data = NULL;
+                n_uncompressed_recs = buffer_chunk->records;
+            }
+            parser->buffer_dump_context.record_dump_contexts[i].end_offset = parser->buffer_dump_context.record_dump_contexts[i].start_offset + n_uncompressed_recs;
+            i++;
         }
 
-        if (handler) {
-            struct parser_buffer_chunk_processed chunk_processed = {buffer_chunk, buffer_context};
-            rc = handler(parser, TRACE_PARSER_BUFFER_CHUNK_HEADER_PROCESSED, &chunk_processed, arg);
-            if (rc < 0) {
-                return rc;
-            }
-        }
-        
-        parser->buffer_dump_context.record_dump_contexts[i].start_offset = trace_file_current_offset(parser);
-        parser->buffer_dump_context.record_dump_contexts[i].current_offset = parser->buffer_dump_context.record_dump_contexts[i].start_offset;
-        parser->buffer_dump_context.record_dump_contexts[i].end_offset = parser->buffer_dump_context.record_dump_contexts[i].start_offset + buffer_chunk->records;
         current_offset = TRACE_PARSER__seek(parser, buffer_chunk->records, SEEK_CUR);
         if (-1 == current_offset) {
-            return -1;
+            goto cleanup;
         }
-        i++;
     }
 
-    if (i) {
-        current_offset = TRACE_PARSER__seek(parser, parser->buffer_dump_context.record_dump_contexts[0].start_offset, SEEK_SET);
-    } else {
-        current_offset = TRACE_PARSER__seek(parser, dump_header->first_chunk_offset - 1 + dump_header->total_dump_size, SEEK_SET);
+    assert(current_offset <= end_offset);
+
+    off64_t next_offset;
+    if (i > 0) {
+        next_offset = parser->buffer_dump_context.record_dump_contexts[0].start_offset;
+    }
+    else {
+        next_offset = end_offset;
+        assert(end_offset == dump_header->first_chunk_offset + dump_header->total_dump_size);
+        assert(next_offset >= parser->file_info.current_offset / TRACE_RECORD_SIZE);
+        if (TRACE_RECORD_SIZE * next_offset < parser->file_info.end_offset) {
+            const struct trace_record *const rec = get_record_ptr_for_rec_offset(parser, next_offset);
+            if (    !rec ||
+                    ((TRACE_REC_TYPE_DUMP_HEADER      != rec->rec_type) &&
+                     (TRACE_REC_TYPE_METADATA_HEADER  != rec->rec_type) &&
+                     (TRACE_REC_TYPE_END_OF_FILE      != rec->rec_type))) {
+                errno = EINVAL;
+                goto cleanup;
+            }
+        }
     }
 
-    
-    if (current_offset == -1) {
-        return -1;
-    } else {
+    current_offset = capped_seek(parser, next_offset, SEEK_SET);
+    if (current_offset != -1) {
         parser->buffer_dump_context.num_chunks = i;
         return 0;
     }
+
+cleanup:
+    assert(0 != errno);
+    parser->buffer_dump_context.num_chunks = i;
+    clear_dump_header_context(parser);
+    return MIN(rc, -1);
 }
 
 static bool_t discard_record_on_nonseekable_stream(trace_parser_t *parser)
@@ -949,15 +1096,16 @@ static int process_single_record(
     struct parser_complete_typed_record complete_rec;
     *complete_typed_record_found = FALSE;
 
+    if (discard_record_on_nonseekable_stream(parser)) {
+        return 0;
+    }
+    assert(0 == parser->ignored_records_count);
+
     switch (record->rec_type) {
     case TRACE_REC_TYPE_UNKNOWN:
         rc = handler(parser, TRACE_PARSER_UNKNOWN_RECORD_ENCOUNTERED, &record, arg);
         break;
     case TRACE_REC_TYPE_TYPED:
-        if (discard_record_on_nonseekable_stream(parser)) {
-            rc = 0;
-            break;
-        }
 
         rc = process_typed_record(parser, accumulate_forward, record, &complete_rec);
         switch (rc) {
@@ -1000,10 +1148,10 @@ static int process_single_record(
         rc = accumulate_metadata(parser, record, handler, arg);
         break;
     case TRACE_REC_TYPE_DUMP_HEADER:
-        process_dump_header_record(parser, filter, record, handler, arg);
+        rc = process_dump_header_record(parser, filter, record, handler, arg);
         break;
     case TRACE_REC_TYPE_BUFFER_CHUNK:
-        process_buffer_chunk_record(parser, record);
+        rc = process_buffer_chunk_record(parser, record);
         break;
     case TRACE_REC_TYPE_END_OF_FILE:
         rc = ENODATA;
@@ -1014,6 +1162,7 @@ static int process_single_record(
         break;
     }
 
+    assert((rc >= 0) || (0 != errno));
     return rc;
 }
 
@@ -1031,39 +1180,50 @@ static bool_t inside_record_dump(const trace_parser_t *parser)
 
 static int read_smallest_ts_record(trace_parser_t *parser, struct trace_record *record)
 {
-    struct trace_record tmp_record;
     unsigned int i;
     unsigned long long min_ts = ULLONG_MAX;
-    int rc;
     unsigned int index_of_minimal_chunk = 0;
+    const struct trace_record *src_rec = NULL;
 
     for (i = 0; i < parser->buffer_dump_context.num_chunks; i++) {
-        if (parser->buffer_dump_context.record_dump_contexts[i].current_offset >= parser->buffer_dump_context.record_dump_contexts[i].end_offset) {
+        const struct record_dump_context_s *const chunk_ctx = parser->buffer_dump_context.record_dump_contexts + i;
+        const struct trace_record *tmp_rec = NULL;
+
+        if (chunk_ctx->current_offset >= chunk_ctx->end_offset) {
             continue;
         }
 
-        rc = read_record_at_offset(parser, parser->buffer_dump_context.record_dump_contexts[i].current_offset, &tmp_record);
-        if (0 != rc) {
+        if (chunk_ctx->flags & TRACE_CHUNK_HEADER_FLAG_COMPRESSED) {
+            assert(NULL != chunk_ctx->uncompressed_data);
+            tmp_rec = chunk_ctx->uncompressed_data + (chunk_ctx->current_offset - chunk_ctx->start_offset);
+        }
+        else {
+            tmp_rec = get_record_ptr_for_rec_offset(parser, chunk_ctx->current_offset);
+        }
+
+        if (NULL == tmp_rec) {
             return -1;
         }
 
-        if (tmp_record.ts < min_ts) {
-            min_ts = tmp_record.ts;
+        if (tmp_rec->ts < min_ts) {
+            min_ts = tmp_rec->ts;
             index_of_minimal_chunk = i;
-            memcpy(record, &tmp_record, sizeof(*record));
+            src_rec = tmp_rec;
         }
     }
     
     if (min_ts == ULLONG_MAX) {
+        assert(NULL == src_rec);
         memset(record, 0, sizeof(*record));
     } else {
+        assert(NULL != src_rec);
+        memcpy(record, src_rec, TRACE_RECORD_SIZE);
         parser->buffer_dump_context.record_dump_contexts[index_of_minimal_chunk].current_offset++;
     }
 
-    if (!inside_record_dump(parser)) {
-        if (TRACE_PARSER__seek(parser, parser->buffer_dump_context.end_offset, SEEK_SET) == -1) {
+    if (!inside_record_dump(parser) &&
+        (TRACE_PARSER__seek(parser, parser->buffer_dump_context.end_offset, SEEK_SET) == -1)) {
         	return -1;
-        }
     }
 
     return 0;
@@ -1082,13 +1242,12 @@ static int process_next_record_from_file(trace_parser_t *parser, const struct tr
 
     bool_t complete_typed_record_processed = FALSE;
     int rc = -1;
-    // unsigned long records_processed = 0;
     
     while (!iter || iter->keep_going) {
         if (inside_record_dump(parser)) {
             rc = read_smallest_ts_record(parser, &record);
             if (record.ts == 0) {
-                if (-1 == TRACE_PARSER__seek(parser, parser->buffer_dump_context.end_offset, SEEK_SET)) {
+                if (-1 == capped_seek(parser, parser->buffer_dump_context.end_offset, SEEK_SET)) {
                     return -1;
                 }
                 continue;
@@ -1490,6 +1649,10 @@ off64_t TRACE_PARSER__seek(trace_parser_t *parser,off64_t offset, int whence)
     	return -1;
     }
 
+    if (new_offset < 0) {
+        errno = EINVAL;
+        return -1;
+    }
 
     while (new_offset > parser->file_info.end_offset) {
     	if (! parser->wait_for_input) {

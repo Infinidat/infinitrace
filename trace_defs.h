@@ -210,6 +210,7 @@ enum trace_file_type {
 
 #define TRACE_FORMAT_VERSION_INTRODUCED_LEVEL_CUSTOMIZATION (0xA3)
 #define TRACE_FORMAT_VERSION_INTRODUCED_LOW_LATENCY_WRITE   (0xA3)
+#define TRACE_FORMAT_VERSION_INTRODUCED_COMPRESSION         (0xA3)
 
  /* Information about user defined types */
 struct trace_type_definition {
@@ -294,6 +295,12 @@ struct trace_record_buffer_dump {
 	/* Offset of the dump to which this chunk belongs */
 	unsigned int dump_header_offset;
 
+
+	/* 4-byte gap due to alignment */
+
+	/* Note: To have the ts field properly aligned, this structure should be made packed. This will eliminate the 4-byte gap at this point.
+	 * This might be fixed in a future format version */
+
 	/* Time-stamp at which the dumper produced the record */
 	trace_ts_t ts;
 
@@ -303,6 +310,10 @@ struct trace_record_buffer_dump {
 	/* A bit mask representing the severity levels that may be found in this chunk */
 	unsigned int severity_type;
     unsigned int lost_records;
+    unsigned short flags;
+
+    /* Count of slack bytes between the end of the compressed data and the nearest multiple of 64 bytes */
+    unsigned char slack_bytes;
 };
 
 /* Payload for TRACE_REC_TYPE_DATA_LOSS */
@@ -414,9 +425,16 @@ enum trace_file_header_flags {
 #endif
 };
 
+enum trace_chunk_header_flags {
+#if (TRACE_FORMAT_VERSION >= TRACE_FORMAT_VERSION_INTRODUCED_COMPRESSION)
+    TRACE_CHUNK_HEADER_FLAG_COMPRESSED = 0x01,
+#endif
+};
+
 enum trace_magic_numbers {
 	TRACE_MAGIC_FILE_HEADER  = 0xACEF42FA,
-	TRACE_MAGIC_METADATA	 = 0xDEADBAAF
+	TRACE_MAGIC_METADATA	 = 0xDEADBAAF,
+	TRACE_UNUSED_SPACE_FILL_VALUE = 0xA5,
 };
 
 /* Descriptor for an individual parameter being logged */

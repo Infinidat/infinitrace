@@ -47,7 +47,7 @@ xn_env.Append(LIBPATH = Dir('.'))
 with TracesDisabled(xn_env) as untraced_env:
     optflags=Split("""$CCFLAGS -Wall -O2""")
     srcs = untraced_env.AutoSplit('''reader.c dummy.cpp''')
-    libs = ["reader", "trace_bin_fmts", "rt", "trace_util"]
+    libs = ["reader", "trace_bin_fmts", "rt", "trace_util", "snappy"]
     prog = untraced_env.XnProgram(target = "reader", source = srcs, LIBS = libs, CCFLAGS = optflags, LINKFLAGS="-lz")
     untraced_env.Alias('xn', prog)
 
