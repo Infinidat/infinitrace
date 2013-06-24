@@ -32,7 +32,6 @@
 #include <syslog.h>
 #include <errno.h>
 #include <limits.h>
-#include <sys/mman.h>
 
 #include "../trace_user.h"
 #include "../opt_util.h"
@@ -44,6 +43,8 @@
 #include "buffers.h"
 #include "init.h"
 #include "open_close.h"
+#include "internal_buffer.h"
+#include "mm_writer.h"
 
 static struct trace_dumper_configuration_s trace_dumper_configuration;
 
@@ -59,6 +60,9 @@ static const char usage[] = {
     "                                           max_recs_pending:       Maximum number of records which haven't been confirmed to be committed to disk \n" \
     "                                           write_size_bytes:       The dumper should attempt to write n byte blocks aligned to n byte boundaries \n" \
     "                                           max_flush_interval_ms:  Maximum interval between flushes to disk (assuming there is data to be written) \n" \
+    " -c  --compressed[param=value]         Write to files in a compressed format using a memory buffer, optionally specifying a parameter \n" \
+    "                                       This option may recur multiple times with different parameters. Recognized parameters: \n" \
+    "                                           buffer size:            Buffer size in bytes (will be rounded to pages) \n" \
     " -N  --notification-file[filename]     Write notifications (messages with severity > notification level) to a separate file\n" \
     " -L  --notification-level[level]       Specify minimum severity that will be written to the notification file (default: WARN)\n" \
     " -b  --logdir                          Specify the base log directory trace files are written to              \n" \
@@ -79,6 +83,7 @@ static const struct option longopts[] = {
     { "pid", required_argument, 0, 'p'},
     { "write-to-file", optional_argument, 0, 'w'},
     { "low-latency-write", optional_argument, 0, 'l'},
+    { "compressed", optional_argument, 0, 'c'},
     { "notification-file",  optional_argument, 0, 'N'},
     { "notification-level", required_argument, 0, 'L'},
     { "quota-size", required_argument, 0, 'q'},
@@ -106,12 +111,15 @@ static void init_compiled_in_defaults(struct trace_dumper_configuration_s *conf)
     /* TODO: Make the following parameters configurable at runtime. */
     conf->notifications_subdir = "warn";
     conf->log_details = FALSE;
+    conf->buffered_mode_flush_max_interval = TRACE_MS * 50;
 
     /* Compiled-in defaults, can be overridden via the command-line */
     conf->max_records_pending_write_via_mmap = ULONG_MAX;
     conf->max_flush_interval = 1 * TRACE_SECOND;
     conf->preferred_flush_bytes = 0; /* Use page size */
     conf->attach_to_pid = 0;
+    conf->compression_algo = 0;     /* disabled */
+    conf->internal_buf_size = 2 << 26;
 }
 
 static bool_t param_eq(const char *user_given_name, const char *param_name)
@@ -160,6 +168,44 @@ num_out_of_range:
 return_einval:
     errno = EINVAL;
     return -1;
+}
+
+static int parse_compressed_mode_param(struct trace_dumper_configuration_s *conf, const char *arg)
+{
+    char *name = NULL;
+    char *str_value = NULL;
+
+    if (0 == conf->compression_algo) {
+        conf->compression_algo = TRACE_CHUNK_HEADER_FLAG_COMPRESSED_SNAPPY;
+    }
+
+    if (arg && *arg) {
+        long long value = -1;
+        const bool_t is_num = trace_parse_name_value_pair(strdupa(arg), &name, &str_value, &value);
+        if (! is_num) {
+            fprintf(stderr, "The value %s specified for compressed mode parameter %s is not valid number\n", str_value, name);
+            goto return_einval;
+        }
+
+        if (param_eq(name, "max_recs_pending")) {
+            if (value > 0)
+                conf->internal_buf_size = value;
+            else
+                goto num_out_of_range;
+        }
+        else {
+            fprintf(stderr, "Unknown compressed mode parameter %s\n", name);
+            goto return_einval;
+        }
+    }
+
+    return 0;
+
+    num_out_of_range:
+        fprintf(stderr, "The value %s specified for %s is outside the permitted range\n", str_value, name);
+    return_einval:
+        errno = EINVAL;
+        return -1;
 }
 
 static int parse_execute_on_event_param(struct trace_dumper_configuration_s *conf, const char *arg)
@@ -246,6 +292,12 @@ int parse_commandline(struct trace_dumper_configuration_s *conf, int argc, char 
         		return -1;
         	}
         	break;
+        case 'c':
+            if (parse_compressed_mode_param(conf, optarg) < 0) {
+                fprintf(stderr, "Bad compressed parameter specification %s\n", optarg);
+                return -1;
+            }
+            break;
         case 'N':
             conf->write_notifications_to_file = 1;
             conf->fixed_notification_filename = optarg;
@@ -406,11 +458,16 @@ int init_dumper(struct trace_dumper_configuration_s *conf)
     }
 
     if (conf->low_latency_write) {
-    	syslog(LOG_USER|LOG_INFO,
-    			"Trace dumper is writing records in low latency mode using memory mappings, with max_recs_pending=%lu (0x%lX), write_size_bytes=%lu (0x%lX), max_flush_interval_ms=%.3f sec",
-    			conf->max_records_pending_write_via_mmap, conf->max_records_pending_write_via_mmap,
-    			conf->preferred_flush_bytes, conf->preferred_flush_bytes,
-    			conf->max_flush_interval / (double) TRACE_SECOND);
+    	INFO("Trace dumper is writing records in low latency mode using memory mappings, with max_recs_pending=", conf->max_records_pending_write_via_mmap,
+    	        "write_size_bytes= ", conf->preferred_flush_bytes, "max_flush_interval_ms=", conf->max_flush_interval);
+    }
+    else if (conf->compression_algo) {
+        /* Check that exactly one compression algorithm is enabled */
+        TRACE_ASSERT((  (TRACE_CHUNK_HEADER_FLAG_COMPRESSED_ANY & conf->compression_algo) == conf->compression_algo) &&
+                        (1 == __builtin_popcount(conf->compression_algo)));
+        TRACE_ASSERT(conf->internal_buf_size > 0);
+        conf->record_file.internal_buf = internal_buf_alloc(conf->internal_buf_size);
+        INFO("Allocated internal buffer of nominal size", conf->internal_buf_size, "bytes, n_recs=", conf->record_file.internal_buf->n_recs);
     }
 
     return 0;

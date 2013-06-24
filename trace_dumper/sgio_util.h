@@ -24,7 +24,11 @@
 #include <sys/uio.h>
 
 size_t total_iovec_len(const struct iovec *iov, int iovcnt);
+int max_iovecs_fitting_size(const struct iovec *iov, int iovcnt, size_t max_size);
 ssize_t copy_iov_to_buffer(void *buffer, const struct iovec *iov, int iovcnt);
 ssize_t trace_dumper_writev(int fd, const struct iovec *iov, int iovcnt);
+
+struct trace_record;
+static inline struct trace_record *trace_record_from_iov(const struct iovec *iov) { return (struct trace_record *) (iov->iov_base); }
 
 #endif /* SGIO_UTIL_H_ */

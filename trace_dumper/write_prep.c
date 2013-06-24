@@ -130,6 +130,9 @@ void init_buffer_chunk_record(struct trace_dumper_configuration_s *conf, const s
     (*bd)->dump_header_offset = conf->last_flush_offset;
     (*bd)->ts = cur_ts;
     (*bd)->records = deltas->total;
+    if ((*bd)->records >= 2) {
+        (*bd)->flags |= conf->compression_algo;
+    }
     (*bd)->severity_type = mapped_records->imutab->severity_type;
 
     const trace_record_counter_t records_lost_in_process =
@@ -149,7 +152,7 @@ void init_buffer_chunk_record(struct trace_dumper_configuration_s *conf, const s
         }
     }
 
-    mapped_records->next_flush_offset = conf->record_file.records_written + total_written_records;
+    mapped_records->next_flush_offset = trace_dumper_get_effective_record_file_pos(&conf->record_file) + total_written_records;
 
     /* Place the buffer chunk header record in the iovec. */
     (*iovec) = &conf->flush_iovec[(*iovcnt)++];

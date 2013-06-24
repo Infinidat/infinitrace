@@ -4,9 +4,9 @@ CXXFLAGS=-fno-rtti
 LIBTRACE_OBJS=trace_metadata_util.o halt.o 
 LIBPARSER_OBJS=timeformat.o parser.o renderer.o filter.o parser_mmap.o hashmap.o trace_metadata_util.o hashmap.o validator.o
 LIBTRACEUSER_OBJS=trace_metadata_util.o trace_user.o halt.o trace_clock.o
-LIBTRACEUTIL_OBJS=opt_util.o trace_str_util.o file_naming.o trace_clock.o
+LIBTRACEUTIL_OBJS=opt_util.o trace_str_util.o file_naming.o trace_clock.o trace_mmap_util.o
 LIBSNAPPY_OBJS=snappy/snappy.o
-DUMPER_OBJS=trace_dumper/trace_dumper.o trace_dumper/filesystem.o trace_dumper/events.o trace_dumper/sgio_util.o trace_dumper/mm_writer.o trace_dumper/writer.o trace_dumper/write_prep.o trace_dumper/buffers.o trace_dumper/init.o trace_dumper/open_close.o trace_dumper/metadata.o trace_dumper/housekeeping.o trace_user_stubs.o
+DUMPER_OBJS=trace_dumper/trace_dumper.o trace_dumper/filesystem.o trace_dumper/events.o trace_dumper/sgio_util.o trace_dumper/internal_buffer.o trace_dumper/mm_writer.o trace_dumper/writer.o trace_dumper/write_prep.o trace_dumper/buffers.o trace_dumper/init.o trace_dumper/open_close.o trace_dumper/metadata.o trace_dumper/housekeeping.o trace_user_stubs.o
 
 TARGET_PLATFORM=$(shell gcc -v 2>&1|fgrep Target|cut -d':' -d' ' -f2|cut -d'-' -f 2,3)
 EXTRA_LIBS=
@@ -24,8 +24,9 @@ ifndef DISABLE_OPT  # Make sure to set this variable when building on Mac inside
 endif
 
 all: $(ALL_TARGETS)
-trace_dumper: libtrace libtraceutil $(DUMPER_OBJS)
-	gcc -L.  $(DUMPER_OBJS) -ltrace -ltraceutil -lparser $(EXTRA_LIBS) -o trace_dumper/trace_dumper 
+
+trace_dumper: libtrace libtraceutil libsnappy libparser $(DUMPER_OBJS)
+	gcc -L.  $(DUMPER_OBJS) -ltrace -ltraceutil -lparser -lsnappy $(EXTRA_LIBS) -o trace_dumper/trace_dumper 
 
 libtrace: $(LIBTRACE_OBJS) libtraceutil
 	ar rcs libtrace.a $(LIBTRACE_OBJS)

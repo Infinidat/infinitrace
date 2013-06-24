@@ -28,6 +28,7 @@
 #include "../trace_clock.h"
 #include "trace_dumper.h"
 #include "writer.h"
+#include "open_close.h"
 #include "metadata.h"
 
 static void init_metadata_rec(struct trace_record *rec, const struct trace_mapped_buffer *mapped_buffer)
@@ -72,7 +73,10 @@ static inline size_t num_metadata_trace_records(size_t metadata_size)
 
 static int trace_dump_metadata(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file, struct trace_mapped_buffer *mapped_buffer)
 {
-    int rc;
+    int rc = open_trace_file_if_necessary(conf);
+    if (0 != rc) {
+        return rc;
+    }
 
     mapped_buffer->metadata.metadata_payload_record.ts = trace_get_nsec();
 
@@ -129,6 +133,11 @@ int dump_metadata_if_necessary(struct trace_dumper_configuration_s *conf, struct
     }
 
     return 0;
+}
+
+bool_t metadata_dumping_needed(const struct trace_dumper_configuration_s *conf, const struct trace_mapped_buffer *mapped_buffer)
+{
+    return !mapped_buffer->metadata_dumped || (conf->write_notifications_to_file && !mapped_buffer->notification_metadata_dumped);
 }
 
 void init_metadata_iovector(struct trace_mapped_metadata *metadata, trace_pid_t pid)

@@ -29,8 +29,11 @@
 #include "mm_writer.h"
 #include "writer.h"
 #include "write_prep.h"
+#include "sgio_util.h"
+#include "internal_buffer.h"
 #include "buffers.h"
 #include "open_close.h"
+#include "metadata.h"
 #include "housekeeping.h"
 
 #define COLOR_BOOL conf->color
@@ -112,8 +115,57 @@ static int reap_empty_dead_buffers(struct trace_dumper_configuration_s *conf)
     return 0;
 }
 
+static int flush_internal_buffer(struct trace_dumper_configuration_s *conf)
+{
+    int rc = 0;
+    if (conf->record_file.internal_buf) {
+        struct iovec iov[2];
+        int iovcnt = 0;
+        memset(iov, 0, sizeof(iov));
+        internal_buf_create_iov_for_pending_writes(conf->record_file.internal_buf, iov, &iovcnt);
+        const ssize_t expected_len = total_iovec_len(iov, iovcnt);
+        if (expected_len > 0) {
+            const int bytes_written = trace_dumper_write(conf, &conf->record_file, iov, iovcnt);
+            if (bytes_written == expected_len) {
+                internal_buf_commit_read(conf->record_file.internal_buf);
+            }
+            else {
+                if (bytes_written >= 0) {
+                    errno = EIO;
+                }
+                ERR("Flusing to internal buffer of", expected_len, bytes_written, "failed with error", errno, strerror(errno));
+                internal_buf_rollback_read(conf->record_file.internal_buf);
+                rc = -1;
+            }
+        }
+
+        TRACE_ASSERT(0 == internal_buf_num_recs_pending(conf->record_file.internal_buf));
+    }
+
+    return rc;
+}
+
+static int dump_new_metadata(struct trace_dumper_configuration_s *conf)
+{
+    struct trace_mapped_buffer *mapped_buffer = NULL;
+    int i = 0;
+    for_each_mapped_buffer(i, mapped_buffer) {
+        const int rc = dump_metadata_if_necessary(conf, mapped_buffer);
+        if (0 != rc) {
+            ERR("Failed to dump new metadata for pid", mapped_buffer->pid, mapped_buffer->name, "due to error", errno, strerror(errno));
+            return rc;
+        }
+    }
+
+    return 0;
+}
+
 int do_housekeeping_if_necessary(struct trace_dumper_configuration_s *conf)
 {
+    if (flush_internal_buffer(conf) < 0) {
+        return -1;
+    }
+
     apply_requested_file_operations(conf, TRACE_REQ_CLOSE_ALL_FILES | TRACE_REQ_DISCARD_ALL_BUFFERS);
 
     const trace_ts_t HOUSEKEEPING_INTERVAL = 10000000; /* 10ms */
@@ -138,6 +190,11 @@ int do_housekeeping_if_necessary(struct trace_dumper_configuration_s *conf)
         if (0 != rc) {
             ERR("map_new_buffers returned", rc, TRACE_NAMED_PARAM(errno, errno), strerror(errno));
             syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while mapping new buffers.", strerror(errno));
+            return rc;
+        }
+
+        rc = dump_new_metadata(conf);
+        if (0 != rc) {
             return rc;
         }
     }

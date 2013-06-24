@@ -44,4 +44,6 @@ int trace_dumper_write_via_file_io(const struct trace_dumper_configuration_s *co
 void trace_dumper_update_written_record_count(struct trace_record_file *record_file);
 bool_t trace_dumper_record_file_state_is_ok(const struct trace_record_file *record_file);
 
+/* Get the actual position in the file of the next record to be written, taking the internal buffer into account */
+trace_record_counter_t trace_dumper_get_effective_record_file_pos(const struct trace_record_file *record_file);
 #endif /* WRITER_H_ */

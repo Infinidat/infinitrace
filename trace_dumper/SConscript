@@ -1,8 +1,8 @@
 Import('xn_env')
 Import('TracesDisabled')
 
-srcs = xn_env.AutoSplit('''filesystem.c trace_dumper.c events.c sgio_util.c mm_writer.c writer.c buffers.c init.c open_close.c metadata.c write_prep.c housekeeping.c''')
-libs = ["trace_bin_fmts", "rt", "trace_util_traced"]
+srcs = xn_env.AutoSplit('''filesystem.c trace_dumper.c events.c sgio_util.c internal_buffer.c mm_writer.c writer.c buffers.c init.c open_close.c metadata.c write_prep.c housekeeping.c''')
+libs = ["trace_bin_fmts", "rt", "trace_util_traced", "snappy_traced"]
 prog = xn_env.XnProgram(target = "trace_dumper", source = srcs, LIBS = libs)
 xn_env.Alias('xn', prog)
 

@@ -162,3 +162,17 @@ size_t trace_strncpy(char* dest, const char* source, size_t max_size)
 		return p - dest - 1;
 	}
 }
+
+size_t trace_r_count_chr_occurrences(const char *s, size_t len, int c)
+{
+    if (0 == len) {
+        return 0;
+    }
+
+    const char *const last = s + len - 1;
+    const char *p;
+    for (p = last; ((p >= s) && (*p == c)); p--)
+        ;
+
+    return last - p;
+}

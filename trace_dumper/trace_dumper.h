@@ -108,11 +108,14 @@ struct trace_record_io_timestamps {
 	trace_ts_t finished_validation;
 };
 
+struct trace_internal_buf;
+
 struct trace_record_file {
-    unsigned long records_written;
+    trace_record_counter_t records_written;  /* Records actually written to the underlying file */
     char filename[NAME_MAX];
     int fd;
     struct trace_output_mmap_info *mapping_info;
+    struct trace_internal_buf *internal_buf;
     trace_record_counter_t records_discarded;
     struct iovec *iov;
     unsigned iov_allocated_len;
@@ -124,6 +127,7 @@ struct trace_record_file {
     FILE *perf_log_file;
     struct trace_record_io_timestamps ts;
 };
+
 
 struct trace_post_event_actions {
     const char *on_file_close;
@@ -179,6 +183,9 @@ struct trace_dumper_configuration_s {
     unsigned int log_details;
     bool_t		 log_performance_to_file;
     bool_t	     low_latency_write;
+    unsigned     compression_algo;
+    trace_ts_t   buffered_mode_flush_max_interval;
+    size_t       internal_buf_size;
     trace_ts_t 	 start_time;
     unsigned int no_color_specified;
     unsigned int color;
@@ -200,7 +207,7 @@ struct trace_dumper_configuration_s {
     enum operation_type op_type;
     trace_ts_t prev_flush_ts;
     trace_ts_t next_flush_ts;
-    trace_ts_t ts_flush_delta;
+    trace_ts_t ts_flush_delta;  /* Polling interval used by the main thread */
     trace_ts_t next_stats_dump_ts;
     trace_ts_t next_housekeeping_ts;
 

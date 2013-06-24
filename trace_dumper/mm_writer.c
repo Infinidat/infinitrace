@@ -37,6 +37,7 @@
 #include "../trace_user.h"
 #include "../min_max.h"
 #include "../trace_clock.h"
+#include "../trace_mmap_util.h"
 #include "open_close.h"
 #include "events.h"
 #include "sgio_util.h"
@@ -223,9 +224,7 @@ static int setup_mmapping(const struct trace_dumper_configuration_s *conf, struc
         return -1;
     }
 
-    const long page_size = sysconf(_SC_PAGESIZE);
-    TRACE_ASSERT(page_size > 0);
-    record_file->mapping_info->page_size = (size_t) page_size;
+    record_file->mapping_info->page_size = trace_get_page_size();
     record_file->mapping_info->preferred_write_bytes = MAX(conf->preferred_flush_bytes, record_file->mapping_info->page_size);
     record_file->mapping_info->global_conf = conf;
     record_file->mapping_info->fd = record_file->fd;
@@ -387,7 +386,7 @@ int trace_dumper_write_via_mmapping(
             ERR("Failed to set-up mmapping errno=", errno, strerror(errno), record_file->filename);
             return -1;
     }
-    TRACE_ASSERT(MAP_FAILED != record_file->mapping_info->base);
+    TRACE_ASSERT((MAP_FAILED != record_file->mapping_info->base) && (record_file->mapping_info->fd >= 0));
     TRACE_ASSERT(0 != record_file->mapping_info->tid);
 
     size_t bytes_written = record_file->mapping_info->records_written * TRACE_RECORD_SIZE;

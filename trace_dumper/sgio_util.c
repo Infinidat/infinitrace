@@ -45,6 +45,20 @@ size_t total_iovec_len(const struct iovec *iov, int iovcnt)
     return total;
 }
 
+int max_iovecs_fitting_size(const struct iovec *iov, int iovcnt, size_t max_size)
+{
+    size_t total = 0;
+    int i;
+    for (i = 0; i < iovcnt; i++) {
+        total += iov[i].iov_len;
+        if (total > max_size) {
+            break;
+        }
+    }
+
+    return i;
+}
+
 ssize_t copy_iov_to_buffer(void *buffer, const struct iovec *iov, int iovcnt)
 {
     if ((NULL == iov) || (NULL == buffer)) {

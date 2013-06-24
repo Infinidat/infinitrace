@@ -42,6 +42,7 @@
 #include "filesystem.h"
 #include "events.h"
 #include "sgio_util.h"
+#include "internal_buffer.h"
 #include "mm_writer.h"
 #include "writer.h"
 #include "open_close.h"
@@ -214,6 +215,14 @@ int trace_dumper_write_to_record_file(struct trace_dumper_configuration_s *conf,
 void trace_dumper_update_written_record_count(struct trace_record_file *record_file)
 {
     trace_mm_writer_update_written_record_count(record_file);
+}
+
+trace_record_counter_t trace_dumper_get_effective_record_file_pos(const struct trace_record_file *record_file)
+{
+    /* TODO: This function can be used to eliminate the need for trace_dumper_update_written_record_count.
+     * NOTE: In a multithreaded implementation there can be a race condition between the update of the records written by the writer thread and the
+     * obtaining of the number of records pending here, causing some records to be counted twice. */
+    return record_file->records_written + internal_buf_num_recs_pending(record_file->internal_buf);
 }
 
 bool_t trace_dumper_record_file_state_is_ok(const struct trace_record_file *record_file)

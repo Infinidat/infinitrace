@@ -110,6 +110,9 @@ static inline bool_t trace_str_starts_with_prefix(const char *s, const char pref
      return TRACE_SEV_INVALID;
  }
 
+ /* Count the number of consecutive occurrences of c backward from last */
+ size_t trace_r_count_chr_occurrences(const char *s, size_t len, int c);
+
 #ifdef __cplusplus
 }
 #endif

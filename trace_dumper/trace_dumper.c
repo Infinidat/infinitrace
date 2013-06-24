@@ -45,8 +45,11 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "../trace_lib.h"
 #include "../trace_user.h"
 #include "../trace_str_util.h"
+#include "../snappy/snappy.h"
 #include "trace_dumper.h"
 #include "filesystem.h"
+#include "sgio_util.h"
+#include "internal_buffer.h"
 #include "write_prep.h"
 #include "writer.h"
 #include "buffers.h"
@@ -54,6 +57,12 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "open_close.h"
 #include "metadata.h"
 #include "housekeeping.h"
+
+
+// Start compression code
+
+#define ROUND_UP(num, divisor) ((divisor) * (((num) + (divisor) - 1) / (divisor)))
+#define ROUND_DOWN(num, divisor) ((num) - (num) % (divisor))
 
 
 static trace_record_counter_t adjust_for_overrun(struct trace_mapped_records *mapped_records)
@@ -128,58 +137,190 @@ static void reset_discarded_record_counters(struct trace_dumper_configuration_s 
 	conf->record_file.records_discarded = 0;
 }
 
-static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *conf, unsigned int total_written_records, trace_ts_t cur_ts)
+static int write_records_to_internal_buffer(struct trace_dumper_configuration_s *conf)
 {
     const unsigned int num_iovecs = conf->record_file.iov_count;
+    unsigned iovecs_processed = 1;
+    unsigned i;
+    const struct iovec *const iov = conf->flush_iovec;
+    struct trace_internal_buf *const buf = conf->record_file.internal_buf;
+    unsigned actual_records_written = 0;
+    struct trace_record *dump_header = NULL;
+
+    for (i = 0; i < num_iovecs; i += iovecs_processed) {
+        const struct trace_record *const rec = trace_record_from_iov(iov + i);
+        iovecs_processed = 1;  /* default */
+        switch(rec->rec_type) {
+        case TRACE_REC_TYPE_BUFFER_CHUNK: {
+            TRACE_ASSERT((i + 1 < num_iovecs) && (TRACE_RECORD_SIZE == iov[i].iov_len));
+            struct trace_record *const chunk_header = internal_buf_write_recs(buf, rec, 1);
+            if (NULL == chunk_header) {
+                goto rollback_on_err;
+            }
+
+            if (rec->u.buffer_chunk.flags & TRACE_CHUNK_HEADER_FLAG_COMPRESSED_ANY) {
+                TRACE_ASSERT((rec->u.buffer_chunk.flags & TRACE_CHUNK_HEADER_FLAG_COMPRESSED_ANY) == conf->compression_algo);
+                const struct iovec *const chunk_content_iov = iov + i + 1;
+                const unsigned n_record_bufs = max_iovecs_fitting_size(chunk_content_iov, num_iovecs - i - 1, TRACE_RECORD_SIZE * rec->u.buffer_chunk.records);
+                TRACE_ASSERT(TRACE_RECORD_SIZE * rec->u.buffer_chunk.records == total_iovec_len(chunk_content_iov, n_record_bufs));
+
+                const ssize_t num_compressed_bytes = internal_buf_write_compressed(buf, chunk_content_iov, n_record_bufs);
+                if (num_compressed_bytes < 0) {
+                    goto rollback_on_err;
+                }
+
+                const ssize_t num_compressed_recs = internal_buf_bytes_to_recs(num_compressed_bytes);
+                actual_records_written += num_compressed_recs;
+                iovecs_processed += n_record_bufs;
+                chunk_header->u.buffer_chunk.records = num_compressed_recs;
+                chunk_header->u.buffer_chunk.slack_bytes = TRACE_RECORD_SIZE * num_compressed_recs - num_compressed_bytes;
+                TRACE_ASSERT(chunk_header->u.buffer_chunk.slack_bytes < TRACE_RECORD_SIZE);
+            }
+
+            actual_records_written += 1;
+            break;
+        }
+
+        case TRACE_REC_TYPE_DUMP_HEADER:
+            TRACE_ASSERT((0 == i) && (NULL == dump_header) && (TRACE_RECORD_SIZE == iov[i].iov_len));
+            TRACE_ASSERT((num_iovecs >= 3) &&
+                    (TRACE_REC_TYPE_BUFFER_CHUNK == trace_record_from_iov(iov + 1)->rec_type) &&
+                    (TRACE_REC_TYPE_TYPED        == trace_record_from_iov(iov + 2)->rec_type));
+            dump_header = internal_buf_write_recs(buf, rec, 1);
+            if (NULL == dump_header) {
+                goto rollback_on_err;
+            }
+            TRACE_ASSERT(iovecs_processed == 1);
+            actual_records_written += 1;
+            break;
+
+        case TRACE_REC_TYPE_UNKNOWN: {
+            const trace_ts_t ts = rec->ts;
+            DEBUG("Encountered a record of type unknown", ts, rec->pid, rec->tid, rec->severity);
+        }
+            /* no break - handle as a TRACE_REC_TYPE_TYPED record */
+
+        case TRACE_REC_TYPE_TYPED: {
+            if (i > 0) {
+                const struct trace_record *const presumed_chunk = trace_record_from_iov(iov + i - 1);
+                TRACE_ASSERT((presumed_chunk->rec_type != TRACE_REC_TYPE_BUFFER_CHUNK) || (0 == (presumed_chunk->u.buffer_chunk.flags & TRACE_CHUNK_HEADER_FLAG_COMPRESSED_ANY)));
+            }
+            TRACE_ASSERT(0 == (iov[i].iov_len % TRACE_RECORD_SIZE));
+            const size_t n_recs = iov[i].iov_len / TRACE_RECORD_SIZE;
+
+            if (NULL == internal_buf_write_recs(buf, rec, n_recs)) {
+                goto rollback_on_err;
+            }
+            TRACE_ASSERT(iovecs_processed == 1);
+            actual_records_written += n_recs;
+        }
+            break;
+
+            /* TODO: Consider handling metadata by inserting a special indicator that instructs the writer thread to write metadata */
+
+        default:
+            TRACE_ASSERT(0);
+            break;
+        }
+    }
+
+    if (actual_records_written > 0) {
+        if (NULL != dump_header) {
+            dump_header->u.dump_header.total_dump_size = actual_records_written - 1;
+        }
+
+        internal_buf_commit_write(buf);
+    }
+    return actual_records_written;
+
+rollback_on_err:
+    internal_buf_rollback_write(buf);
+    if (ENOMEM == errno) {
+        DEBUG("Not enough space in the internal buffer only had space for", actual_records_written, buf->read_idx.c, buf->write_idx.c, buf->n_slack_recs.c);
+    }
+    else {
+        ERR("FAILED record writing to internal buffer! errno=", errno, strerror(errno));
+    }
+    return -1;
+}
+
+static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *conf, unsigned int total_written_records, trace_ts_t cur_ts)
+{
+    unsigned int num_iovecs = conf->record_file.iov_count;
+    int bytes_written = 0;
+
     if (num_iovecs > 1) {
     	TRACE_ASSERT(num_iovecs >= 3);  /* Should have at least dump and chunk headers and some data */
         conf->last_flush_offset = conf->record_file.records_written;
 		conf->prev_flush_ts = cur_ts;
 		conf->next_flush_ts = cur_ts + conf->ts_flush_delta;
 
-        const int bytes_written = trace_dumper_write(conf, &conf->record_file, conf->flush_iovec, num_iovecs);
-		if ((unsigned int)bytes_written != (total_written_records * sizeof(struct trace_record))) {
-			if (bytes_written < 0) {
-				if (EAGAIN != errno) {
-				    ERR("Unexpected error while writing records, errno=", errno, strerror(errno));
-					syslog(LOG_ERR|LOG_USER, "Had error %s (%d) while writing records", strerror(errno), errno);
-					return -1;
-				}
-				else {
-				    int i;
-				    int rid;
-				    struct trace_mapped_buffer *mapped_buffer = NULL;
-				    struct trace_mapped_records *mapped_records = NULL;
+		const struct iovec *const iov = conf->flush_iovec;
 
-					for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
-					    if (mapped_records->current_read_record != mapped_records->next_flush_record) {
-					        TRACE_ASSERT(mapped_records->current_read_record <= mapped_records->next_flush_record);
-					        trace_record_counter_t n_discarded_records = mapped_records->next_flush_record - mapped_records->current_read_record;
-					        WARN("Trace dumper has had to discard records due to insufficient buffer space for pid", mapped_buffer->pid, mapped_buffer->name, rid, n_discarded_records);
-					        mapped_records->num_records_discarded_by_dumper += n_discarded_records;
-					    }
-					}
+	    if (conf->compression_algo) {
+	        bytes_written = write_records_to_internal_buffer(conf);
+	        if ((bytes_written < 0) && (ENOMEM == errno)) {
+	            return -1;
+            }
+	    }
+	    else {
+            const struct trace_record *const dump_header = (const struct trace_record *) iov[0].iov_base;
+            assert((dump_header->rec_type != TRACE_REC_TYPE_DUMP_HEADER) || (dump_header->u.dump_header.total_dump_size + 1 == total_written_records));
 
-					/* We had to discard records, but since we did so in a controlled manner with proper reporting we return success. */
-				}
-			}
-			else {
-			    ERR("Wrote fewer bytes than requested:", bytes_written, "Actual records written:", bytes_written / (int)sizeof(struct trace_record), total_written_records);
-				syslog(LOG_ERR|LOG_USER, "Wrote only %d records out of %u requested", (bytes_written / (int)sizeof(struct trace_record)), total_written_records);
-				/* TODO: Consider "rewinding" the file in this case. */
+            bytes_written = trace_dumper_write(conf, &conf->record_file, iov, num_iovecs);
+            if ((unsigned int)bytes_written != (total_written_records * sizeof(struct trace_record))) {
+                if (bytes_written < 0) {
+                    if (EAGAIN != errno) {
+                        ERR("Unexpected error while writing records, errno=", errno, strerror(errno));
+                        syslog(LOG_ERR|LOG_USER, "Had error %s (%d) while writing records", strerror(errno), errno);
+                        return -1;
+                    }
+                    else {
+                        int i;
+                        int rid;
+                        struct trace_mapped_buffer *mapped_buffer = NULL;
+                        struct trace_mapped_records *mapped_records = NULL;
 
-				if (0 == errno) {
-				    errno = ETIMEDOUT;
-				}
-				return -1;
-			}
+                        for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
+                            if (mapped_records->current_read_record != mapped_records->next_flush_record) {
+                                TRACE_ASSERT(mapped_records->current_read_record <= mapped_records->next_flush_record);
+                                trace_record_counter_t n_discarded_records = mapped_records->next_flush_record - mapped_records->current_read_record;
+                                WARN("Trace dumper has had to discard records due to insufficient buffer space for pid", mapped_buffer->pid, mapped_buffer->name, rid, n_discarded_records);
+                                mapped_records->num_records_discarded_by_dumper += n_discarded_records;
+                            }
+                        }
 
-		}
-        
-		conf->record_file.iov_count = 0;
-		advance_mapped_record_counters(conf);
+                        /* We had to discard records, but since we did so in a controlled manner with proper reporting we return success. */
+                    }
+                }
+                else {
+                    ERR("Wrote fewer bytes than requested:", bytes_written, "Actual records written:", bytes_written / (int)sizeof(struct trace_record), total_written_records);
+                    syslog(LOG_ERR|LOG_USER, "Wrote only %d records out of %u requested", (bytes_written / (int)sizeof(struct trace_record)), total_written_records);
+                    /* TODO: Consider "rewinding" the file in this case. */
+
+                    if (0 == errno) {
+                        errno = ETIMEDOUT;
+                    }
+                    return -1;
+                }
+
+            }
+	    }
 	}
 
+    if (bytes_written >= 0) {
+        conf->record_file.iov_count = 0;
+        if (bytes_written > 0) {
+            advance_mapped_record_counters(conf);
+        }
+    }
+    else {
+        // TODO: Failing to write due to insufficient buffer space is not an error!
+        ERR("Not advancing counters due to write error, errno=", errno, strerror(errno));
+        return -1;
+    }
+
+    TRACE_ASSERT(0 == conf->record_file.iov_count);
     return 0;
 }
 
@@ -258,6 +399,19 @@ static int write_notification_records(struct trace_dumper_configuration_s *conf)
     return rc;
 }
 
+static bool_t should_dump_metadata(struct trace_dumper_configuration_s *conf)
+{
+    struct trace_mapped_buffer *mapped_buffer = NULL;
+    int i = 0;
+    for_each_mapped_buffer(i, mapped_buffer) {
+        if (metadata_dumping_needed(conf, mapped_buffer)) {
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
+
 /* Iterate over all the mapped buffers and flush them. The result will be a new dump added to the file, with the
  * records flushed from every buffer that has data pending constituting a chunk.
  * A negative return value indicates an error. A non-negative return value indicates the total number of records still pending
@@ -266,7 +420,6 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 {
     struct trace_mapped_buffer *mapped_buffer = NULL;
     struct trace_mapped_records *mapped_records = NULL;
-    trace_ts_t cur_ts;
     struct trace_record dump_header_rec;
     struct iovec *iovec;
     unsigned int num_iovecs = 0;
@@ -274,29 +427,17 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
     unsigned int total_written_records = 0;
     int total_unflushed_records = 0;
     long lost_records = 0L;
-    int rc = 0;
     trace_record_counter_t min_remaining = TRACE_RECORD_BUFFER_RECS;
 
-	cur_ts = get_nsec_monotonic();
+	const trace_ts_t cur_ts = get_nsec_monotonic();
+	init_dump_header(conf, &dump_header_rec, cur_ts, &iovec, &num_iovecs, &total_written_records);
 
-	bool_t premature_call = (cur_ts + 500 < conf->next_flush_ts);
-	if (!premature_call) {
-		init_dump_header(conf, &dump_header_rec, cur_ts, &iovec, &num_iovecs, &total_written_records);
-	}
-	else {
-		syslog(LOG_USER|LOG_DEBUG, "Trace buffer flush called prematurely at %llu < %llu", cur_ts, conf->next_flush_ts);
-	}
 
 	for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
 		struct trace_record_buffer_dump *bd = NULL;
 		const struct trace_record *last_rec = NULL;
 		struct records_pending_write deltas;
-
         lost_records = 0;
-        rc = dump_metadata_if_necessary(conf, mapped_buffer);
-        if (0 != rc) {
-            return rc;
-        }
         
         if (! mapped_records_may_exceed_severity(mapped_records, conf->minimal_allowed_severity)) {
             WARN("Not dumping pid", mapped_buffer->pid, "with severity type", mapped_records->imutab->severity_type, "due to overwrite");
@@ -305,10 +446,6 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
         
         calculate_delta(mapped_records, &deltas);
         total_unflushed_records += deltas.beyond_chunk_size;
-        if (premature_call) {
-        	total_unflushed_records += deltas.total;
-        	continue;
-        }
 
         lost_records = deltas.lost;
         if (lost_records) {
@@ -353,33 +490,35 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
         if (conf->write_notifications_to_file && mapped_records_may_exceed_severity(mapped_records, conf->minimal_notification_severity)) {
             unsigned int num_warn_iovecs = add_warn_records_to_iov(mapped_records, deltas.total, conf->minimal_notification_severity, &conf->notification_file);
 			if (num_warn_iovecs > 0) {
-			    rc = write_notification_records(conf);
+			    write_notification_records(conf);
 			}
         }
 
 		total_written_records += deltas.total + 1;
 	}
 
-	if (!premature_call) {
-		dump_header_rec.u.dump_header.total_dump_size = total_written_records - 1;
-		trace_dumper_update_written_record_count(&conf->record_file);
-		dump_header_rec.u.dump_header.first_chunk_offset = conf->record_file.records_written + 1;
+    dump_header_rec.u.dump_header.total_dump_size = total_written_records - 1;
+    trace_dumper_update_written_record_count(&conf->record_file);
+    TRACE_ASSERT(trace_dumper_get_effective_record_file_pos(&conf->record_file) >= conf->record_file.records_written);
+    dump_header_rec.u.dump_header.first_chunk_offset =  trace_dumper_get_effective_record_file_pos(&conf->record_file) + 1;
 
-		conf->record_file.post_write_validator = trace_dump_validator;
-		conf->record_file.validator_context = NULL;
-		conf->record_file.iov_count = num_iovecs;
+    conf->record_file.post_write_validator = trace_dump_validator;
+    conf->record_file.validator_context = NULL;
+    conf->record_file.iov_count = num_iovecs;
 
-		if (possibly_write_iovecs_to_disk(conf, total_written_records, cur_ts) < 0) {
-			TRACE_ASSERT(0 != errno);
-			WARN("Writing records did not complete successfully. errno=", errno, num_iovecs, total_written_records, cur_ts);
-			return -1;
-		}
+    if (possibly_write_iovecs_to_disk(conf, total_written_records, cur_ts) < 0) {
+        TRACE_ASSERT(0 != errno);
+        if (ENOMEM != errno) {
+            WARN("Writing records did not complete successfully. errno=", errno, num_iovecs, total_written_records, cur_ts);
+        }
+        return -1;
+    }
 
-		report_record_loss(&conf->record_file);
+    report_record_loss(&conf->record_file);
 
-		/* The latest chunk written has successfully output information about any discarded records, so reset the counters. */
-		reset_discarded_record_counters(conf);
-	}
+    /* The latest chunk written has successfully output information about any discarded records, so reset the counters. */
+    reset_discarded_record_counters(conf);
+
     return total_unflushed_records;
 }
 
@@ -398,6 +537,7 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
 {
     int rc = 0;
     bool_t file_creation_err = FALSE;
+    TRACE_ASSERT(0 == internal_buf_num_recs_pending(conf->record_file.internal_buf));
     while (! dumping_should_stop(conf)) {
         rc = rotate_trace_file_if_necessary(conf);
         if (0 != rc) {
@@ -414,16 +554,17 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
         }
         
         possibly_dump_online_statistics(conf);
-        
-        rc = trace_flush_buffers(conf);
-        if (rc > TRACE_FILE_IMMEDIATE_FLUSH_THRESHOLD) {
-        	struct timespec ts = { 0, conf->ts_flush_delta };
-        	TRACE_ASSERT(0 == TEMP_FAILURE_RETRY(nanosleep(&ts, &ts)));
-        	continue;
-        }
-        else if (rc < 0) {
-        	syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while flushing trace buffers.", strerror(errno));
-        	break;
+        if (! should_dump_metadata(conf)) {
+            rc = trace_flush_buffers(conf);
+            if (rc > TRACE_FILE_IMMEDIATE_FLUSH_THRESHOLD) {
+                struct timespec ts = { 0, conf->ts_flush_delta };
+                TRACE_ASSERT(0 == TEMP_FAILURE_RETRY(nanosleep(&ts, &ts)));
+                continue;
+            }
+            else if ((rc < 0) && (ENOMEM != errno)) {
+                syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while flushing trace buffers.", strerror(errno));
+                break;
+            }
         }
 
         rc = do_housekeeping_if_necessary(conf);

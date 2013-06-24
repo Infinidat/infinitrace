@@ -32,7 +32,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
-#include <sys/mman.h>
 #include <sys/resource.h>
 #include <errno.h>
 #include <assert.h>
@@ -42,6 +41,7 @@
 #include <sys/inotify.h>
 #endif
 
+#include "trace_mmap_util.h"
 #include "min_max.h"
 #include "parser.h"
 #include "parser_mmap.h"
@@ -51,46 +51,6 @@ static int remove_limits(void)
 {
     const struct rlimit limit = { RLIM_INFINITY, RLIM_INFINITY };
     return setrlimit(RLIMIT_AS, &limit);
-}
-
-static off64_t aligned_size(off64_t size)
-{
-    static long long page_size;
-
-    if (!page_size) {
-        page_size = sysconf(_SC_PAGE_SIZE);
-        if (!page_size || (page_size & (page_size - 1))) {
-            /* page size is not a power of two */
-            page_size = 4096;
-        }
-    }
-
-    return (size + page_size - 1) & ~(page_size - 1);
-}
-
-static void *mmap_new_anon_mem(size_t size)
-{
-    return mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANON, -1, 0);
-}
-
-static void *mmap_grow(void *const addr, size_t size, size_t new_size)
-{
- #ifdef _USE_MREMAP_
-    if (NULL == addr) {
-        assert(0 == size);
-        return mmap_new_anon_mem(new_size);
-    }
-    return mremap(addr, size, new_size, MREMAP_MAYMOVE);
-#else
-    void* new_addr = mmap_new_anon_mem(new_size);
-    if ((new_addr != MAP_FAILED) && (addr)) {
-        memcpy(new_addr, addr, size);
-        munmap(addr, size);
-    }
-
-    return new_addr;
-
-#endif
 }
 
 static unsigned long long ull_from_le_bytes(const unsigned char *bytes, size_t len)
@@ -155,9 +115,9 @@ static void *mmap_gzip(int fd, off64_t *input_size)
         return NULL;
     }
 
-    size = aligned_size(size);
+    size = trace_round_size_up_to_page_size(size);
 
-    addr = mmap_grow(NULL, 0, size);
+    addr = trace_mmap_grow(NULL, 0, size);
     if (addr == MAP_FAILED) {
         gzclose(gz);
         return addr;
@@ -179,12 +139,12 @@ static void *mmap_gzip(int fd, off64_t *input_size)
 
         // size in trailer doesn't match actual data - more than 4G of input?
         if (avail == 0) {
-            long long new_size = aligned_size(size + 0x100000000ll);
+            long long new_size = trace_round_size_up_to_page_size(size + 0x100000000ll);
             void* new_addr;
 
             remove_limits();
 
-            new_addr = mmap_grow(addr, size, new_size);
+            new_addr = trace_mmap_grow(addr, size, new_size);
 
             if (addr == MAP_FAILED) {
                 gzclose(gz);

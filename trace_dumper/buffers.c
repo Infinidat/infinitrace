@@ -39,6 +39,7 @@
 #include "../trace_str_util.h"
 #include "../file_naming.h"
 #include "../trace_proc_util.h"
+#include "../trace_mmap_util.h"
 #include "trace_dumper.h"
 #include "metadata.h"
 #include "open_close.h"
@@ -144,7 +145,7 @@ static void *map_single_buffer(pid_t pid, enum trace_shm_object_type shm_type, o
     if (MAP_FAILED == addr) {
         const int err = errno;
         ERR("Unable to map the buffer", name, fd, TRACE_NAMED_INT_AS_HEX(size), err, strerror(err));
-        TRACE_ASSERT(0 != errno);
+        TRACE_ASSERT(0 != err);
         return MAP_FAILED;
     }
 
@@ -163,9 +164,7 @@ static void *map_single_buffer(pid_t pid, enum trace_shm_object_type shm_type, o
     return addr;
 
 unmap_shm:
-    if (MAP_FAILED != addr) {
-        munmap(addr, size);
-    }
+    trace_munmap_if_necessary(&addr, size);
     return MAP_FAILED;
 }
 
@@ -459,20 +458,11 @@ static void check_discarded_buffer(const struct trace_mapped_buffer *mapped_buff
 static void discard_buffer_unconditionally(struct trace_mapped_buffer *mapped_buffer)
 {
     free_metadata(&mapped_buffer->metadata);
-
-    int rc = munmap((void *)(mapped_buffer->metadata.base_address), mapped_buffer->metadata.size);
-    if (0 == rc) {
-    	mapped_buffer->metadata.base_address = (const struct trace_metadata_region *) MAP_FAILED;
-    }
-    else {
+    if (trace_munmap_if_necessary((void **)(&mapped_buffer->metadata.base_address), mapped_buffer->metadata.size) < 0) {
         REPORT_BUF_ERR("Error unmapping metadata for buffer");
     }
 
-    rc = munmap(mapped_buffer->records_buffer_base_address, mapped_buffer->records_buffer_size);
-    if (0 == rc) {
-    	mapped_buffer->records_buffer_base_address = (struct trace_buffer *) MAP_FAILED;
-    }
-    else {
+    if (trace_munmap_if_necessary((void **)(&mapped_buffer->records_buffer_base_address), mapped_buffer->records_buffer_size) < 0) {
         REPORT_BUF_ERR("Error unmapping records for buffer");
     }
 

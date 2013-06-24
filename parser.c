@@ -800,13 +800,18 @@ static bool_t match_record_dump_with_match_expression(
 
 static size_t num_compressed_bytes(const struct trace_record_buffer_dump *buffer_chunk)
 {
-    assert(buffer_chunk->flags & TRACE_CHUNK_HEADER_FLAG_COMPRESSED);
+    assert(buffer_chunk->flags & TRACE_CHUNK_HEADER_FLAG_COMPRESSED_ANY);
     return TRACE_RECORD_SIZE * buffer_chunk->records - buffer_chunk->slack_bytes;
 }
 
 static ssize_t uncompressed_len(const struct trace_record *compressed_data, const struct trace_record_buffer_dump *buffer_chunk)
 {
     size_t result = 0;
+    if (TRACE_CHUNK_HEADER_FLAG_COMPRESSED_SNAPPY != (buffer_chunk->flags & TRACE_CHUNK_HEADER_FLAG_COMPRESSED_ANY)) {
+        errno = EPROTO;
+        return -1;
+    }
+
     const bool_t is_valid = snappy_uncompressed_length((const char *)compressed_data, num_compressed_bytes(buffer_chunk), &result);
     if (!is_valid) {
         errno = EINVAL;
@@ -853,7 +858,7 @@ static void clear_dump_header_context(trace_parser_t *parser)
     for (i = 0; i < parser->buffer_dump_context.num_chunks; i++) {
         struct record_dump_context_s *const ctx = parser->buffer_dump_context.record_dump_contexts + i;
         if (NULL != ctx->uncompressed_data) {
-            assert(ctx->flags & TRACE_CHUNK_HEADER_FLAG_COMPRESSED);
+            assert(ctx->flags & TRACE_CHUNK_HEADER_FLAG_COMPRESSED_ANY);
             free((void *)(ctx->uncompressed_data));
         }
 
@@ -930,7 +935,7 @@ static int process_dump_header_record(
             parser->buffer_dump_context.record_dump_contexts[i].current_offset = parser->buffer_dump_context.record_dump_contexts[i].start_offset;
             parser->buffer_dump_context.record_dump_contexts[i].flags = buffer_chunk->flags;
             size_t n_uncompressed_recs = 0;
-            if (buffer_chunk->flags & TRACE_CHUNK_HEADER_FLAG_COMPRESSED) {
+            if (buffer_chunk->flags & TRACE_CHUNK_HEADER_FLAG_COMPRESSED_ANY) {
                 /* TODO: Handle interactive mode */
                 const struct trace_record *const compressed_data =
                         get_record_ptr_for_rec_offset(parser, parser->buffer_dump_context.record_dump_contexts[i].start_offset);
@@ -1193,7 +1198,7 @@ static const struct trace_record *read_smallest_ts_record(trace_parser_t *parser
             continue;
         }
 
-        if (chunk_ctx->flags & TRACE_CHUNK_HEADER_FLAG_COMPRESSED) {
+        if (chunk_ctx->flags & TRACE_CHUNK_HEADER_FLAG_COMPRESSED_ANY) {
             assert(NULL != chunk_ctx->uncompressed_data);
             tmp_rec = chunk_ctx->uncompressed_data + (chunk_ctx->current_offset - chunk_ctx->start_offset);
         }
