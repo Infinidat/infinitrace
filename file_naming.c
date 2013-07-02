@@ -20,19 +20,25 @@
    limitations under the License.
  */
 
-#include <string.h>
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <assert.h>
 #include <time.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
 
 #include "file_naming.h"
 #include "trace_clock.h"
+#include "trace_str_util.h"
 
-
-bool_t trace_is_valid_file_name(const char *name) {
+bool_t trace_is_valid_file_name(const char *name)
+{
 	static const char prefix[] = TRACE_FILE_PREFIX;
 	static const char suffix[] = TRACE_FILE_SUFFIX;
-	const size_t prefix_len = sizeof(prefix) - 1;
+	const size_t prefix_len = strlen(prefix);
 
 	assert(prefix[prefix_len - 1] == '.');
 	assert(suffix[0] == '.');
@@ -60,4 +66,53 @@ int trace_generate_file_name(char *filename, const char *filename_base, size_t n
 	int len = snprintf(filename, name_len, "%s/" TRACE_FILE_PREFIX, filename_base);
 	len += strftime(filename + len, name_len - len, "%F--%H-%M-%S--", &now_tm);
 	return len + snprintf(filename + len, name_len - len, "%02llu" TRACE_FILE_SUFFIX, (now_ms % 1000) / 10);
+}
+
+int trace_generate_shm_name(trace_shm_name_buf buf, pid_t pid, enum trace_shm_object_type shm_type, bool_t temporary)
+{
+    const char *fmt = NULL;
+
+    switch (shm_type) {
+    case TRACE_SHM_TYPE_DYNAMIC:
+        fmt = TRACE_DYNAMIC_DATA_REGION_NAME_FMT "%s";
+        break;
+
+    case TRACE_SHM_TYPE_STATIC:
+        fmt = TRACE_STATIC_DATA_REGION_NAME_FMT "%s";
+        break;
+
+    default:
+        errno = EINVAL;
+        return -1;
+    }
+
+    const int buf_len = sizeof(trace_shm_name_buf);
+    const char *const extra_suffix = temporary ? ".tmp" : "";
+    const int len = snprintf(buf, buf_len, fmt, (int) pid, extra_suffix);
+    if (len >= buf_len) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+
+    return len;
+}
+
+pid_t trace_get_pid_from_shm_name(const char *shm_name)
+{
+    if (! trace_str_starts_with_prefix(shm_name, TRACE_SHM_ID)) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    shm_name += strlen(TRACE_SHM_ID);
+    const char *const underscore = strchr(shm_name, '_');
+
+    if (NULL == underscore) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    const size_t pid_str_len = underscore - shm_name;
+    const char *const pid_str = strndupa(shm_name, pid_str_len);
+    return atoi(pid_str);
 }

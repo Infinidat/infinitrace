@@ -15,7 +15,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
    limitations under the License.
 ***/
 
-
+#include "platform.h"
 
 #include <errno.h>
 #include <sys/types.h>
@@ -29,6 +29,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include <stdlib.h>
 #include <string.h>
 #include <libgen.h>
+#include <limits.h>
 
 #include "trace_macros.h"
 #include "trace_lib.h"
@@ -36,6 +37,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "min_max.h"
 #include "trace_metadata_util.h"
 #include "trace_clock.h"
+#include "trace_proc_util.h"
 #include "bool.h"
 #include "file_naming.h"
 #include "halt.h"
@@ -46,14 +48,20 @@ __thread unsigned short trace_current_nesting;
 __thread enum trace_severity trace_thread_severity_threshold = TRACE_SEV_INVALID;
 
 
+static __thread pid_t tid_cache = 0;
+
 /* Runtime support functions for obtaining information from the system */
 static trace_pid_t trace_get_tid(void)
  {
-   static __thread pid_t tid_cache = 0;
    if (! tid_cache) {
 	   tid_cache = syscall(__NR_gettid);
    }
 	return (trace_pid_t) tid_cache;
+}
+
+static void incalidate_tid_cache(void)
+{
+    tid_cache = 0;
 }
 
 static trace_pid_t trace_get_pid(void)
@@ -431,7 +439,12 @@ void trace_free_records_array()
     *string_table += str_size;      \
     } while(0);                                              
 
+/* Data structures supporting the initialization of the trace subsystem */
+static char shm_dir_path[0x100] = "";
+
+
 /* Routines for initializing the data structures that support tracing inside the traced process. */
+
 
 static bool_t is_same_str(const char *s1, const char *s2) {
 	if ((NULL ==  s1) || (NULL == s2)) {
@@ -557,6 +570,15 @@ static void copy_metadata_to_allocated_buffer(unsigned int log_descriptor_count,
     copy_type_definitions_to_allocated_buffer(type_definition, enum_values, string_table);
 }
 
+static void *set_size_and_mmap_shm(size_t length, int shm_fd)
+{
+    if (ftruncate(shm_fd, length) < 0) {
+        return MAP_FAILED;
+    }
+
+    return mmap(NULL, length, PROT_WRITE, MAP_SHARED, shm_fd, 0);
+}
+
 static void copy_log_section_shared_area(int shm_fd, const char *buffer_name,
                                          unsigned int log_descriptor_count,
                                          unsigned int log_param_count,
@@ -564,22 +586,27 @@ static void copy_log_section_shared_area(int shm_fd, const char *buffer_name,
                                          unsigned int enum_value_count,
                                          unsigned int alloc_size)
 {
-    void *mapped_addr = mmap(NULL, alloc_size, PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    void *const mapped_addr = set_size_and_mmap_shm(alloc_size, shm_fd);
     TRACE_ASSERT((MAP_FAILED != mapped_addr) && (NULL != mapped_addr));
     struct trace_metadata_region *metadata_region = (struct trace_metadata_region *) mapped_addr;
+    TRACE_ASSERT((NULL == metadata_region->base_address) && ('\0' == metadata_region->name[0]));
+
     struct trace_log_descriptor *log_desc = (struct trace_log_descriptor *) metadata_region->data;
     struct trace_type_definition *type_definition = (struct trace_type_definition *)((char *) log_desc + (sizeof(struct trace_log_descriptor) * log_descriptor_count));
     struct trace_param_descriptor *params = (struct trace_param_descriptor *)((char *) type_definition + (type_definition_count * sizeof(struct trace_type_definition)));
     struct trace_enum_value *enum_values = (struct trace_enum_value *) ((char *) params + (log_param_count * sizeof(struct trace_param_descriptor)));
     char *string_table = (char *) enum_values + (enum_value_count * sizeof(struct trace_enum_value));
 
-    strncpy(metadata_region->name, buffer_name, sizeof(metadata_region->name));
-    metadata_region->base_address = mapped_addr;
     metadata_region->log_descriptor_count = log_descriptor_count;
     metadata_region->type_definition_count = type_definition_count;
     copy_metadata_to_allocated_buffer(log_descriptor_count, log_desc, params,
                                       type_definition, enum_values,
                                       &string_table);
+
+    strncpy(metadata_region->name, buffer_name, sizeof(metadata_region->name));
+    metadata_region->name[sizeof(metadata_region->name) - 1] = '\0';
+    metadata_region->base_address = mapped_addr;
+    TRACE_ASSERT(0 == munmap(mapped_addr, alloc_size));
 }
 
 static void param_alloc_size(const struct trace_param_descriptor *params, unsigned int *alloc_size, unsigned int *total_params)
@@ -682,37 +709,35 @@ static void static_log_alloc_size(unsigned int log_descriptor_count, unsigned in
     type_alloc_size(__type_information_start, type_definition_count, enum_value_count, alloc_size);
 }
 
+static int open_trace_shm(const char *shm_name)
+{
+    return shm_open(shm_name, O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+}
+
 static void map_static_log_data(const char *buffer_name)
 {
-    char shm_name[0x100];
+    trace_shm_name_buf shm_name;
     unsigned long log_descriptor_count = __static_log_information_end - __static_log_information_start;
     unsigned int alloc_size;
     unsigned int total_log_descriptor_params;
     unsigned int type_definition_count;
     unsigned int enum_value_count;
-    static_log_alloc_size(log_descriptor_count, &total_log_descriptor_params, &type_definition_count, &enum_value_count, &alloc_size);
-    snprintf(shm_name, sizeof(shm_name), TRACE_STATIC_DATA_REGION_NAME_FMT, getpid());
 
-    int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0660);
-    if (shm_fd < 0) {
-        return;
-    }
-    
+    TRACE_ASSERT(trace_generate_shm_name(shm_name, getpid(), TRACE_SHM_TYPE_STATIC, FALSE) > 0);
+    const int shm_fd = open_trace_shm(shm_name);
     TRACE_ASSERT(shm_fd >= 0);
-    alloc_size = (alloc_size + 63) & ~63;
-    int rc = ftruncate(shm_fd, sizeof(struct trace_metadata_region) + alloc_size);
-    TRACE_ASSERT(0 == rc);
+    
+    static_log_alloc_size(log_descriptor_count, &total_log_descriptor_params, &type_definition_count, &enum_value_count, &alloc_size);
+    alloc_size = (alloc_size + TRACE_RECORD_SIZE - 1) & ~(TRACE_RECORD_SIZE - 1);
     copy_log_section_shared_area(shm_fd, buffer_name, log_descriptor_count, total_log_descriptor_params,
                                  type_definition_count, enum_value_count,
                                  sizeof(struct trace_metadata_region) + alloc_size);
-
-    if (0 != rc) {
-        delete_shm_files(getpid());
-    }
+    TRACE_ASSERT(0 == close(shm_fd));
 }
 
 static unsigned get_nearest_power_of_2(unsigned long n)
 {
+    /* TODO: Consider using the intrinsic __builtin_clz here. */
 	unsigned p;
 	for (p = 0; n > 1; n >>=1, p++)
 		;
@@ -757,24 +782,123 @@ static void init_records_metadata(void)
 	init_record_mutable_data(&(current_trace_buffer->u.records._funcs));
 }
 
-static void map_dynamic_log_buffers()
+static size_t calc_dymanic_buf_size(void)
 {
-    char shm_name[0x100];
-    snprintf(shm_name, sizeof(shm_name), TRACE_DYNAMIC_DATA_REGION_NAME_FMT, getpid());
-    int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0660);
-    if (shm_fd < 0) {
-        return;
+    return sizeof(struct trace_buffer)
+            - TRACE_RECORD_BUFFER_RECS       * sizeof(struct trace_record)
+            + TRACE_RECORD_BUFFER_FUNCS_RECS * sizeof(struct trace_record);
+}
+
+static int init_shm_dir_from_fd(int shm_fd)
+{
+    char shm_path[PATH_MAX];
+    if (trace_get_fd_path(shm_fd, shm_path, sizeof(shm_path)) < 0) {
+        return -1;
     }
-    TRACE_ASSERT(shm_fd >= 0);
-    const size_t buf_size = sizeof(struct trace_buffer)
-    		- TRACE_RECORD_BUFFER_RECS  	 * sizeof(struct trace_record)
-    		+ TRACE_RECORD_BUFFER_FUNCS_RECS * sizeof(struct trace_record);
-    int rc = ftruncate(shm_fd, buf_size);
-    TRACE_ASSERT (0 == rc);
-    void *mapped_addr = mmap(NULL, buf_size, PROT_WRITE, MAP_SHARED, shm_fd, 0);
-    TRACE_ASSERT((MAP_FAILED != mapped_addr) && (NULL != mapped_addr));
+
+    shm_dir_path[sizeof(shm_dir_path) - 1] = '\0';
+    strncpy(shm_dir_path, dirname(shm_path), sizeof(shm_dir_path));
+    if ('\0' != shm_dir_path[sizeof(shm_dir_path) - 1]) {
+        shm_dir_path[sizeof(shm_dir_path) - 1] = '\0';
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+
+    return 0;
+}
+
+static int perform_2_path_operation_in_shm_dir(
+        int (*func)(const char *p1, const char *p2),
+        const char *file1,
+        const char *file2)
+{
+    const size_t len_dir = strlen(shm_dir_path);
+
+#define init_path(n) \
+    const size_t len##n = strlen(file##n); \
+    char *const path##n = alloca(len_dir + len##n + 10); \
+    sprintf(path##n, "%s/%s", shm_dir_path, file##n);
+
+    init_path(1);
+    init_path(2);
+
+#undef init_path
+
+    return func(path1, path2);
+}
+
+static int rename_shm(const char *old_name, const char *new_name) {
+    if (trace_delete_shm_if_necessary(new_name) < 0) {
+        return -1;
+    }
+
+    return perform_2_path_operation_in_shm_dir(rename, old_name, new_name);
+}
+
+static int duplicate_shm(const char *orig_name, const char *duplicate_name)
+{
+    if (trace_delete_shm_if_necessary(duplicate_name) < 0) {
+        return -1;
+    }
+
+    return perform_2_path_operation_in_shm_dir(link, orig_name, duplicate_name);
+}
+
+static int map_dynamic_log_buffers(void)
+{
+    trace_shm_name_buf shm_tmp_name;
+    TRACE_ASSERT(trace_generate_shm_name(shm_tmp_name, getpid(), TRACE_SHM_TYPE_DYNAMIC, TRUE) > 0);
+
+    const int shm_fd = open_trace_shm(shm_tmp_name);
+    if (shm_fd < 0) {
+        return shm_fd;
+    }
+
+    if (init_shm_dir_from_fd(shm_fd) < 0) {
+#ifdef SHM_DIR
+        strcpy(shm_dir_path, SHM_DIR);  /* Hard-coded default. */
+#else
+        close(shm_fd);
+        return -1;
+#endif
+    }
+
+    const size_t buf_size = calc_dymanic_buf_size();
+    void *const mapped_addr = set_size_and_mmap_shm(buf_size, shm_fd);
+
+    if ((0 != close(shm_fd)) || (MAP_FAILED == mapped_addr) || (NULL == mapped_addr)) {
+        goto free_shm;
+    }
+
+#ifdef MADV_DONTFORK
+    if (0 != madvise(mapped_addr, buf_size, MADV_DONTFORK)) {
+        goto free_shm;
+    }
+#else
+#warning "MADV_DONTFORK is not supported, weird behavior could result during forks."
+#endif
+
     set_current_trace_buffer_ptr((struct trace_buffer *)mapped_addr);
     init_records_metadata();
+
+    /* In order to avoid a possible race condition of the dumper accessing the shared-memory area before it is fully initialized, we only rename it
+     * to the name the dumper expects after completing its initialization. */
+    trace_shm_name_buf shm_name;
+    TRACE_ASSERT(trace_generate_shm_name(shm_name, getpid(), TRACE_SHM_TYPE_DYNAMIC, FALSE) > 0);
+    if (rename_shm(shm_tmp_name, shm_name) < 0) {
+        goto free_shm;
+    }
+
+    return 0;
+
+
+free_shm:
+    if (MAP_FAILED != mapped_addr) {
+        munmap(mapped_addr, buf_size);
+    }
+    trace_delete_shm_if_necessary(shm_tmp_name);
+    TRACE_ASSERT(0 != errno);
+    return -1;
 }
 
 int TRACE__register_buffer(const char *buffer_name)
@@ -784,37 +908,78 @@ int TRACE__register_buffer(const char *buffer_name)
     }
 
     map_static_log_data(buffer_name);
-    map_dynamic_log_buffers();
+    const int rc = map_dynamic_log_buffers();
+    if (rc < 0) {
+        trace_shm_name_buf shm_name;
+        TRACE_ASSERT(trace_generate_shm_name(shm_name, getpid(), TRACE_SHM_TYPE_STATIC, FALSE) > 0);
+        trace_delete_shm_if_necessary(shm_name);
+    }
 
+    return rc;
+}
+
+int trace_init(const struct trace_init_params *conf __attribute__((unused)))
+{
+    char buffer_name[NAME_MAX];
+    if (trace_get_current_exec_basename(buffer_name, sizeof(buffer_name)) < 0) {
+        return -1;
+    }
+
+    return TRACE__register_buffer(buffer_name);
+}
+
+/* Place TRACE__implicit_init in the constructors section, which causes it to be executed before main() */
+static int TRACE__implicit_init(void) __attribute__((constructor));
+
+static int TRACE__implicit_init(void) {
+    assert(0 == trace_init(NULL));
     return 0;
 }
 
-static void get_exec_name(char *exec_name, unsigned int exec_name_size)
+int trace_finalize(void)
 {
-    char exec_path[512];
-    int rc = readlink("/proc/self/exe", exec_path, sizeof(exec_path) - 1);
-    if (rc < 0) {
-        TRACE_ASSERT(0);
+    int rc = 0;
+    if (NULL != current_trace_buffer) {
+        void *const saved_buffer = current_trace_buffer;
+        current_trace_buffer = NULL;
+        rc = munmap(saved_buffer, calc_dymanic_buf_size());
     }
 
-    exec_path[rc] = '\0';
-
-    strncpy(exec_name, basename(exec_path), exec_name_size);    
-}
-
-/* Place TRACE__init in the constructors section, which causes it to be executed before main() */
-static void TRACE__init(void) __attribute__((constructor));
-
-static void TRACE__init(void)
-{
-    char buffer_name[512];
-    get_exec_name(buffer_name, sizeof(buffer_name));
-    TRACE__register_buffer(buffer_name);
+    trace_runtime_control_free_thresholds();
+    rc |= delete_shm_files(getpid());
+    return rc;
 }
 
 void TRACE__fini(void)
 {
-    current_trace_buffer = NULL;
-    trace_runtime_control_free_thresholds();
-    delete_shm_files(getpid());
+    TRACE_ASSERT(0 == trace_finalize());
 }
+
+static int child_proc_init(void)
+{
+    incalidate_tid_cache();
+
+    trace_shm_name_buf parent_static_shm_name;
+    TRACE_ASSERT(trace_generate_shm_name(parent_static_shm_name, getppid(), TRACE_SHM_TYPE_STATIC, FALSE) > 0);
+
+    trace_shm_name_buf static_shm_name;
+    TRACE_ASSERT(trace_generate_shm_name(static_shm_name, getpid(), TRACE_SHM_TYPE_STATIC, FALSE) > 0);
+
+    if (duplicate_shm(parent_static_shm_name, static_shm_name) < 0) {
+        return -1;
+    }
+
+    if (map_dynamic_log_buffers() < 0) {
+        trace_delete_shm_if_necessary(static_shm_name);
+        return -1;
+    }
+
+    return 0;
+}
+
+pid_t trace_fork(void)
+{
+    return trace_fork_with_child_init(child_proc_init, delete_shm_files);
+}
+
+
