@@ -18,6 +18,10 @@
    limitations under the License.
  */
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -66,7 +70,9 @@ static const char usage[] = {
     " -s  --syslog                          In online mode, write the entries to syslog instead of displaying them \n" \
     " -q  --quota-size [bytes/percent]      Specify the total number of bytes that may be taken up by trace files  \n" \
     " -r  --record-write-limit [records]    Specify maximal amount of records that can be written per-second (unlimited if not specified)  \n" \
-    " -I  --instrument[option]               Turn on one of the dumper's instrumentation options. Available option values: time_writes \n"     \
+    " -I  --instrument[option]              Turn on one of the dumper's instrumentation options. Available option values: time_writes \n"     \
+    " -E  --execute-on-event[evant=path]    Run the executable at 'path' when 'event' occurs. Supported events:\n"     \
+    "                                            file_closed:           An output file, whose name is supplied to the executable as argument, was closed." \
     " -v  --dump-online-statistics          Dump buffer statistics \n"
     "\n"};
 
@@ -90,6 +96,7 @@ static const struct option longopts[] = {
     { "quota-size", required_argument, 0, 'q'},
     { "record-write-limit", required_argument, 0, 'r'},
     { "instrument", required_argument, 0, 'I'},
+    { "execute-on-event", required_argument, 0, 'E'},
     { "dump-online-statistics", 0, 0, 'v'},
 
 	{ 0, 0, 0, 0}
@@ -106,6 +113,8 @@ void print_usage(const char *prog_name)
 
 static void init_compiled_in_defaults(struct trace_dumper_configuration_s *conf)
 {
+    memset(conf, 0, sizeof(*conf));
+
     /* TODO: Make the following parameters configurable at runtime. */
     conf->notifications_subdir = "warn";
     conf->log_details = FALSE;
@@ -116,48 +125,86 @@ static void init_compiled_in_defaults(struct trace_dumper_configuration_s *conf)
     conf->preferred_flush_bytes = 0; /* Use page size */
 }
 
-//static
-int parse_low_latency_mode_param(struct trace_dumper_configuration_s *conf, const char *arg)
+static bool_t param_eq(const char *user_given_name, const char *param_name)
 {
-	if (arg && *arg) {
-		long long value = -1;
-		const char *eq_sign = strchr(arg, '=');
-		if (NULL == eq_sign) {
-			return -1;
-		}
+    return 0 == strcasecmp(user_given_name, param_name);
+}
 
-		if (! trace_get_number(eq_sign + 1, &value)) {
-			return -1;
-		}
+static int parse_low_latency_mode_param(struct trace_dumper_configuration_s *conf, const char *arg)
+{
+    char *name = NULL;
+    char *str_value = NULL;
 
-		const size_t param_name_len = eq_sign - arg;
+    if (arg && *arg) {
+        long long value = -1;
+        const bool_t is_num = trace_parse_name_value_pair(strdupa(arg), &name, &str_value, &value);
+        if (! is_num) {
+            fprintf(stderr, "The value %s specified for low-latency mode parameter %s is not valid number\n", str_value, name);
+            goto return_einval;
+        }
 
-#define is_param(s, param) ((sizeof(param) - 1 == param_name_len) && (0 == strncasecmp(s, param, param_name_len)))
+        if (param_eq(name, "max_recs_pending")) {
+            if (value > 0)
+                conf->max_records_pending_write_via_mmap = value;
+            else
+                goto num_out_of_range;
+        } else if (param_eq(name, "write_size_bytes")) {
+            if (value >= 0)
+                conf->preferred_flush_bytes = value;
+            else
+                goto num_out_of_range;
+        } else if (param_eq(name, "max_flush_interval_ms")) {
+            if (value >= 0)
+                conf->max_flush_interval = TRACE_MS * value;
+            else
+                goto num_out_of_range;
+        } else {
+            fprintf(stderr, "Unknown low-latency mode parameter %s\n", name);
+            goto return_einval;
+        }
+    }
 
-		if (is_param(arg, "max_recs_pending")) {
-			if (value > 0)
-				conf->max_records_pending_write_via_mmap = value;
-			else
-				return -1;
-		} else if (is_param(arg, "write_size_bytes")) {
-			if (value >= 0)
-				conf->preferred_flush_bytes = value;
-			else
-				return -1;
-		} else if (is_param(arg, "max_flush_interval_ms")) {
-			if (value >= 0)
-				conf->max_flush_interval = TRACE_MS * value;
-			else
-				return -1;
-		} else {
-			return -1;
-		}
+    return 0;
 
-#undef is_param
+num_out_of_range:
+    fprintf(stderr, "The value %s specified for %s is outside the permitted range\n", str_value, name);
+return_einval:
+    errno = EINVAL;
+    return -1;
+}
 
-	}
+static int parse_execute_on_event_param(struct trace_dumper_configuration_s *conf, const char *arg)
+{
+    char *name = NULL;
+    char *str_value = NULL;
 
-	return 0;
+    if (arg && *arg) {
+        char *const tmp_arg = strdupa(arg);
+        trace_parse_name_value_pair(tmp_arg, &name, &str_value, NULL);
+        if (! *str_value) {
+            goto invalid_format;
+        }
+
+        const char *const value_non_volatile = arg + (str_value - tmp_arg);
+
+        if (param_eq(name, "file_closed")) {
+            conf->post_event_actions.on_file_close = value_non_volatile;
+        } else {
+            fprintf(stderr, "Unknown low-latency mode parameter %s\n", name);
+            goto return_einval;
+        }
+    }
+    else {
+        goto invalid_format;
+    }
+
+    return 0;
+
+invalid_format:
+    fprintf(stderr, "execute-on-event option requires an argument in the format event=path_to_executable\n");
+return_einval:
+    errno = EINVAL;
+    return -1;
 }
 
 int parse_commandline(struct trace_dumper_configuration_s *conf, int argc, char **argv)
@@ -237,22 +284,27 @@ int parse_commandline(struct trace_dumper_configuration_s *conf, int argc, char 
             conf->error_online = 1;
             break;
         case 'I':
-        	if (0 == strcasecmp(optarg, "time_writes")) {
+        	if (param_eq(optarg, "time_writes")) {
         		conf->log_performance_to_file = 1;
         	}
         	else {
-        		fprintf(stderr, "Unrecognized trace dumper instrumentation option: %s", optarg);
+        		fprintf(stderr, "Unrecognized trace dumper instrumentation option: %s\n", optarg);
         		return -1;
         	}
         	break;
+       case 'E':
+            if (parse_execute_on_event_param(conf, optarg) < 0) {
+                fprintf(stderr, "Bad execute-on-event specification %s\n", optarg);
+                return -1;
+            }
+            break;
         case 'v':
             conf->dump_online_statistics = 1;
             break;
         case '?':
-            return -1;
-            break;
         default:
-            break;
+            fprintf(stderr, "Uncrecognized command-line option: %c\n", o);
+            return -1;
         }
     }
 

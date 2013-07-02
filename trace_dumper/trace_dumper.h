@@ -122,6 +122,10 @@ struct trace_record_file {
     struct trace_record_io_timestamps ts;
 };
 
+struct trace_post_event_actions {
+    const char *on_file_close;
+};
+
 /* Values for the request_flags field of struct trace_dumper_configuration_s below */
 enum trace_request_flags {
 	TRACE_REQ_CLOSE_RECORD_FILE = 0x01,
@@ -160,6 +164,7 @@ struct trace_dumper_configuration_s {
     const char *logs_base;
     const char *notifications_subdir;
     const char *attach_to_pid;
+    struct trace_post_event_actions post_event_actions;
     int should_quit;
     unsigned int request_flags;
 #ifdef SEVERITY_FILTER_LEN
