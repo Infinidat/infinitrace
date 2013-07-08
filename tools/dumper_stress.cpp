@@ -8,14 +8,16 @@
 #include <assert.h>
 #include <errno.h>
 #include <utility>
+#include <getopt.h>
+#include <sysexits.h>
 #include "common/traces/trace_defs.h"
 #include "common/traces/trace_user.h"
 #include "common/traces/array_length.h"
 
-const int  n_threads = 64;
-const int  n_thread_iters = 200000;
-const long interval_ns = 1;
-const bool yield_cpu = false;
+static int  n_threads = 64;
+static long n_thread_iters = 200000;
+static long interval_ns = 1;
+static bool yield_cpu = false;
 
 enum { INT_ARRAY_LEN = 10 };
 
@@ -67,7 +69,7 @@ static void *do_log(void *)
 	my_pair<short, int> __attribute__((unused)) p(-2, 32);
 	DEBUG("Do they make", p, "?");
 	DEBUG("Even with a tiger on-board", TRACE_NAMED_PARAM(Pi, 3.1415926), "and sqrt_2 is around", static_cast<float>(1.414));
-	for (int i = 0; i < n_thread_iters; i++) {
+	for (long i = 0; i < n_thread_iters; i++) {
 		if (i & 0xFFF) {
 			INFO(thread, ": iteration", i);
 		}
@@ -126,10 +128,58 @@ static void register_fatal_sig_handlers(void)
 	return;
 }
 
-int main(void) {
+static void print_help(char* argv0)
+{
+	fprintf(stderr, "Usage: \n\n"
+			"%s [OPTIONS]\n"
+			"   -h: help\n"
+			"   -T <threads>\n"
+			"   -I <iterations>\n"
+			"   -S <sleep (ns)\n"
+			"   -Y: yield\n"
+			"", argv0);
+	exit(EX_USAGE);
+}
+
+static void parse_options(int argc, char* argv[])
+{
+	char x;
+	int error = 0;
+
+	while (error == 0 && (x = getopt(argc, argv, "hT:I:S:Y")) != -1) {
+		switch (x) {
+			case 'h':
+				print_help(argv[0]);
+				break;
+			case 'T':
+				n_threads = atoi(optarg);
+				break;
+			case 'I':
+				n_thread_iters = atoll(optarg);
+				break;
+			case 'S':
+				interval_ns = atoll(optarg);
+				break;
+			case 'Y':
+				yield_cpu = true;
+				break;
+			default:
+				error = 1;
+				break;
+		}
+	}
+	if (error) {
+		print_help(argv[0]);
+	}
+}
+
+int main(int argc, char* argv[]) 
+{
+	parse_options(argc, argv);
+
 	pthread_t threads[n_threads];
 
-	fprintf(stderr, "Running %d threads each running %d iterations with %luns intervals,%s yielding CPU\n",
+	fprintf(stderr, "Running %d threads each running %ld iterations with %luns intervals,%s yielding CPU\n",
 			n_threads, n_thread_iters, interval_ns, yield_cpu ? "" : " not");
 
 	register_fatal_sig_handlers();
