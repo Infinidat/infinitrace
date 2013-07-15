@@ -901,9 +901,30 @@ free_shm:
     return -1;
 }
 
-int TRACE__register_buffer(const char *buffer_name)
+static int unmap_buffer_if_necessary()
 {
     if (NULL != current_trace_buffer) {
+        const int saved_errno = errno;
+
+        /* Try to unmap the pages. The unmap could legitimately fail if the current process is the result of a fork(), since the mapping has MADV_DONTFORK set */
+        if (munmap(current_trace_buffer, calc_dymanic_buf_size()) < 0) {
+            if ((EINVAL != errno) && (EFAULT != errno)) {
+                return -1;
+            }
+
+            errno = saved_errno;
+        }
+
+        current_trace_buffer = NULL;
+    }
+
+    TRACE_ASSERT(NULL == current_trace_buffer);
+    return 0;
+}
+
+int TRACE__register_buffer(const char *buffer_name)
+{
+    if (unmap_buffer_if_necessary() < 0) {
         return -1;
     }
 
