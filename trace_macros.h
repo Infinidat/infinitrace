@@ -33,8 +33,19 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 
 #else
 
+#ifdef __TRACE_INSTRUMENTATION
+
+#include "trace_fatal.h"
+#define TRACE_LOG_ASSERTION_FAILURE(x) (trace_log_assertion_failure(__FILE__, __func__, __LINE__, #x))
+
+#else
+
+#define TRACE_LOG_ASSERTION_FAILURE(x) (0)
+
+#endif
+
 #include <assert.h>
-#define TRACE_ASSERT(x) assert(x)
+#define TRACE_ASSERT(x) assert((x) || TRACE_LOG_ASSERTION_FAILURE(x))
 
 #endif
 

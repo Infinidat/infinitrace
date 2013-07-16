@@ -34,9 +34,15 @@ TRACE_SEVERITY_DEF
 
 enum trace_severity trace_runtime_control_set_default_min_sev(enum trace_severity sev __attribute__ ((unused))) {return TRACE_SEV_INVALID;}
 
+int trace_init(const struct trace_init_params *conf __attribute__ ((unused))) { return 0; }
+int trace_finalize(void) { return 0; }
 pid_t trace_fork(void) { return fork(); }
 
 static struct trace_internal_err_info internal_err_info = {0, 0, 0};
 
 const struct trace_internal_err_info *trace_internal_err_get_last(void) { return &internal_err_info; }
 void trace_internal_err_clear(void) {}
+
+/* Stubs for trace_fatal.c functions, which are not built in untraced builds */
+int trace_register_fatal_sig_handlers(const void *unused __attribute__ ((unused))) { return 0; }
+

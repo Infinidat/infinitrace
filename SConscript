@@ -39,7 +39,7 @@ xn_env.BuildStaticLibraries(target = 'trace_bin_fmts', source = srcs, CCFLAGS = 
 srcs = xn_env.AutoSplit('''timeformat.c parser.c filter.c parser_mmap.c hashmap.c renderer.cpp''')
 xn_env.BuildStaticLibraries(target = 'reader', source = srcs, CCFLAGS = optflags)
 
-srcs = xn_env.AutoSplit('''opt_util.c trace_str_util.c trace_clock.c file_naming.c''')
+srcs = xn_env.AutoSplit('''opt_util.c trace_str_util.c trace_clock.c file_naming.c trace_fatal.c''')
 xn_env.BuildStaticLibraries(target = 'trace_util_traced', source = srcs, CCFLAGS = optflags)
 
 xn_env.Append(LIBPATH = Dir('.'))

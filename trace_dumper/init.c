@@ -38,6 +38,7 @@
 #include "../opt_util.h"
 #include "../trace_str_util.h"
 #include "../trace_clock.h"
+#include "../trace_fatal.h"
 #include "trace_dumper.h"
 #include "filesystem.h"
 #include "buffers.h"
@@ -393,7 +394,7 @@ static int init_record_file(struct trace_record_file *record_file, size_t initia
 static void set_trace_cleanup_for_dumper(void)
 {
 #ifdef __TRACE_INSTRUMENTATION
-    assert(0 == atexit(TRACE__fini));
+    TRACE_ASSERT(0 == atexit(TRACE__fini));
 #endif
 }
 
@@ -507,7 +508,7 @@ static void sigusr_handler(int sig, siginfo_t *info __attribute__((unused)), voi
 		break;
 
 	default:
-		assert(0);
+		TRACE_ASSERT(0);
 		return;
 	}
 
@@ -516,8 +517,9 @@ static void sigusr_handler(int sig, siginfo_t *info __attribute__((unused)), voi
 
 int set_signal_handling(void)
 {
-	static const int default_flags = SA_SIGINFO|SA_RESTART;
-	int rc = 0;
+	int rc = trace_register_fatal_sig_handlers(NULL);
+	const int default_flags = SA_SIGINFO|SA_RESTART;
+
 	const struct {
 		int sig;
 		void (*handler)(int, siginfo_t *, void *);
@@ -534,10 +536,12 @@ int set_signal_handling(void)
 		memset(&act, 0, sizeof(act));
 		act.sa_sigaction = sig_handlers[i].handler;
 		act.sa_flags = default_flags ^ sig_handlers[i].override_flags;
-		if (sigaction(sig_handlers[i].sig, &act, NULL) < 0) {
+		const int sig = sig_handlers[i].sig;
+		if (sigaction(sig, &act, NULL) < 0) {
 			syslog(LOG_USER|LOG_ERR, "Failed to set the handler for signal %d (%s) due to error: %s",
-					sig_handlers[i].sig, strsignal(sig_handlers[i].sig), strerror(errno));
-					rc |= -1;
+					sig, strsignal(sig), strerror(errno));
+			ERR("Error registering a handler for signal", sig, strsignal(sig));
+			rc = -1;
 		}
 	}
 

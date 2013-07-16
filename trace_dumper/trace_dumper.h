@@ -20,23 +20,22 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #ifndef TRACE_DUMPER_H_
 #define TRACE_DUMPER_H_
 
+
+#include "../platform.h"
+
 #include <stdio.h>
 #include <sys/uio.h>
 
+
 #include "../bool.h"
 #include "../trace_metadata_util.h"
-#include "../trace_parser.h"
 #include "../min_max.h"
-#include "../bool.h"
+#include "../trace_macros.h"
 #include "../array_length.h"
 #include "../trace_lib.h"
 #include "../validator.h"
+#include "../list_template.h"
 
-#define COLOR_BOOL conf->color
-#include "../colors.h"
-#define MAX_FILTER_SIZE (10)
-#define METADATA_IOVEC_SIZE 2*(MAX_METADATA_SIZE/TRACE_RECORD_PAYLOAD_SIZE+1)
-#define MAX_FILTER_SIZE (10)
 #define METADATA_IOVEC_SIZE 2*(MAX_METADATA_SIZE/TRACE_RECORD_PAYLOAD_SIZE+1)
 
 // The threshold stands at about 60 MBps
@@ -165,21 +164,12 @@ struct trace_dumper_configuration_s {
     struct trace_post_event_actions post_event_actions;
     int should_quit;
     unsigned int request_flags;
-#ifdef SEVERITY_FILTER_LEN
-    struct trace_record_matcher_spec_s severity_filter[SEVERITY_FILTER_LEN];
-#endif
     unsigned int header_written;
     unsigned int write_to_file;
     unsigned int write_notifications_to_file;
     unsigned int dump_online_statistics;
     const char *fixed_output_filename;
     const char *fixed_notification_filename;
-    unsigned int online;
-    unsigned int trace_online;
-    unsigned int debug_online;
-    unsigned int info_online;
-    unsigned int warn_online;
-    unsigned int error_online;
     unsigned int syslog;
     unsigned int log_details;
     bool_t		 log_performance_to_file;
@@ -213,7 +203,6 @@ struct trace_dumper_configuration_s {
     trace_ts_t max_flush_interval;
     size_t     preferred_flush_bytes;
 
-    struct trace_parser parser;
     BufferFilter filtered_buffers;
     MappedBuffers mapped_buffers;
     PidList dead_pids;

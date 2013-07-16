@@ -112,6 +112,24 @@ static int get_process_time(pid_t pid, trace_ts_t *curtime)
     return 0;
 }
 
+/* Obtain the process time for active process, or return 0 if the process had exited or cannot have its time obtained for whatever reason */
+static trace_ts_t get_effective_process_time(pid_t pid)
+{
+    trace_ts_t process_time = 0;
+    if (0 != get_process_time(pid, &process_time)) {
+        if (ESRCH == errno) {
+            INFO("About to start collecting traces from the defunct process", pid);
+        }
+        else {
+            const int err = errno;
+            syslog(LOG_USER|LOG_WARNING, "Failed to get the process time for pid %d due to %s", pid, strerror(err));
+            WARN("Failed to get the process time for", pid, err, strerror(err));
+        }
+    }
+
+    return process_time;
+}
+
 bool_t trace_should_filter(struct trace_dumper_configuration_s *conf, const char *buffer_name)
 {
     buffer_name_t filter;
@@ -204,7 +222,7 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
         goto delete_shm_files;  /* TODO: Reconsider this, perhaps we should wait and avoid flooding with messages in the meantime */
     }
 
-    assert(0 == MappedBuffers__get_element_ptr(&conf->mapped_buffers, MappedBuffers__element_count(&conf->mapped_buffers) - 1, &new_mapped_buffer));
+    TRACE_ASSERT(0 == MappedBuffers__get_element_ptr(&conf->mapped_buffers, MappedBuffers__element_count(&conf->mapped_buffers) - 1, &new_mapped_buffer));
     memset(new_mapped_buffer, 0, sizeof(*new_mapped_buffer));
 
     off_t static_log_data_region_size = 0;
@@ -261,20 +279,7 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
     new_mapped_buffer->pid = (trace_pid_t) pid;
     new_mapped_buffer->metadata_dumped = FALSE;
     new_mapped_buffer->notification_metadata_dumped = FALSE;
-    trace_ts_t process_time;
-    rc = get_process_time(pid, &process_time);
-    if (0 != rc) {
-    	if (ESRCH == errno) {
-    		rc = 0;
-    		WARN("Process", pid, "no longer exists");
-    	}
-    	else {
-    		syslog(LOG_USER|LOG_WARNING, "Failed to get the process time for pid %d due to %s", pid, strerror(errno));
-    	}
-    	process_time = 0;
-    }
-
-    new_mapped_buffer->process_time = process_time;
+    new_mapped_buffer->process_time = get_effective_process_time(pid);
 
     init_metadata_iovector(&new_mapped_buffer->metadata, new_mapped_buffer->pid);
     trace_array_strcpy(new_mapped_buffer->name, static_log_data_region->name);
@@ -290,13 +295,13 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
         mapped_records->current_read_record = mapped_records->mutab->next_flush_record;
     }
 
+    INFO("Starting to collect traces from the process", new_mapped_buffer->name, pid, static_log_data_region, static_log_data_region_size, dynamic_trace_buffer, trace_region_size);
     if (new_mapped_buffer->pid != pid) {
-        WARN("Pid cannot fit in a 16-bit field for", new_mapped_buffer->name, pid, static_log_data_region, static_log_data_region_size, dynamic_trace_buffer, trace_region_size);
+        WARN("Pid cannot fit in a ", 8*sizeof(new_mapped_buffer->pid), "bit field for", new_mapped_buffer->name, pid, static_log_data_region, static_log_data_region_size, dynamic_trace_buffer, trace_region_size);
     	syslog(LOG_USER|LOG_WARNING, "Pid %d of %s is too large to be represented in trace dumper's %lu-bit pid field. Please restrict your system's process IDs accordingly",
     			pid, new_mapped_buffer->name, 8*sizeof(new_mapped_buffer->pid));
     }
     else if (conf->log_details && !conf->attach_to_pid) {
-        INFO("Starting to collect traces from the process", new_mapped_buffer->name, pid, static_log_data_region, static_log_data_region_size, dynamic_trace_buffer, trace_region_size);
     	syslog(LOG_USER|LOG_INFO, "Starting to collect traces from %s with pid %d to %s",
     			new_mapped_buffer->name, new_mapped_buffer->pid, conf->record_file.filename);
     }
@@ -326,9 +331,13 @@ delete_shm_files:
     }
 
 	if (0 != rc) {
-		const char *err_name = strerror(errno);
+	    if ((ENOENT == errno) && !process_exists(pid)) {
+	        errno = ESRCH;
+	    }
+	    const int err = errno;
+		const char *err_name = strerror(err);
 		const char *proc_name = ((NULL == new_mapped_buffer) ? "(unknown)" : new_mapped_buffer->name);
-		ERR("Failed to map a buffer for process", proc_name, pid, errno, err_name);
+		ERR("Failed to map a buffer for process", proc_name, pid, err, err_name);
 		syslog(LOG_USER|LOG_ERR, "Failed to map buffer for pid %d - %s. Last Error: %s.", (int) pid, proc_name, err_name);
 	}
 	return rc;
@@ -339,7 +348,7 @@ static bool_t buffer_mapped(struct trace_dumper_configuration_s * conf, unsigned
     int i;
     for (i = 0; i < MappedBuffers__element_count(&conf->mapped_buffers); i++) {
         struct trace_mapped_buffer *mapped_buffer;
-        assert(0 == MappedBuffers__get_element_ptr(&conf->mapped_buffers, i, &mapped_buffer));
+        TRACE_ASSERT(0 == MappedBuffers__get_element_ptr(&conf->mapped_buffers, i, &mapped_buffer));
         if (mapped_buffer->pid == pid) {
             return TRUE;
         }
@@ -409,10 +418,10 @@ static void check_discarded_buffer(const struct trace_mapped_buffer *mapped_buff
 	const char * proc_name = mapped_buffer->name;
 
 	if (mapped_buffer->dead) {
-		assert(mutab.last_committed_record + 1UL == mapped_buffer->mapped_records->next_flush_record);
-		assert(mutab.last_committed_record + 1UL == mapped_buffer->mapped_records->current_read_record);
+		TRACE_ASSERT(mutab.last_committed_record + 1UL == mapped_buffer->mapped_records->next_flush_record);
+		TRACE_ASSERT(mutab.last_committed_record + 1UL == mapped_buffer->mapped_records->current_read_record);
 		if (buffer_was_active) {
-			assert(mutab.latest_flushed_ts == last_rec->ts);
+			TRACE_ASSERT(mutab.latest_flushed_ts == last_rec->ts);
 		}
 	}
 

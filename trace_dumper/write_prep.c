@@ -63,7 +63,7 @@ void calculate_delta(
     }
 
     /* Verify the record counters haven't wrapped around. On 64-bit platforms this should never happen. */
-    assert(last_written_record + 1UL >= mapped_records->current_read_record);
+    TRACE_ASSERT(last_written_record + 1UL >= mapped_records->current_read_record);
     long backlog_len = last_written_record + 1UL - mapped_records->current_read_record;
 
     /* Check whether the number of records written to the shared-memory buffers exceeds the number read by the dumper by more than the buffer size.
@@ -80,8 +80,8 @@ void calculate_delta(
     delta->up_to_buf_end  = MIN(delta->total, mapped_records->imutab->max_records - current_read_idx);
     delta->from_buf_start = delta->total - delta->up_to_buf_end;
 
-    assert(delta->total <= TRACE_FILE_MAX_RECORDS_PER_CHUNK);
-    assert(delta->from_buf_start + delta->up_to_buf_end == delta->total);
+    TRACE_ASSERT(delta->total <= TRACE_FILE_MAX_RECORDS_PER_CHUNK);
+    TRACE_ASSERT(delta->from_buf_start + delta->up_to_buf_end == delta->total);
 }
 
 void init_dump_header(struct trace_dumper_configuration_s *conf, struct trace_record *dump_header_rec,
@@ -151,7 +151,7 @@ static bool_t record_ends_trace(volatile const struct trace_record *ending_candi
 static volatile const struct trace_record *n_records_after(volatile const struct trace_record *rec, const struct trace_mapped_records *mapped_records, ssize_t n)
 {
     const size_t idx =  rec - mapped_records->records;
-    assert(idx < mapped_records->imutab->max_records + (size_t)labs(n));
+    TRACE_ASSERT(idx < mapped_records->imutab->max_records + (size_t)labs(n));
     return mapped_records->records + ((idx + n) & mapped_records->imutab->max_records_mask);
 }
 
@@ -188,9 +188,9 @@ unsigned add_warn_records_to_iov(
                 do {
                     /* In case of wrap-around within the record sequence for a single trace, start a new iovec */
                     if (__builtin_expect(rec >= mapped_records->records + mapped_records->imutab->max_records, 0)) {
-                        assert(rec == mapped_records->records + mapped_records->imutab->max_records);
+                        TRACE_ASSERT(rec == mapped_records->records + mapped_records->imutab->max_records);
                         recs_covered = mapped_records->imutab->max_records - (start_idx + i);
-                        assert(recs_covered > 0);
+                        TRACE_ASSERT(recs_covered > 0);
                         DEBUG("Buffer wrap-around while scanning for notifications", recs_covered, iov_idx, i);
                         iov[iov_idx].iov_len = sizeof(*rec) * recs_covered;
                         i+= recs_covered;
@@ -201,8 +201,8 @@ unsigned add_warn_records_to_iov(
                 } while (! record_ends_trace(rec++, starting_rec) && (end_rec != rec));
 
                 recs_covered = (rec - starting_rec) & mapped_records->imutab->max_records_mask;
-                assert(recs_covered >= 1);
-                assert(i + recs_covered <= count);
+                TRACE_ASSERT(recs_covered >= 1);
+                TRACE_ASSERT(i + recs_covered <= count);
 
                 volatile const struct trace_record *const ending_rec = previous_record(rec, mapped_records);
                 if (! ((starting_rec->termination & TRACE_TERMINATION_FIRST) && (ending_rec->termination & TRACE_TERMINATION_LAST)) ) {

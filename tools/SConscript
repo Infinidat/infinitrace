@@ -2,7 +2,7 @@ Import('xn_env')
 Import('TracesDisabled')
 
 srcs = xn_env.AutoSplit('''dumper_stress.cpp''')
-libs = ["rt", "pthread"]
+libs = ["rt", "pthread", "trace_util_traced"]
 
 prog = xn_env.XnProgram(target = "dumper_stress", source = srcs, LIBS = libs)
 xn_env.Alias('xn', prog)

@@ -10,9 +10,11 @@
 #include <utility>
 #include <getopt.h>
 #include <sysexits.h>
+
 #include "common/traces/trace_defs.h"
 #include "common/traces/trace_user.h"
 #include "common/traces/array_length.h"
+#include "common/traces/trace_fatal.h"
 
 static int  n_threads = 64;
 static long n_thread_iters = 200000;
@@ -106,26 +108,11 @@ static void *do_log(void *)
     return 0;
 }
 
-static void fatal_signal_handler(int signal)
+static int extra_fatal_signal_handler(const siginfo_t *info)
 {
-	pid_t pid = getpid();
-	FATAL("Dumper stress process", pid, "was killed by", signal, strsignal(signal));
-	raise(signal);
-	return;
-}
-
-static void register_fatal_sig_handlers(void)
-{
-	static const int fatal_signals[] = { SIGABRT, SIGSEGV, SIGBUS, SIGILL };
-	for (unsigned i = 0; i < ARRAY_LENGTH(fatal_signals); i++) {
-		struct sigaction act;
-		memset(&act, 0, sizeof(act));
-		act.sa_handler = fatal_signal_handler;
-		act.sa_flags = SA_RESETHAND;
-		assert(0 == sigaction(fatal_signals[i], &act, NULL));
-	}
-
-	return;
+    const int sig = info->si_signo;
+    FATAL("Dumper stress process was killed by", sig, strsignal(sig));
+    return 0;
 }
 
 static void print_help(char* argv0)
@@ -182,18 +169,17 @@ int main(int argc, char* argv[])
 	fprintf(stderr, "Running %d threads each running %ld iterations with %luns intervals,%s yielding CPU\n",
 			n_threads, n_thread_iters, interval_ns, yield_cpu ? "" : " not");
 
-	register_fatal_sig_handlers();
+	assert(0 == trace_register_fatal_sig_handlers(extra_fatal_signal_handler));
 	sleep(1);
 
 	for(int i =  0; i < n_threads; i++) {
-		pthread_create(&threads[i], 0 , do_log, 0);
+		assert(0 == pthread_create(&threads[i], 0 , do_log, 0));
 	}
 
 	for(int i =  0; i < n_threads; i++) {
-		pthread_join(threads[i], 0);
+	    assert(0 == pthread_join(threads[i], 0));
 	}
 
 	sleep(1);
 	return 0;
 }
-

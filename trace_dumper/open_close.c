@@ -116,7 +116,7 @@ bool_t is_perf_logging_file_open(struct trace_record_file *record_file)
 		return FALSE;
 	}
 
-	assert(rc >= 0L);
+	TRACE_ASSERT(rc >= 0L);
 	return TRUE;
 }
 
@@ -142,7 +142,7 @@ static int trace_open_file(struct trace_dumper_configuration_s *conf, struct tra
     record_file->records_written = 0;
     record_file->mapping_info = NULL;
 
-    assert(NULL != filename_spec);
+    TRACE_ASSERT(NULL != filename_spec);
     if (!autogen_filenames) { /* filename_spec specifies a full filename */
         if ((size_t)(stpncpy(filename, filename_spec, sizeof(filename)) - filename) >= sizeof(filename)) {
         	errno = ENAMETOOLONG;
@@ -168,7 +168,7 @@ static int trace_open_file(struct trace_dumper_configuration_s *conf, struct tra
     }
 
     INFO("Opening trace file:", filename);
-    assert(is_closed(record_file));
+    TRACE_ASSERT(is_closed(record_file));
 
     int mode = conf->low_latency_write ? O_RDWR : O_WRONLY;
     record_file->fd = TEMP_FAILURE_RETRY(open(filename, mode | O_CREAT | O_TRUNC, 0644));
@@ -260,8 +260,8 @@ int open_trace_file_if_necessary(struct trace_dumper_configuration_s *conf)
 			rc = trace_open_file(conf, &conf->notification_file, conf->fixed_notification_filename, FALSE);
 		}
 		else {
-			assert(NULL != conf->logs_base);
-			assert(NULL != conf->notifications_subdir);
+			TRACE_ASSERT(NULL != conf->logs_base);
+			TRACE_ASSERT(NULL != conf->notifications_subdir);
 			char *warn_dir = alloca(strlen(conf->logs_base) + strlen(conf->notifications_subdir) + 4);
 			sprintf(warn_dir, "%s/%s", conf->logs_base, conf->notifications_subdir);
 			rc = trace_open_file(conf, &conf->notification_file, warn_dir, TRUE);
@@ -311,13 +311,13 @@ static int close_file(struct trace_record_file *file, bool_t wait_for_flush) {
     }
 
 	if (0 == rc) {
-		assert(is_closed(file));
+		TRACE_ASSERT(is_closed(file));
 
 		/* Make sure we're not leaking memory mappings */
-		assert(NULL == file->mapping_info);
+		TRACE_ASSERT(NULL == file->mapping_info);
 	}
 	else {
-		assert(! is_closed(file));
+		TRACE_ASSERT(! is_closed(file));
 		syslog(LOG_USER|LOG_ERR, "Trace dumper had error %d (%s) while trying to close the file %s",
 				errno, strerror(errno), file->filename);
 	}

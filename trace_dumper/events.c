@@ -76,7 +76,7 @@ static int run_executable(const char *executable, const char *arg)
 
         case 0: { /* grand-child */
             char *const argv[] = { strdupa(executable), strdupa(arg), NULL };
-            assert(-1 == execvp(executable, argv));
+            TRACE_ASSERT(-1 == execvp(executable, argv));
             const int err = errno;
             syslog(LOG_USER|LOG_ERR, "Failed to exec %s in pid %d due to error %d (%s)", executable, (int) getpid(), err, strerror(err));
             if (trace_init(NULL) >= 0) {
@@ -99,7 +99,7 @@ static int run_executable(const char *executable, const char *arg)
     }
 
     default: { /* Parent */
-        assert(pid > 0);
+        TRACE_ASSERT(pid > 0);
         DEBUG("Forked intermediate child with", pid);
         int status = -1;
         if (waitpid(pid, &status, 0) != pid) {

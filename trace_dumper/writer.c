@@ -95,7 +95,7 @@ static ssize_t trace_dumper_writev(int fd, const struct iovec *iov, int iovcnt)
     	return -1;
     }
 
-    assert(copy_iov_to_buffer(buffer, iov, iovcnt) == length);
+    TRACE_ASSERT(copy_iov_to_buffer(buffer, iov, iovcnt) == length);
 
     ssize_t bytes_written = TEMP_FAILURE_RETRY(write(fd, buffer, length));
     free(buffer);
@@ -355,8 +355,8 @@ static int free_mmapping(struct trace_output_mmap_info *mmapping) {
 static int do_data_sync(struct trace_output_mmap_info *mmap_info, bool_t final)
 {
 	const trace_record_counter_t records_written = mmap_info->records_written;
-	assert(mmap_info->records_committed <= records_written);
-	assert(0 == mmap_info->page_size % TRACE_RECORD_SIZE);
+	TRACE_ASSERT(mmap_info->records_committed <= records_written);
+	TRACE_ASSERT(0 == mmap_info->page_size % TRACE_RECORD_SIZE);
 
 	const size_t page_size_records = mmap_info->page_size / TRACE_RECORD_SIZE;
 	const struct trace_record *const fadv_base = mmap_info->base + ROUND_DOWN(mmap_info->records_committed, page_size_records);
@@ -373,7 +373,7 @@ static int do_data_sync(struct trace_output_mmap_info *mmap_info, bool_t final)
 		}
 	}
 
-	assert(mmap_info->records_committed * TRACE_RECORD_SIZE + fadv_len <= mmap_info->mapping_len_bytes);
+	TRACE_ASSERT(mmap_info->records_committed * TRACE_RECORD_SIZE + fadv_len <= mmap_info->mapping_len_bytes);
 	const off64_t fadv_start_offset = TRACE_RECORD_SIZE * (fadv_base - mmap_info->base);
 	int rc = posix_fadvise64(mmap_info->fd, fadv_start_offset, fadv_len, POSIX_FADV_DONTNEED);
 	if (0 != rc) {
@@ -385,7 +385,7 @@ static int do_data_sync(struct trace_output_mmap_info *mmap_info, bool_t final)
 	}
 
 	if (final) {
-		assert(records_written == mmap_info->records_written);  /* Should not have any further changes if we were really called as final. */
+		TRACE_ASSERT(records_written == mmap_info->records_written);  /* Should not have any further changes if we were really called as final. */
 		mmap_info->records_committed = records_written;
 		const int lasterr = mmap_info->lasterr;
 		const pthread_t posix_tid = mmap_info->tid;
@@ -395,14 +395,14 @@ static int do_data_sync(struct trace_output_mmap_info *mmap_info, bool_t final)
 		mmap_info->records_committed = (fadv_start_offset + fadv_len) / TRACE_RECORD_SIZE;
 		mmap_info->next_flush_ts = now + mmap_info->global_conf->max_flush_interval;
 	}
-	assert(mmap_info->records_committed <= records_written);
+	TRACE_ASSERT(mmap_info->records_committed <= records_written);
 
 	return 0;
 }
 
 static size_t num_records_pending(const struct trace_output_mmap_info *mmap_info)
 {
-	assert(mmap_info->records_written >= mmap_info->records_committed);
+	TRACE_ASSERT(mmap_info->records_written >= mmap_info->records_committed);
 	return mmap_info->records_written - mmap_info->records_committed;
 }
 
@@ -410,7 +410,7 @@ static void *msync_mmapped_data(void *mmap_info_vp)
 {
 	static const useconds_t delay = 1000;
 	struct trace_output_mmap_info *mmap_info = (struct trace_output_mmap_info *) mmap_info_vp;
-	assert(pthread_self() == mmap_info->tid);
+	TRACE_ASSERT(pthread_self() == mmap_info->tid);
 	mmap_info->lasterr = 0;
 
 	do {
@@ -420,7 +420,7 @@ static void *msync_mmapped_data(void *mmap_info_vp)
 			break;
 
 		default:
-			assert(rc < 0);
+			TRACE_ASSERT(rc < 0);
 			mmap_info->lasterr = errno;
 			WARN("Worker thread data sync returned", errno, strerror(errno));
 			/* No break - also delay as in the case of EAGAIN */
@@ -470,7 +470,7 @@ static int setup_mmapping(const struct trace_dumper_configuration_s *conf, struc
 	}
 
 	const long page_size = sysconf(_SC_PAGESIZE);
-	assert(page_size > 0);
+	TRACE_ASSERT(page_size > 0);
 	record_file->mapping_info->page_size = (size_t) page_size;
 	record_file->mapping_info->preferred_write_bytes = MAX(conf->preferred_flush_bytes, record_file->mapping_info->page_size);
 	record_file->mapping_info->global_conf = conf;
@@ -513,7 +513,7 @@ errno_from_pthread:
 	errno = rc;
 
 unmap_file:
-	assert(0 == munmap(record_file->mapping_info->base, record_file->mapping_info->mapping_len_bytes));
+	TRACE_ASSERT(0 == munmap(record_file->mapping_info->base, record_file->mapping_info->mapping_len_bytes));
 	ftruncate(record_file->fd, 0);
 
 free_mapping_info:
@@ -627,13 +627,13 @@ int trace_dumper_write_via_mmapping(
 	        ERR("Failed to set-up mmapping errno=", errno, strerror(errno), record_file->filename);
 			return -1;
 	}
-	assert(MAP_FAILED != record_file->mapping_info->base);
-	assert(0 != record_file->mapping_info->tid);
+	TRACE_ASSERT(MAP_FAILED != record_file->mapping_info->base);
+	TRACE_ASSERT(0 != record_file->mapping_info->tid);
 
 	size_t bytes_written = record_file->mapping_info->records_written * TRACE_RECORD_SIZE;
 	size_t len = total_iovec_len(iov, iovcnt);
-	assert(0 == (len % TRACE_RECORD_SIZE));
-	assert(len <= INT_MAX);
+	TRACE_ASSERT(0 == (len % TRACE_RECORD_SIZE));
+	TRACE_ASSERT(len <= INT_MAX);
 
 	if (len > 0) {
 		size_t new_size = bytes_written + len;
@@ -657,7 +657,7 @@ int trace_dumper_write_via_mmapping(
 		struct trace_record *write_start = record_file->mapping_info->base + recs_written_so_far;
 		record_file->ts.started_memcpy = trace_get_nsec();
 		trace_dumper_prefetch_records_if_necessary(record_file->mapping_info, len / TRACE_RECORD_SIZE);
-		assert((size_t)copy_iov_to_buffer(write_start, iov, iovcnt) == len);
+		TRACE_ASSERT((size_t)copy_iov_to_buffer(write_start, iov, iovcnt) == len);
 		record_file->ts.finished_memcpy = trace_get_nsec();
 
 		if (NULL != record_file->post_write_validator) {

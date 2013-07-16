@@ -32,6 +32,9 @@
 #include "open_close.h"
 #include "housekeeping.h"
 
+#define COLOR_BOOL conf->color
+#include "../colors.h"
+
 /* Housekeeping routines */
 
 static void handle_overwrite(struct trace_dumper_configuration_s *conf)

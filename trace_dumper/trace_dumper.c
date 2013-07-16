@@ -58,7 +58,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 static trace_record_counter_t adjust_for_overrun(struct trace_mapped_records *mapped_records)
 {
 	trace_record_counter_t current_record = mapped_records->mutab->current_record;
-	assert(current_record >= mapped_records->imutab->max_records - 1);
+	TRACE_ASSERT(current_record >= mapped_records->imutab->max_records - 1);
 
 	trace_record_counter_t additional_skipped;
 
@@ -110,7 +110,7 @@ static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *co
 {
     const unsigned int num_iovecs = conf->record_file.iov_count;
     if (num_iovecs > 1) {
-    	assert(num_iovecs >= 3);  /* Should have at least dump and chunk headers and some data */
+    	TRACE_ASSERT(num_iovecs >= 3);  /* Should have at least dump and chunk headers and some data */
         conf->last_flush_offset = conf->record_file.records_written;
 		conf->prev_flush_ts = cur_ts;
 		conf->next_flush_ts = cur_ts + conf->ts_flush_delta;
@@ -131,7 +131,7 @@ static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *co
 
 					for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
 					    if (mapped_records->current_read_record != mapped_records->next_flush_record) {
-					        assert(mapped_records->current_read_record <= mapped_records->next_flush_record);
+					        TRACE_ASSERT(mapped_records->current_read_record <= mapped_records->next_flush_record);
 					        trace_record_counter_t n_discarded_records = mapped_records->next_flush_record - mapped_records->current_read_record;
 					        WARN("Trace dumper has had to discard records due to insufficient buffer space for pid", mapped_buffer->pid, mapped_buffer->name, rid, n_discarded_records);
 					        mapped_records->num_records_discarded += n_discarded_records;
@@ -186,9 +186,9 @@ static void possibly_report_record_loss(
 {
 	unsigned records_pos = mapped_records - mapped_buffer->mapped_records;
 
-	assert(records_pos < TRACE_BUFFER_NUM_RECORDS);
-	assert(deltas->lost >= 0);
-	assert(deltas->remaining_before_loss >= 0);
+	TRACE_ASSERT(records_pos < TRACE_BUFFER_NUM_RECORDS);
+	TRACE_ASSERT(deltas->lost >= 0);
+	TRACE_ASSERT(deltas->remaining_before_loss >= 0);
 
 	if (deltas->lost > 0) {
 		syslog(LOG_USER|LOG_WARNING, "Trace dumper has lost %ld records while writing traces from area %u of %s (pid %d) to file %s.",
@@ -327,7 +327,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 		}
 
 
-		assert(	(TRACE_TERMINATION_LAST & last_rec->termination) ||
+		TRACE_ASSERT(	(TRACE_TERMINATION_LAST & last_rec->termination) ||
 				/* Make sure this is not due to record buffer overflow overwriting *last_rec */
 				(mapped_records->mutab->current_record - mapped_records->current_read_record >= deltas.total));
 
@@ -372,7 +372,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 		conf->record_file.iov_count = num_iovecs;
 
 		if (possibly_write_iovecs_to_disk(conf, total_written_records, cur_ts) < 0) {
-			assert(0 != errno);
+			TRACE_ASSERT(0 != errno);
 			WARN("Writing records did not complete successfully. errno=", errno, num_iovecs, total_written_records, cur_ts);
 			return -1;
 		}
@@ -420,7 +420,7 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
         rc = trace_flush_buffers(conf);
         if (rc > TRACE_FILE_IMMEDIATE_FLUSH_THRESHOLD) {
         	struct timespec ts = { 0, conf->ts_flush_delta };
-        	assert(0 == TEMP_FAILURE_RETRY(nanosleep(&ts, &ts)));
+        	TRACE_ASSERT(0 == TEMP_FAILURE_RETRY(nanosleep(&ts, &ts)));
         	continue;
         }
         else if (rc < 0) {
@@ -436,7 +436,7 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
             ERR("Error while performing housekeeping functions. errno=", errno, strerror(errno));
         	break;
         }
-        else assert(0 == rc);
+        else TRACE_ASSERT(0 == rc);
     }
 
     discard_all_buffers_immediately(conf);

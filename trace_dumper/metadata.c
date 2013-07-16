@@ -85,9 +85,8 @@ static int trace_dump_metadata(struct trace_dumper_configuration_s *conf, struct
     }
 
     if (mapped_buffer->metadata.metadata_iovec_len > 0) {
-		assert(NULL != mapped_buffer->metadata.metadata_iovec);
-		rc = trace_dumper_write(conf, record_file, mapped_buffer->metadata.metadata_iovec, mapped_buffer->metadata.metadata_iovec_len,
-								record_file_should_be_parsed(conf, record_file));
+		TRACE_ASSERT(NULL != mapped_buffer->metadata.metadata_iovec);
+		rc = trace_dumper_write(conf, record_file, mapped_buffer->metadata.metadata_iovec, mapped_buffer->metadata.metadata_iovec_len);
 		if ((size_t) rc != (mapped_buffer->metadata.metadata_iovec_len / 2) * sizeof(struct trace_record)) {
 			if (0 == errno) {
 				errno = EIO;
@@ -151,11 +150,11 @@ void init_metadata_iovector(struct trace_mapped_metadata *metadata, trace_pid_t 
         metadata->metadata_iovec[i*2].iov_len = TRACE_RECORD_HEADER_SIZE;
         metadata->metadata_iovec[i*2+1].iov_base = &((char *) metadata->base_address)[i * TRACE_RECORD_PAYLOAD_SIZE];
         size_t len = MIN(TRACE_RECORD_PAYLOAD_SIZE, remaining_length);
-        assert(len > 0);
+        TRACE_ASSERT(len > 0);
 		metadata->metadata_iovec[i*2+1].iov_len = len;
         remaining_length -= len;
     }
-    assert (remaining_length == 0);
+    TRACE_ASSERT(remaining_length == 0);
 
     if (metadata->metadata_iovec[metadata->metadata_iovec_len - 1].iov_len < TRACE_RECORD_PAYLOAD_SIZE) {
     	static const char zeros[TRACE_RECORD_PAYLOAD_SIZE] = { '\0' };
