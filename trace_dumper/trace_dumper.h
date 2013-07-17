@@ -50,8 +50,7 @@ struct trace_mapped_metadata {
     unsigned long type_definition_count;
     size_t size;
     size_t metadata_iovec_len;
-    void *base_address;
-    int  metadata_fd;
+    const struct trace_metadata_region *base_address;
     struct trace_log_descriptor *descriptors;
 };
 
@@ -76,8 +75,7 @@ struct trace_mapped_records {
 
 struct trace_mapped_buffer {
     char name[TRACE_BUFNAME_LEN];
-    void *records_buffer_base_address;
-    int  record_buffer_fd;
+    struct trace_buffer *records_buffer_base_address;
     trace_record_counter_t records_buffer_size;
     trace_record_counter_t last_metadata_offset;
     bool_t metadata_dumped;

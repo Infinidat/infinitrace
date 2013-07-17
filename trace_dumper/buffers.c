@@ -18,6 +18,7 @@
    limitations under the License.
  */
 
+#include "../platform.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -45,8 +46,6 @@
 #include "buffers.h"
 
 
-#define SHM_DIR "/dev/shm"
-
 
 CREATE_LIST_IMPLEMENTATION(MappedBuffers, struct trace_mapped_buffer);
 CREATE_LIST_IMPLEMENTATION(BufferFilter, buffer_name_t);
@@ -54,50 +53,12 @@ CREATE_LIST_IMPLEMENTATION(PidList, trace_pid_t);
 
 bool_t is_trace_shm_region(const char *shm_name)
 {
-    if (strncmp(shm_name, TRACE_SHM_ID, strlen(TRACE_SHM_ID)) == 0) {
-        return TRUE;
-    } else {
-        return FALSE;
-    }
+    return trace_str_starts_with_prefix(shm_name, TRACE_SHM_ID);
 }
 
-pid_t get_pid_from_shm_name(const char *shm_name)
+static bool_t is_dynamic_log_data_shm_region(const char *shm_name)
 {
-    char str_pid[10];
-    shm_name += strlen(TRACE_SHM_ID);
-    char *underscore = strchr(shm_name, '_');
-
-    if (NULL == underscore) {
-        errno = EINVAL;
-        return -1;
-    }
-
-    if ((unsigned long) (underscore - shm_name) >= sizeof(str_pid)) {
-        errno = EINVAL;
-        return -1;
-    }
-
-    memcpy(str_pid, shm_name, underscore - shm_name);
-    str_pid[underscore - shm_name] = '\0';
-    return atoi(str_pid);
-}
-
-bool_t is_static_log_data_shm_region(const char *shm_name)
-{
-    if (strstr(shm_name, "static_trace_metadata") != NULL) {
-        return TRUE;
-    } else {
-        return FALSE;
-    }
-}
-
-bool_t is_dynamic_log_data_shm_region(const char *shm_name)
-{
-    if (strstr(shm_name, "dynamic_trace_data") != 0) {
-        return TRUE;
-    } else {
-        return FALSE;
-    }
+    return trace_str_ends_with_suffix(shm_name, TRACE_DYNAMIC_SUFFIX);
 }
 
 static bool_t process_exists(pid_t pid) {
@@ -117,6 +78,7 @@ static bool_t process_exists(pid_t pid) {
 
 	default:
 		syslog(LOG_USER|LOG_ERR, "Failed to check for the existence of pid %d due to %s", pid, strerror(errno));
+		ERR("Failed to check for the existence of", pid, "due to error", errno, strerror(errno));
 		break;
 	}
 
@@ -163,14 +125,18 @@ bool_t trace_should_filter(struct trace_dumper_configuration_s *conf, const char
 static int open_trace_shm(const char *shm_name, off_t *size) {
 	int fd = shm_open(shm_name, O_RDWR, 0);
 	if (fd < 0) {
-		syslog(LOG_USER|LOG_ERR, "Failed to open the trace shared-memory object %s due to error: %s", shm_name, strerror(errno));
+	    const int err = errno;
+		syslog(LOG_USER|LOG_ERR, "Failed to open the trace shared-memory object %s due to error: %s", shm_name, strerror(err));
+		ERR("Failed to open the trace shared-memory object", shm_name, err, strerror(err));
 	}
 
 	else if (NULL != size) {
 		struct stat st;
 		int rc = fstat(fd, &st);
 		if (rc < 0) {
-			syslog(LOG_USER|LOG_ERR, "Failed to obtain the size of the trace shared-memory object %s due to error: %s", shm_name, strerror(errno));
+		    const int err = errno;
+			syslog(LOG_USER|LOG_ERR, "Failed to obtain the size of the trace shared-memory object %s due to error: %s", shm_name, strerror(err));
+			ERR("Failed to obtain the size of the trace shared-memory", shm_name, err, strerror(err));
 			close(fd);
 			*size = 0;
 			return rc;
@@ -181,79 +147,117 @@ static int open_trace_shm(const char *shm_name, off_t *size) {
 	return fd;
 }
 
+static void *map_single_buffer(pid_t pid, enum trace_shm_object_type shm_type, off_t *shm_size)
+{
+    trace_shm_name_buf name;
+    assert(trace_generate_shm_name(name, pid, shm_type, FALSE) > 0);
+
+    off_t size = 0;
+    const int fd = open_trace_shm(name, &size);
+    if (fd < 0) {
+        const int err = errno;
+        ERR("Unable to open buffer", name, pid, err, strerror(err));
+        return MAP_FAILED;
+    }
+
+    void *const addr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (0 != close(fd)) {
+        const int err = errno;
+        ERR("Failed to close fd for the mapped buffer", name, fd, addr, err, strerror(err), "unmapping the buffer");
+        goto unmap_shm;
+    }
+
+    if (MAP_FAILED == addr) {
+        const int err = errno;
+        ERR("Unable to map the buffer", name, fd, TRACE_NAMED_INT_AS_HEX(size), err, strerror(err));
+        return MAP_FAILED;
+    }
+
+#ifdef MADV_DONTFORK
+    if (madvise(addr, size, MADV_DONTFORK) < 0) {
+        const int err = errno;
+        ERR("Failed to set MADV_DONTFORK for buffer", name, fd, addr, TRACE_NAMED_INT_AS_HEX(size), err, strerror(err));
+        goto unmap_shm;
+    }
+#endif
+
+    INFO("Successfully mapped the buffer", pid, shm_type, name, addr, TRACE_NAMED_INT_AS_HEX(size));
+    if (NULL != shm_size) {
+        *shm_size = size;
+    }
+    return addr;
+
+unmap_shm:
+    if (MAP_FAILED != addr) {
+        munmap(addr, size);
+    }
+    return MAP_FAILED;
+}
+
 static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
 {
-    int static_fd = -1, dynamic_fd = -1;
-    char dynamic_trace_filename[0x100];
-    char static_log_data_filename[0x100];
     int rc = -1;
     struct trace_mapped_buffer *new_mapped_buffer = NULL;
-    snprintf(dynamic_trace_filename, sizeof(dynamic_trace_filename), TRACE_DYNAMIC_DATA_REGION_NAME_FMT, pid);
-    snprintf(static_log_data_filename, sizeof(static_log_data_filename), TRACE_STATIC_DATA_REGION_NAME_FMT, pid);
+    if (0 != MappedBuffers__allocate_element(&conf->mapped_buffers)) {
+        ERR("No space left to add a buffer for", pid);
+        rc = -1;
+        goto delete_shm_files;  /* TODO: Reconsider this, perhaps we should wait and avoid flooding with messages in the meantime */
+    }
+
+    assert(0 == MappedBuffers__get_element_ptr(&conf->mapped_buffers, MappedBuffers__element_count(&conf->mapped_buffers) - 1, &new_mapped_buffer));
+    memset(new_mapped_buffer, 0, sizeof(*new_mapped_buffer));
 
     off_t static_log_data_region_size = 0;
-    static_fd = open_trace_shm(static_log_data_filename, &static_log_data_region_size);
-    if (static_fd < 0) {
-        ERR("Unable to open static buffer:", static_log_data_filename, pid, errno, strerror(errno));
+    struct trace_metadata_region *const static_log_data_region =
+            (struct trace_metadata_region *) map_single_buffer(pid, TRACE_SHM_TYPE_STATIC, &static_log_data_region_size);
+    if (MAP_FAILED == static_log_data_region) {
+        ERR("Unable to map static log area:", pid, errno, strerror(errno));
         rc = -1;
-        goto delete_shm_files;
+        goto remove_mapped_buffer;
     }
-
-    off_t trace_region_size = 0;
-    dynamic_fd = open_trace_shm(dynamic_trace_filename, &trace_region_size);
-    if (dynamic_fd < 0) {
-        ERR("Unable to open dynamic buffer", dynamic_trace_filename, pid, errno, strerror(errno));
-        rc = -1;
-        goto close_static;
-    }
-
-    void *mapped_dynamic_addr = mmap(NULL, trace_region_size, PROT_READ | PROT_WRITE, MAP_SHARED, dynamic_fd, 0);
-    if (MAP_FAILED == mapped_dynamic_addr) {
-        ERR("Unable to map log information buffer", dynamic_trace_filename, pid, errno, strerror(errno));
-        rc = -1;
-        goto close_dynamic;
-    }
-
-    void * mapped_static_log_data_addr = mmap(NULL, static_log_data_region_size, PROT_READ | PROT_WRITE, MAP_SHARED, static_fd, 0);
-    if (MAP_FAILED == mapped_static_log_data_addr) {
-        ERR("Unable to map static log area:", static_log_data_filename, pid, errno, strerror(errno));
-        rc = -1;
-        goto unmap_dynamic;
-    }
-
-    struct trace_buffer *unmapped_trace_buffer = (struct trace_buffer *) mapped_dynamic_addr;
-    struct trace_metadata_region *static_log_data_region = (struct trace_metadata_region *) mapped_static_log_data_addr;
 
     if (trace_should_filter(conf, static_log_data_region->name)) {
         rc = 0;
         INFO("Filtering buffer", static_log_data_region->name, pid);
         goto unmap_static;
-
     }
 
-    if (0 != MappedBuffers__allocate_element(&conf->mapped_buffers)) {
+    /* The static metadata region uses internal pointers that are valid in the address-space of the client process, where the metadata region
+     * had been mapped at static_log_data_region->base_address. We have to adjust them to the dumper's address space, where the same region
+     * is now mapped at static_log_data_region, and update the base_address field with the new base address relative to which the pointers are now valid. */
+    const void *const client_base_addr = static_log_data_region->base_address;
+    if ((static_log_data_region_size > MAX_METADATA_SIZE) || (NULL == client_base_addr)) {
+        ERR("Metadata size too large or invalid base address for", static_log_data_region->name, pid, static_log_data_region_size, client_base_addr);
         rc = -1;
-        ERR("No space left to add a buffer for", static_log_data_region->name, pid);
         goto unmap_static;
     }
 
-    assert(0 == MappedBuffers__get_element_ptr(&conf->mapped_buffers, MappedBuffers__element_count(&conf->mapped_buffers) - 1, &new_mapped_buffer));
-    memset(new_mapped_buffer, 0, sizeof(*new_mapped_buffer));
-    if (static_log_data_region_size > MAX_METADATA_SIZE) {
-        ERR("Error, metadata size too large for", static_log_data_region->name, pid, static_log_data_region_size);
-        rc = -1;
-        goto remove_mapped_buffer;
-    }
-
-    new_mapped_buffer->records_buffer_base_address = mapped_dynamic_addr;
-    new_mapped_buffer->record_buffer_fd = dynamic_fd;
-    new_mapped_buffer->records_buffer_size = trace_region_size;
     new_mapped_buffer->metadata.log_descriptor_count = static_log_data_region->log_descriptor_count;
     new_mapped_buffer->metadata.type_definition_count = static_log_data_region->type_definition_count;
     new_mapped_buffer->metadata.descriptors = (struct trace_log_descriptor *) static_log_data_region->data;
     new_mapped_buffer->metadata.size = static_log_data_region_size;
-    new_mapped_buffer->metadata.base_address = mapped_static_log_data_addr;
-    new_mapped_buffer->metadata.metadata_fd = static_fd;
+    new_mapped_buffer->metadata.base_address = static_log_data_region;
+
+    relocate_metadata(client_base_addr, static_log_data_region, (char *) new_mapped_buffer->metadata.descriptors,
+                      new_mapped_buffer->metadata.log_descriptor_count, new_mapped_buffer->metadata.type_definition_count);
+    static_log_data_region->base_address = static_log_data_region;
+    if (mprotect(static_log_data_region, static_log_data_region_size, PROT_READ) < 0) {
+        const int err = errno;
+        ERR("Failed to make the static log data region", static_log_data_region, static_log_data_region_size, "read-only.", err, strerror(err));
+        goto unmap_static;
+    }
+
+    off_t trace_region_size = 0;
+    struct trace_buffer *const dynamic_trace_buffer =
+            (struct trace_buffer *) map_single_buffer(pid, TRACE_SHM_TYPE_DYNAMIC, &trace_region_size);
+    if (MAP_FAILED == dynamic_trace_buffer) {
+        ERR("Unable to map log information buffer", pid, errno, strerror(errno));
+        rc = -1;
+        goto unmap_static;
+    }
+
+    new_mapped_buffer->records_buffer_base_address = dynamic_trace_buffer;
+    new_mapped_buffer->records_buffer_size = trace_region_size;
     new_mapped_buffer->pid = (trace_pid_t) pid;
     new_mapped_buffer->metadata_dumped = FALSE;
     new_mapped_buffer->notification_metadata_dumped = FALSE;
@@ -271,9 +275,7 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
     }
 
     new_mapped_buffer->process_time = process_time;
-    relocate_metadata(static_log_data_region->base_address, mapped_static_log_data_addr, (char *) new_mapped_buffer->metadata.descriptors,
-                      new_mapped_buffer->metadata.log_descriptor_count, new_mapped_buffer->metadata.type_definition_count);
-    static_log_data_region->base_address = mapped_static_log_data_addr;
+
     init_metadata_iovector(&new_mapped_buffer->metadata, new_mapped_buffer->pid);
     trace_array_strcpy(new_mapped_buffer->name, static_log_data_region->name);
     unsigned int i;
@@ -281,40 +283,44 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
         struct trace_mapped_records *mapped_records;
 
         mapped_records = &new_mapped_buffer->mapped_records[i];
-        mapped_records->records = unmapped_trace_buffer->u._all_records[i].records;
-        mapped_records->mutab = &unmapped_trace_buffer->u._all_records[i].mutab;
-        mapped_records->imutab = &unmapped_trace_buffer->u._all_records[i].imutab;
+        mapped_records->records = dynamic_trace_buffer->u._all_records[i].records;
+        mapped_records->mutab = &dynamic_trace_buffer->u._all_records[i].mutab;
+        mapped_records->imutab = &dynamic_trace_buffer->u._all_records[i].imutab;
         mapped_records->last_flush_offset = 0;
         mapped_records->current_read_record = mapped_records->mutab->next_flush_record;
     }
 
     if (new_mapped_buffer->pid != pid) {
-        WARN("Pid cannot fit in a 16-bit field for", new_mapped_buffer->name, pid, mapped_static_log_data_addr, static_log_data_region_size, mapped_dynamic_addr, trace_region_size);
+        WARN("Pid cannot fit in a 16-bit field for", new_mapped_buffer->name, pid, static_log_data_region, static_log_data_region_size, dynamic_trace_buffer, trace_region_size);
     	syslog(LOG_USER|LOG_WARNING, "Pid %d of %s is too large to be represented in trace dumper's %lu-bit pid field. Please restrict your system's process IDs accordingly",
     			pid, new_mapped_buffer->name, 8*sizeof(new_mapped_buffer->pid));
     }
     else if (conf->log_details && !conf->attach_to_pid) {
-        INFO("Starting to collect traces from the process", new_mapped_buffer->name, pid, mapped_static_log_data_addr, static_log_data_region_size, mapped_dynamic_addr, trace_region_size);
+        INFO("Starting to collect traces from the process", new_mapped_buffer->name, pid, static_log_data_region, static_log_data_region_size, dynamic_trace_buffer, trace_region_size);
     	syslog(LOG_USER|LOG_INFO, "Starting to collect traces from %s with pid %d to %s",
     			new_mapped_buffer->name, new_mapped_buffer->pid, conf->record_file.filename);
     }
 
-    rc = 0;
-    goto exit;
+    return 0;
+
+unmap_static:
+    if (munmap(static_log_data_region, static_log_data_region_size) < 0) {
+        const int err = errno;
+        ERR("Failed to unmap the static buffer", static_log_data_region, static_log_data_region_size, pid, new_mapped_buffer->name, err, strerror(err));
+        rc = -1;
+    }
 
 remove_mapped_buffer:
-    MappedBuffers__remove_element(&conf->mapped_buffers, MappedBuffers__last_element_index(&conf->mapped_buffers));
-unmap_static:
-    munmap(mapped_static_log_data_addr, static_log_data_region_size);
-unmap_dynamic:
-    munmap(mapped_dynamic_addr, trace_region_size);
-close_dynamic:
-    close(dynamic_fd);
-close_static:
-    close(static_fd);
+    TRACE_ASSERT(0 == MappedBuffers__remove_element(&conf->mapped_buffers, MappedBuffers__last_element_index(&conf->mapped_buffers)));
+
 delete_shm_files:
-    delete_shm_files(pid);
-exit:
+    WARN("The shared-memory areas for the process", pid, new_mapped_buffer->name, "could not be open and will be deleted.");
+    if (delete_shm_files(pid) < 0) {
+        const int err = errno;
+        ERR("Failed to delete shared-memory files for", new_mapped_buffer->name, pid, err, strerror(err));
+        rc = -1;
+    }
+
     if ((ENOENT == errno) && !process_exists(pid)) {
         errno = ESRCH;
     }
@@ -344,22 +350,19 @@ static bool_t buffer_mapped(struct trace_dumper_configuration_s * conf, unsigned
 
 static int process_potential_trace_buffer(struct trace_dumper_configuration_s *conf, const char *shm_name)
 {
-    int rc = 0;
-    if (!is_trace_shm_region(shm_name) && !is_static_log_data_shm_region(shm_name)) {
-        return 0;
+    if (  is_trace_shm_region(shm_name) &&
+          is_dynamic_log_data_shm_region(shm_name)) {
+        const pid_t pid = trace_get_pid_from_shm_name(shm_name);
+        if (pid <= 0) {
+            return -1;
+        }
+
+        if (!buffer_mapped(conf, pid)) {
+            return map_buffer(conf, pid);
+        }
     }
 
-    pid_t pid = get_pid_from_shm_name(shm_name);
-    if (pid <= 0) {
-    	return -1;
-    }
-
-    if (is_dynamic_log_data_shm_region(shm_name) && !buffer_mapped(conf, pid)) {
-        rc = map_buffer(conf, pid);
-    }
-
-
-    return rc;
+    return 0;
 }
 
 int map_new_buffers(struct trace_dumper_configuration_s *conf)
@@ -370,24 +373,27 @@ int map_new_buffers(struct trace_dumper_configuration_s *conf)
     dir = opendir(SHM_DIR);
 
     if (dir == NULL) {
+        const int err = errno;
     	syslog(LOG_USER|LOG_ERR, "Failed to access the shared-memory directory " SHM_DIR);
+    	ERR("Failed to access the shared-memory directory " SHM_DIR, err, strerror(err));
     	return -1;
     }
 
     while (TRUE) {
         ent = readdir(dir);
         if (NULL == ent) {
-            goto exit;
+            break;
         }
 
         rc = process_potential_trace_buffer(conf, ent->d_name);
         if (0 != rc) {
+            const int err = errno;
         	syslog(LOG_USER|LOG_ERR, "Failed to process the trace buffer %s.", ent->d_name);
-            ERR("Error processing trace buffer", ent->d_name);
+            ERR("Error processing trace buffer", ent->d_name, err, strerror(err));
             continue;
         }
     }
-exit:
+
     closedir(dir);
     return 0;
 }
@@ -434,37 +440,21 @@ static void discard_buffer_unconditionally(struct trace_mapped_buffer *mapped_bu
 {
     free_metadata(&mapped_buffer->metadata);
 
-    int rc = munmap(mapped_buffer->metadata.base_address, mapped_buffer->metadata.size);
+    int rc = munmap((void *)(mapped_buffer->metadata.base_address), mapped_buffer->metadata.size);
     if (0 == rc) {
-    	mapped_buffer->metadata.base_address = MAP_FAILED;
+    	mapped_buffer->metadata.base_address = (const struct trace_metadata_region *) MAP_FAILED;
     }
     else {
         REPORT_BUF_ERR("Error unmapping metadata for buffer");
     }
 
-    rc = close(mapped_buffer->metadata.metadata_fd);
-    if (0 == rc) {
-    	mapped_buffer->metadata.metadata_fd = -1;
-    }
-    else {
-        REPORT_BUF_ERR("Error closing metadata");
-	}
-
     rc = munmap(mapped_buffer->records_buffer_base_address, mapped_buffer->records_buffer_size);
     if (0 == rc) {
-    	mapped_buffer->records_buffer_base_address = MAP_FAILED;
+    	mapped_buffer->records_buffer_base_address = (struct trace_buffer *) MAP_FAILED;
     }
     else {
         REPORT_BUF_ERR("Error unmapping records for buffer");
     }
-
-    rc = close(mapped_buffer->record_buffer_fd);
-	if (0 == rc) {
-		mapped_buffer->record_buffer_fd = -1;
-	}
-	else {
-	    REPORT_BUF_ERR("Error closing records for buffer");
-	}
 }
 
 /* Discard all the dumper resources the trace buffer of a process that has ended. */
@@ -478,10 +468,6 @@ void discard_buffer(struct trace_dumper_configuration_s *conf, struct trace_mapp
     int rc = delete_shm_files(mapped_buffer->pid);
     if (0 != rc) {
         REPORT_BUF_ERR("Error deleting shm files");
-    }
-
-    if (conf->trace_online && (TRACE_PARSER__free_buffer_context_by_pid(&(conf->parser), mapped_buffer->pid) < 0)) {
-        REPORT_BUF_ERR("Failed to free trace parser resources");
     }
 
     if (! PidList__insertable(&conf->dead_pids)) {
