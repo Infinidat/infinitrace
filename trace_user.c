@@ -131,7 +131,7 @@ int trace_runtime_control_set_subsystem_range(int low, int high)
 	return 0;
 }
 
-static __thread struct trace_internal_err_info internal_err_info;
+static __thread struct trace_internal_err_info internal_err_info = {0, 0, 0};
 
 const struct trace_internal_err_info *trace_internal_err_get_last(void)
 {
@@ -145,25 +145,26 @@ void trace_internal_err_clear(void)
 
 int trace_internal_err_clear_errno(void)
 {
-    const int saved_errno = errno;
-    errno = 0;
+    const int saved_errno = internal_err_info.err_num;
+    internal_err_info.err_num = 0;
     return saved_errno;
 }
 
 void trace_internal_err_record_if_necessary(int saved_errno, const struct trace_record *header)
 {
-    if (0 != errno) {
+    if (__builtin_expect(0 == internal_err_info.err_num, TRUE)) {
+        internal_err_info.err_num = saved_errno;
+    }
+    else {
         if (NULL != header) {
             internal_err_info.ts = header->ts;
             internal_err_info.log_id = (header->rec_type == TRACE_REC_TYPE_TYPED) ? header->u.typed.log_id : (trace_log_id_t) -1;
         }
         else {
-            trace_internal_err_clear();
+            internal_err_info.ts = 0;
+            internal_err_info.log_id = 0;
         }
-        internal_err_info.err_num = errno;
     }
-
-    errno = saved_errno;
 }
 
 /* Runtime support functions called when writing traces to shared-memory */
@@ -176,7 +177,7 @@ static inline void set_current_trace_buffer_ptr(struct trace_buffer *trace_buffe
 int trace_runtime_control_configure_buffer_allocation(unsigned initial_records_per_trace, unsigned records_array_increase_factor)
 {
 	if ((initial_records_per_trace < 1) || (records_array_increase_factor < 2)) {
-		errno = EINVAL;
+	    internal_err_info.err_num = EINVAL;
 		return -1;
 	}
 
@@ -393,14 +394,14 @@ struct trace_record *trace_realloc_records_array(struct trace_record *const reco
 {
 	assert(runtime_control.records_array_increase_factor > 1);
 	if (NULL == n_records) {
-		errno = EFAULT;
+	    internal_err_info.err_num = EFAULT;
 		return NULL;
 	}
 
 	/* Verify that records is either a pointer obtained through a previous call to this function or NULL */
 	const bool_t records_valid = (NULL == trace_records_dynamic_array) || (records == trace_records_dynamic_array);
 	if ((*n_records < 1) || ! records_valid)  {
-		errno = EINVAL;
+	    internal_err_info.err_num = EINVAL;
 		return NULL;
 	}
 

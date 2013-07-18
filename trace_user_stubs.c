@@ -16,6 +16,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 ***/
 /* Allows code with tracing to compile without linking tracing */
 
+#include <unistd.h>
 
 #include "trace_lib.h"
 #include "trace_user.h"
@@ -33,3 +34,9 @@ TRACE_SEVERITY_DEF
 
 enum trace_severity trace_runtime_control_set_default_min_sev(enum trace_severity sev __attribute__ ((unused))) {return TRACE_SEV_INVALID;}
 
+pid_t trace_fork(void) { return fork(); }
+
+static struct trace_internal_err_info internal_err_info = {0, 0, 0};
+
+const struct trace_internal_err_info *trace_internal_err_get_last(void) { return &internal_err_info; }
+void trace_internal_err_clear(void) {}
