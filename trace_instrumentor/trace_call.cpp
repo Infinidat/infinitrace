@@ -34,6 +34,42 @@
 
 using namespace clang;
 
+// TraceCallNameGenerator auxiliary class implementation
+std::string TraceCallNameGenerator::s_default_trace_call_name("__trace_log_meta");
+
+bool TraceCallNameGenerator::isDefaultName(const std::string& name) { return name == s_default_trace_call_name; }
+
+const std::string& TraceCallNameGenerator::getDefaultName() { return s_default_trace_call_name; }
+
+std::string TraceCallNameGenerator::generateName(const char *source_file, unsigned source_line)
+{
+    std::stringstream name;
+    name << s_default_trace_call_name;
+
+    if (NULL != source_file) {
+        const unsigned effective_line = source_line % (1U << TRACE_LOG_DESCRIPTOR_SRC_LINE_NBITS);
+        name << '_' << normalizeStr(source_file) << '_' << effective_line;
+
+        const unsigned prev_calls_in_line = m_trace_calls_line_numbers.count(effective_line);
+        if (prev_calls_in_line > 0) {
+            name << "_" << prev_calls_in_line;
+        }
+
+        m_trace_calls_line_numbers.insert(effective_line);
+    }
+
+    return name.str();
+}
+
+std::string TraceCallNameGenerator::generateTypeName(const std::string& type_name)
+{
+    return s_default_trace_call_name + "_" + type_name;
+}
+
+// TraceCallNameGenerator class implementation
+
+TraceCallNameGenerator TraceCall::s_name_gen;
+
 TraceCall::TraceCall(llvm::raw_ostream &out,
         clang::DiagnosticsEngine &_Diags,
         clang::ASTContext &_ast,
@@ -41,7 +77,7 @@ TraceCall::TraceCall(llvm::raw_ostream &out,
         std::set<const clang::Type *> &referenced_types,
         std::set<TraceCall *> &global_traces) :
             method_generated(false),
-            trace_call_name(s_default_trace_call_name),
+            trace_call_name(s_name_gen.getDefaultName()),
             ast(_ast),
             Diags(_Diags),
             Out(out),
@@ -94,18 +130,11 @@ bool TraceCall::initSourceLocation(const clang::SourceLocation *src_loc)
 	return false;
 }
 
-std::string TraceCall::s_default_trace_call_name("__trace_log_meta");
-
 std::string TraceCall::generateTraceCallName()
 {
-	std::stringstream name;
-	name << s_default_trace_call_name;
-
-	if (initSourceLocation()) {
-		name << '_' << normalizeStr(m_source_file) << '_' << (m_source_line % (1U << TRACE_LOG_DESCRIPTOR_SRC_LINE_NBITS));
-	}
-
-	trace_call_name = name.str();
+	trace_call_name = initSourceLocation() ?
+	        s_name_gen.generateName(m_source_file, m_source_line) :
+	        s_name_gen.getDefaultName();
 	return trace_call_name;
 }
 

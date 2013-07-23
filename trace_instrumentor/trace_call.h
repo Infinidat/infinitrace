@@ -38,8 +38,21 @@
 #include <string>
 #include <iostream>
 #include <vector>
+#include <set>
 
 #include "trace_param.h"
+
+class TraceCallNameGenerator {
+public:
+    std::string generateName(const char *source_file, unsigned source_line);
+    static const std::string& getDefaultName();
+    static bool isDefaultName(const std::string& name);
+    static std::string generateTypeName(const std::string& type_name);
+
+private:
+    std::multiset<unsigned> m_trace_calls_line_numbers;
+    static std::string s_default_trace_call_name;
+};
 
 class TraceCall {
 public:
@@ -67,7 +80,7 @@ TraceCall(llvm::raw_ostream &out,
     bool method_generated;
     std::string trace_call_name;
     std::string enclosing_function_name;
-    static std::string s_default_trace_call_name;
+    static TraceCallNameGenerator s_name_gen;
     
 private:
     clang::ASTContext &ast;
@@ -86,6 +99,7 @@ private:
     
     std::set<const clang::Type *> &referencedTypes;
     std::set<TraceCall *> &globalTraces;
+    //static std::map<unsigned, unsigned>
 
     enum trace_severity functionNameToTraceSeverity(std::string function_name);
     bool parseTraceParams(clang::CallExpr *S, std::vector<TraceParam> &args);
@@ -120,7 +134,7 @@ private:
     void unknownTraceParam(const clang::Expr *trace_param) const;
 
     std::string generateTraceCallName();
-    bool hasSpecificCallName() const { return ! (trace_call_name.empty() || trace_call_name == s_default_trace_call_name); }
+    bool hasSpecificCallName() const { return ! (trace_call_name.empty() || s_name_gen.isDefaultName(trace_call_name)); }
 
     std::string getFullTraceWriteExpression() const;
     std::string constlength_getTraceWriteExpression(unsigned int& buf_left) const;

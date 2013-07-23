@@ -592,7 +592,7 @@ bool TraceParam::parseClassTypeParam(const Expr *expr)
     }
 
     std::stringstream trace_call_name;
-    trace_call_name << TraceCall::s_default_trace_call_name;
+    trace_call_name << TraceCallNameGenerator::getDefaultName();
     trace_call_name << normalizeTypeName(full_type_name);
     trace_call = new TraceCall(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
     trace_call->trace_call_name = trace_call_name.str();

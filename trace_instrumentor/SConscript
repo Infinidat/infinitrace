@@ -37,7 +37,8 @@ with TracesDisabled(xn_env) as untraced_env:
 	-Wno-unused-parameter
 	-Wwrite-strings
 	-fno-exceptions
-	-fno-rtti''')
+	-fno-rtti
+	-g''')
 
     untraced_env.Alias('xn', lib)
     untraced_env.Alias('trace_instrumentor', lib)

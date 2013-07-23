@@ -318,7 +318,7 @@ void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
 			const QualType class_type = class_decl->getTypeForDecl()->getCanonicalTypeUnqualified();
 			std::string _type_name = normalizeTypeName(class_type.getAsString());
 			assert(! _type_name.empty()) ;
-			std::string descriptor_name = TraceCall::s_default_trace_call_name + "_" + _type_name;
+			std::string descriptor_name = TraceCallNameGenerator::generateTypeName(_type_name);
             std::string logid_def =
                     "const int __trace_repr_logid = &" + descriptor_name + " - __static_log_information_start; ";
             Rewrite->InsertText(function_start, logid_def, true);
