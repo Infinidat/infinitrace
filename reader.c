@@ -351,7 +351,9 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
 
     conf->op_type = OP_TYPE_DUMP_FILE;
     conf->field_disp = TRACE_PARSER_PARAM_NAME_DISP_EXPLICIT;
-    conf->max_errors_per_file = 200;
+
+    /* TODO: The following should be made configurable via e.g. a resource file or similar mechanism. */
+    conf->max_errors_per_file = UINT_MAX;
 
     while ((o = getopt_long(argc, (char **)argv, shortopts, longopts, &longindex)) != EOF) {
 		switch (o) {
