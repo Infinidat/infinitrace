@@ -239,6 +239,10 @@ unsigned char *trace_copy_vstr_to_records(struct trace_record **records, unsigne
 	const unsigned char CONTINUATION_MASK = 0x80;
 	unsigned bytes_left = bytes_left_in_buf(*records, *rec_idx, typed_buf);
 
+	if (NULL == src) {
+	    src = "(null)"; /* Treat NULL string arguments like printf() and friends do */
+	}
+
 	do {
 		if (0 == bytes_left) {
 			trace_advance_record_array(records, rec_idx, records_array_len);
