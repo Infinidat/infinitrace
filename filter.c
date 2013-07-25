@@ -105,6 +105,10 @@ bool_t trace_filter_init_from_cmdline(struct trace_filter_collection *filters, i
     filter_t * f = NULL;
     unsigned parse_errors = 0;
 
+    if (NULL == arg) {
+        arg = "";
+    }
+
     switch (option) {
     case 'Q':
         {
