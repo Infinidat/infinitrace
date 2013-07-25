@@ -32,7 +32,7 @@ int name##__deallocate(name##_t self, type *to_deallocate) {    \
     int i;                                                      \
     for (i = 0; i < count; i++) {                               \
         if (to_deallocate == &self[i].data) {                   \
-            memset(&self[i], 0, sizeof(type));                  \
+            memset(&(self[i].data), 0, sizeof(self[i].data));   \
             self[i].allocated = FALSE;                          \
             return 0;                                           \
         }                                                       \
