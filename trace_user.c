@@ -239,8 +239,10 @@ unsigned char *trace_copy_vstr_to_records(struct trace_record **records, unsigne
 	const unsigned char CONTINUATION_MASK = 0x80;
 	unsigned bytes_left = bytes_left_in_buf(*records, *rec_idx, typed_buf);
 
-	if (NULL == src) {
-	    src = "(null)"; /* Treat NULL string arguments like printf() and friends do */
+	if (NULL == src) {  /* Treat NULL string arguments like printf() and friends do */
+	    /* Allocate a sufficiently large array for the string to avoid Coverity complaints about out of bounds access by memchr() */
+	    static const char null_str[TRACE_RECORD_PAYLOAD_SIZE] = "(null)";
+	    src = null_str;
 	}
 
 	do {

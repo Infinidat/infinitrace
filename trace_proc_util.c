@@ -39,7 +39,7 @@
 
 int trace_get_current_exec_basename(char *exec_name, size_t exec_name_size)
 {
-    char exec_path[PATH_MAX];
+    char exec_path[PATH_MAX] = "";
     int rc = readlink("/proc/self/exe", exec_path, sizeof(exec_path) - 1);
     if (rc < 0) {
         return rc;
