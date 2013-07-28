@@ -16,6 +16,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 ***/
 /* Allows code with tracing to compile without linking tracing */
 
+#include <string.h>
 #include <unistd.h>
 
 #include "trace_lib.h"
@@ -43,6 +44,36 @@ static struct trace_internal_err_info internal_err_info = {0, 0, 0};
 
 const struct trace_internal_err_info *trace_internal_err_get_last(void) { return &internal_err_info; }
 void trace_internal_err_clear(void) {}
+
+static int trace_runtime_control_set_overwrite_protection_impl(
+        unsigned stop_threshold_ppm __attribute__((unused)),
+        unsigned flags __attribute__((unused)),
+        unsigned wait_timeout_us __attribute__((unused)),
+        struct trace_thresholds *old_thresholds)
+{
+    if (NULL != old_thresholds) {
+        memset(old_thresholds, 0, sizeof(*old_thresholds));
+    }
+
+    return 0;
+}
+
+int trace_runtime_control_set_overwrite_protection(unsigned stop_threshold_ppm, unsigned flags, unsigned wait_timeout_us, struct trace_thresholds *old_thresholds)
+{
+    return trace_runtime_control_set_overwrite_protection_impl(stop_threshold_ppm, flags, wait_timeout_us, old_thresholds);
+}
+
+int trace_runtime_control_set_thread_overwrite_protection(unsigned stop_threshold_ppm, unsigned flags, unsigned wait_timeout_us, struct trace_thresholds *old_thresholds)
+{
+    return trace_runtime_control_set_overwrite_protection_impl(stop_threshold_ppm, flags, wait_timeout_us, old_thresholds);
+}
+
+void trace_runtime_control_load_thread_overwrite_protection(
+        const struct trace_thresholds *thresholds __attribute__((unused)),
+        struct trace_thresholds *old_thresholds)
+{
+    trace_runtime_control_set_overwrite_protection_impl(0, 0, 0, old_thresholds);
+}
 
 /* Stubs for trace_fatal.c functions, which are not built in untraced builds */
 int trace_register_fatal_sig_handlers(const void *unused __attribute__ ((unused))) { return 0; }

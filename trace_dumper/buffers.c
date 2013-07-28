@@ -415,7 +415,7 @@ static void check_discarded_buffer(const struct trace_mapped_buffer *mapped_buff
 	memcpy(&mutab, (const void *)(mapped_buffer->mapped_records->mutab), sizeof(mutab));
 	const volatile struct trace_record *last_rec = &mapped_buffer->mapped_records->records[mutab.last_committed_record & mapped_buffer->mapped_records->imutab->max_records_mask];
 
-	bool_t buffer_was_active = (-1UL != mutab.last_committed_record);
+	bool_t buffer_was_active = (TRACE_RECORD_INVALID_COUNT != mutab.last_committed_record);
 	trace_pid_t pid = mapped_buffer->pid;
 	const char * proc_name = mapped_buffer->name;
 

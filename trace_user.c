@@ -29,6 +29,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include <stdlib.h>
 #include <string.h>
 #include <libgen.h>
+#include <sched.h>
 #include <limits.h>
 #include <emmintrin.h>
 
@@ -46,14 +47,23 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 /* Global per process/thread data structures */
 struct trace_buffer *current_trace_buffer = NULL;
 __thread unsigned short trace_current_nesting;
-__thread enum trace_severity trace_thread_severity_threshold = TRACE_SEV_INVALID;
 
+
+__thread struct trace_thresholds trace_thread_thresholds = {
+        .min_sev = TRACE_SEV_INVALID,
+        .wait_timeout_us = TRACE_RUNTIME_USE_GLOBAL_DEFAULT,
+        .free_ppm_stop_trace_threshold = TRACE_RUNTIME_USE_GLOBAL_DEFAULT,
+        .min_stop_trace_sev = TRACE_SEV_INVALID,
+};
 
 static __thread pid_t tid_cache = 0;
 
 static inline void __attribute__((unused)) __compile_time_checks__(void)
 {
     TRACE_COMPILE_TIME_ASSERT_EQ(TRACE_RECORD_SIZE, sizeof(struct trace_record));
+    TRACE_COMPILE_TIME_ASSERT_EQ(TRACE_RUNTIME_USE_GLOBAL_DEFAULT, TRACE_SEV_INVALID);
+    TRACE_COMPILE_TIME_ASSERT_IS_NON_ZERO(TRACE_SEV_INVALID < TRACE_SEV__MIN);
+    TRACE_COMPILE_TIME_ASSERT_IS_NON_ZERO(TRACE_SEV__COUNT  > TRACE_SEV__MAX);
 }
 
 /* Runtime support functions for obtaining information from the system */
@@ -65,7 +75,7 @@ static trace_pid_t trace_get_tid(void)
 	return (trace_pid_t) tid_cache;
 }
 
-static void incalidate_tid_cache(void)
+static void invalidate_tid_cache(void)
 {
     tid_cache = 0;
 }
@@ -79,39 +89,44 @@ static trace_pid_t trace_get_pid(void)
 
 static struct trace_runtime_control runtime_control =
 {
-	TRACE_SEV_INVALID,
-	{0, 0},
-	NULL,
-	64,
-	3
+	.default_thresholds = {
+	        .min_sev = TRACE_SEV_INVALID,
+	        .wait_timeout_us = TRACE_RUNTIME_WAIT_FOREVER,
+	        .free_ppm_stop_trace_threshold = 1024,
+	        .min_stop_trace_sev = TRACE_SEV__COUNT,
+	},
+	.subsystem_range = {0, 0},
+	.subsystem_thresholds = NULL,
+	.initial_records_per_trace = 64,
+	.records_array_increase_factor = 3
 };
 
 const struct trace_runtime_control *const p_trace_runtime_control = &runtime_control;
 
 enum trace_severity trace_runtime_control_set_default_min_sev(enum trace_severity sev)
 {
-    enum trace_severity prev = runtime_control.default_min_sev;
-	runtime_control.default_min_sev = sev;
+    const enum trace_severity prev = runtime_control.default_thresholds.min_sev;
+	runtime_control.default_thresholds.min_sev = sev;
 	return prev;
 }
 
 int trace_runtime_control_set_sev_threshold_for_subsystem(int subsystem_id, enum trace_severity sev)
 {
-	if ((NULL == runtime_control.thresholds) ||
+	if ((NULL == runtime_control.subsystem_thresholds) ||
 		(subsystem_id < runtime_control.subsystem_range[0]) ||
 		(subsystem_id > runtime_control.subsystem_range[1])) {
 		errno = EINVAL;
 		return -1;
 	}
 
-	runtime_control.thresholds[subsystem_id - runtime_control.subsystem_range[0]] = sev;
+	runtime_control.subsystem_thresholds[subsystem_id - runtime_control.subsystem_range[0]].min_sev = sev;
 	return 0;
 }
 
 static void trace_runtime_control_free_thresholds(void) {
-    if (NULL != runtime_control.thresholds) {
-    	void *thresholds = runtime_control.thresholds;
-    	runtime_control.thresholds = NULL;
+    if (NULL != runtime_control.subsystem_thresholds) {
+    	void *const thresholds = runtime_control.subsystem_thresholds;
+    	runtime_control.subsystem_thresholds = NULL;
     	runtime_control.subsystem_range[0] = runtime_control.subsystem_range[1] = 0;
     	free(thresholds);
     }
@@ -124,16 +139,16 @@ int trace_runtime_control_set_subsystem_range(int low, int high)
 		return -1;
 	}
 
+	struct trace_thresholds *const subsystem_thresholds = calloc(high - low + 1, sizeof(runtime_control.subsystem_thresholds[0]));
+	if (NULL == subsystem_thresholds) {
+        return -1;
+    }
+
 	trace_runtime_control_free_thresholds();
 
 	runtime_control.subsystem_range[0] = low;
 	runtime_control.subsystem_range[1] = high;
-
-	runtime_control.thresholds = calloc(high - low + 1, sizeof(runtime_control.thresholds[0]));
-	if (NULL == runtime_control.thresholds) {
-		return -1;
-	}
-
+	runtime_control.subsystem_thresholds = subsystem_thresholds;
 	return 0;
 }
 
@@ -190,6 +205,45 @@ int trace_runtime_control_configure_buffer_allocation(unsigned initial_records_p
 	runtime_control.initial_records_per_trace     = initial_records_per_trace;
 	runtime_control.records_array_increase_factor = records_array_increase_factor;
 	return 0;
+}
+
+static int trace_runtime_control_set_overwrite_protection_impl(
+        unsigned stop_threshold_ppm, enum trace_severity stop_threshold_sev, unsigned wait_timeout_us, struct trace_thresholds *thresholds, struct trace_thresholds *old_thresholds)
+{
+    if (stop_threshold_ppm >= TRACE_BPPM_BASE) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (NULL != old_thresholds) {
+        memcpy(old_thresholds, thresholds, sizeof(*old_thresholds));
+    }
+
+    thresholds->free_ppm_stop_trace_threshold = stop_threshold_ppm;
+    thresholds->min_stop_trace_sev = stop_threshold_sev;
+    thresholds->wait_timeout_us = wait_timeout_us;
+    return 0;
+}
+
+int trace_runtime_control_set_overwrite_protection(unsigned stop_threshold_ppm, enum trace_severity stop_threshold_sev, unsigned wait_timeout_us, struct trace_thresholds *old_thresholds)
+{
+    return trace_runtime_control_set_overwrite_protection_impl(stop_threshold_ppm, stop_threshold_sev, wait_timeout_us, &(runtime_control.default_thresholds), old_thresholds);
+}
+
+int trace_runtime_control_set_thread_overwrite_protection(unsigned stop_threshold_ppm, enum trace_severity stop_threshold_sev, unsigned wait_timeout_us, struct trace_thresholds *old_thresholds)
+{
+    return trace_runtime_control_set_overwrite_protection_impl(stop_threshold_ppm, stop_threshold_sev, wait_timeout_us, &trace_thread_thresholds, old_thresholds);
+}
+
+void trace_runtime_control_load_thread_overwrite_protection(const struct trace_thresholds *thresholds, struct trace_thresholds *old_thresholds)
+{
+    if (NULL != old_thresholds) {
+        memcpy(old_thresholds, &trace_thread_thresholds, sizeof(trace_thread_thresholds));
+    }
+
+    if (NULL != thresholds) {
+        memcpy(&trace_thread_thresholds, thresholds, sizeof(trace_thread_thresholds));
+    }
 }
 
 static struct trace_records *trace_get_records(enum trace_severity severity)
@@ -304,7 +358,7 @@ static void update_last_committed_record(struct trace_records *records, trace_re
 #ifndef _LP64
 #warning "The comparison below might cause anomalous behavior due to counter wrap-around on 32-bit platforms, please verify and test."
 #endif
-		if ((expected_value > new_index) && (expected_value < -1UL)) {
+		if ((expected_value > new_index) && (expected_value < TRACE_RECORD_INVALID_COUNT)) {
 			break;
 		}
 
@@ -344,6 +398,62 @@ static void copy_trace_record_wt(struct trace_record *target, const struct trace
     }
 }
 
+static trace_record_counter_t max_allowed_base_index(const struct trace_records *records, size_t n_records)
+{
+    const unsigned free_ppm_threshold =
+            (trace_thread_thresholds.free_ppm_stop_trace_threshold > 0) ?
+             trace_thread_thresholds.free_ppm_stop_trace_threshold :
+             runtime_control.default_thresholds.free_ppm_stop_trace_threshold;
+    const trace_record_counter_t min_required_free_recs =
+            ((unsigned long long)free_ppm_threshold << records->imutab.max_records_shift) / TRACE_BPPM_BASE;
+    return records->mutab.next_flush_record + records->imutab.max_records - min_required_free_recs - n_records;
+}
+
+static trace_record_counter_t allocate_records(struct trace_records *records, size_t n_records, enum trace_severity severity)
+{
+    trace_ts_t max_ts = 0;
+    do {
+        const trace_record_counter_t base_index = __sync_fetch_and_add(&(records->mutab.current_record), n_records);
+        if (base_index <= max_allowed_base_index(records, n_records)) {
+            return base_index;
+        }
+
+        /* Try to roll-back the allocation of records, to make them available to other threads with a possibly lower free space threshold.
+         * Care should be taken in case another thread has advanced the counter in the meantime. */
+        const trace_record_counter_t expected_base_index = base_index + n_records;
+        while (__sync_val_compare_and_swap(&(records->mutab.current_record), expected_base_index, base_index) !=
+                expected_base_index) {
+            /* If another thread (presumably with a different free space threshold) has committed a record beyond ours,
+             * there's no way to undo the taking of space, so we might as well write our traces */
+            if (expected_base_index <= records->mutab.num_records_written) {
+                return base_index;
+            }
+        }
+
+        const enum trace_severity pause_threshold =
+                (TRACE_SEV_INVALID != trace_thread_thresholds.min_stop_trace_sev) ? trace_thread_thresholds.min_stop_trace_sev : runtime_control.default_thresholds.min_stop_trace_sev;
+        if (severity < pause_threshold) {
+            break;
+        }
+
+        if (0 == max_ts) {
+            const trace_ts_t timeout_us =
+                    (0 != trace_thread_thresholds.wait_timeout_us) ?
+                            trace_thread_thresholds.wait_timeout_us :
+                            runtime_control.default_thresholds.wait_timeout_us;
+            TRACE_COMPILE_TIME_ASSERT_EQ((typeof(trace_thread_thresholds.min_stop_trace_sev)) TRACE_RUNTIME_WAIT_FOREVER, \
+                                         (typeof(timeout_us))                                 TRACE_RUNTIME_WAIT_FOREVER);
+            max_ts = (TRACE_RUNTIME_WAIT_FOREVER != timeout_us) ? trace_get_nsec_monotonic() + TRACE_US * timeout_us : ULLONG_MAX;
+        }
+
+        sched_yield();
+
+    } while (trace_get_nsec_monotonic() <= max_ts);
+
+    internal_err_info.err_num = ENOSPC;
+    return TRACE_RECORD_INVALID_COUNT;
+}
+
 void trace_commit_records(
 		struct trace_record *source_records,
 		size_t n_records,
@@ -353,60 +463,68 @@ void trace_commit_records(
 	TRACE_ASSERT(NULL != source_records);
 	TRACE_ASSERT(TRACE_SEV_INVALID != severity);
 
-	const trace_ts_t  ts  = trace_get_nsec();
-	const trace_pid_t pid = trace_get_pid();
-	const trace_pid_t tid = trace_get_tid();
-
 	struct trace_records *const records = trace_get_records(severity);
 	TRACE_ASSERT((1U << severity) & records->imutab.severity_type);
 
-
-	/* TODO: Consider allowing an option for lossless tracing. */
-	const trace_record_counter_t base_index = __sync_fetch_and_add(&records->mutab.current_record, n_records);
-
-
+	const trace_ts_t  ts = trace_get_nsec();
+	source_records->ts = ts;  /* This field must be initialized even if we fail to allocate a record */
 	source_records->termination = TRACE_TERMINATION_FIRST;
 	source_records->severity    = TRACE_SEV_INVALID;
 	struct trace_record *first_rec_in_buf = NULL;
 
-	size_t i;
-	for (i = 0; i < n_records; i++) {
-		/* TODO: This could be a good place to pre-fetch the next trace record using e.g. __builtin_prefetch */
-		source_records[i].ts = ts;
-		source_records[i].pid = pid;
-		source_records[i].tid = tid;
-		source_records[i].rec_type = TRACE_REC_TYPE_TYPED;
+	const trace_record_counter_t base_index = allocate_records(records, n_records, severity);
+	if (__builtin_expect(TRACE_RECORD_INVALID_COUNT != base_index, TRUE)) {
+		const trace_pid_t tid = trace_get_tid();
+		const trace_pid_t pid = trace_get_pid();
 
-		const trace_record_counter_t record_index = base_index + i;
-		source_records[i].generation = trace_get_generation(record_index, &records->imutab);
-		struct trace_record *target = records->records + (record_index & records->imutab.max_records_mask);
-		if (0 == i) {
-			first_rec_in_buf = target;
-		}
-		else {
-			source_records[i].termination = 0;
-			source_records[i].severity = severity;
-		}
+	    size_t i;
+	    for (i = 0; i < n_records; i++) {
+	        /* TODO: This could be a good place to pre-fetch the next trace record using e.g. __builtin_prefetch */
 
-		if (n_records - 1 == i) {
-			source_records[i].termination |= TRACE_TERMINATION_LAST;
-		}
+	        source_records[i].pid = pid;
+	        source_records[i].tid = tid;
+	        source_records[i].rec_type = TRACE_REC_TYPE_TYPED;
 
-		copy_trace_record_wt(target, source_records + i);
+	        /* As an aid to debugging, store the physical record number in the nesting field, which is unused except for function traces. */
+	        if (severity > TRACE_SEV_FUNC_TRACE) {
+	            source_records[i].nesting = i;
+	        }
+
+	        const trace_record_counter_t record_index = base_index + i;
+	        source_records[i].generation = trace_get_generation(record_index, &records->imutab);
+	        struct trace_record *const target = records->records + (record_index & records->imutab.max_records_mask);
+	        if (0 == i) {
+	            first_rec_in_buf = target;
+	            TRACE_ASSERT(TRACE_SEV_INVALID == first_rec_in_buf->severity);
+	        }
+	        else {
+	            source_records[i].termination = 0;
+	            source_records[i].severity = severity;
+	            source_records[i].ts = ts;
+	        }
+
+	        if (n_records - 1 == i) {
+	            source_records[i].termination |= TRACE_TERMINATION_LAST;
+	        }
+
+	        copy_trace_record_wt(target, source_records + i);
+	    }
+
+	    /* Check that it is at least possible that all the records that were in the process of being written at the time were started have been written by now.
+	     * Note that the condition below doesn't guarantee that they have in fact been written. An algorithm that can ascertain that remains to be developed. */
+	    const trace_record_counter_t records_written = __sync_fetch_and_add(&records->mutab.num_records_written, n_records);
+	    if (records_written >= base_index) {
+	        update_last_committed_record(records, base_index + n_records - 1);
+	    }
+
+        __sync_synchronize();
+        first_rec_in_buf->severity = severity;
 	}
-
-	__sync_synchronize();
-	/* TODO: When we have overrun protection, assert that the previous severity value was 0 */
-	first_rec_in_buf->severity = severity;
+	else {
+	    __sync_fetch_and_add(&(records->mutab.records_discarded_due_to_no_space), n_records);
+	}
 
 	trace_free_records_array();
-
-	/* Check that it is at least possible that all the records that were in the process of being written at the time were started have been written by now.
-	 * Note that the condition below doesn't guarantee that they have in fact been written. An algorithm that can ascertain that remains to be developed. */
-	const trace_record_counter_t records_written = __sync_fetch_and_add(&records->mutab.num_records_written, n_records);
-	if (records_written >= base_index) {
-		update_last_committed_record(records, base_index + n_records - 1);
-	}
 }
 
 /* Functions for managing memory allocations on the heap while writing traces. This is seldom required, only when the amount of memory allocated on the stack in order to produce the
@@ -787,7 +905,7 @@ static void init_record_mutable_data(struct trace_records *recs)
 {
 	recs->mutab.current_record = 0;
 	recs->mutab.num_records_written = 0;
-	recs->mutab.last_committed_record = -1UL;
+	recs->mutab.last_committed_record = TRACE_RECORD_INVALID_COUNT;
 	memset(recs->records, TRACE_SEV_INVALID, sizeof(recs->records[0]));
 	TRACE_ASSERT(recs->imutab.max_records > 0);
 	memset(recs->records + recs->imutab.max_records - 1, TRACE_SEV_INVALID, sizeof(recs->records[0]));
@@ -1026,7 +1144,7 @@ void TRACE__fini(void)
 
 static int child_proc_init(void)
 {
-    incalidate_tid_cache();
+    invalidate_tid_cache();
 
     trace_shm_name_buf parent_static_shm_name;
     TRACE_ASSERT(trace_generate_shm_name(parent_static_shm_name, getppid(), TRACE_SHM_TYPE_STATIC, FALSE) > 0);

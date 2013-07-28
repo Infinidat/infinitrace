@@ -11,15 +11,18 @@
 #include <getopt.h>
 #include <sysexits.h>
 
-#include "common/traces/trace_defs.h"
-#include "common/traces/trace_user.h"
-#include "common/traces/array_length.h"
-#include "common/traces/trace_fatal.h"
+#include "../trace_defs.h"
+#include "../trace_user.h"
+#include "../array_length.h"
+#include "../trace_fatal.h"
+#include "../trace_str_util.h"
 
 static int  n_threads = 64;
 static long n_thread_iters = 200000;
 static long interval_ns = 1;
 static bool yield_cpu = false;
+static int  free_ppm = 2048;
+static enum trace_severity lossless_threshold = TRACE_SEV__COUNT;
 
 enum { INT_ARRAY_LEN = 10 };
 
@@ -124,6 +127,8 @@ static void print_help(char* argv0)
 			"   -I <iterations>\n"
 			"   -S <sleep (ns)\n"
 			"   -Y: yield\n"
+            "   -F: free space (binary ppm)\n"
+            "   -L <lossless threshold>\n"
 			"", argv0);
 	exit(EX_USAGE);
 }
@@ -133,7 +138,7 @@ static void parse_options(int argc, char* argv[])
 	char x;
 	int error = 0;
 
-	while (error == 0 && (x = getopt(argc, argv, "hT:I:S:Y")) != -1) {
+	while (error == 0 && (x = getopt(argc, argv, "hT:I:S:YL:F:")) != -1) {
 		switch (x) {
 			case 'h':
 				print_help(argv[0]);
@@ -150,6 +155,20 @@ static void parse_options(int argc, char* argv[])
 			case 'Y':
 				yield_cpu = true;
 				break;
+			case 'L': {
+			    const enum trace_severity sev = trace_str_to_severity_case_insensitive(optarg);
+			    if (TRACE_SEV_INVALID != sev) {
+			        lossless_threshold = sev;
+			    }
+			    else {
+			        fprintf(stderr, "Invalid severity threshold: %s\n", optarg);
+			        error = 1;
+			    }
+			    break;
+			}
+			case 'F':
+			    free_ppm = atoi(optarg);
+			    break;
 			default:
 				error = 1;
 				break;
@@ -166,10 +185,14 @@ int main(int argc, char* argv[])
 
 	pthread_t threads[n_threads];
 
-	fprintf(stderr, "Running %d threads each running %ld iterations with %luns intervals,%s yielding CPU\n",
-			n_threads, n_thread_iters, interval_ns, yield_cpu ? "" : " not");
+	fprintf(stderr, "Running %d threads each running %ld iterations with %luns intervals,%s yielding CPU, free_ppm=%d\n",
+			n_threads, n_thread_iters, interval_ns, yield_cpu ? "" : " not", free_ppm);
 
 	assert(0 == trace_register_fatal_sig_handlers(extra_fatal_signal_handler));
+	assert(0 == trace_runtime_control_set_overwrite_protection(free_ppm, lossless_threshold, TRACE_RUNTIME_WAIT_FOREVER, NULL));
+	if (lossless_threshold < TRACE_SEV__COUNT) {
+	    fprintf(stderr, "Running in lossless mode with threshold=%s", trace_severity_to_str_array[lossless_threshold]);
+	}
 	sleep(1);
 
 	for(int i =  0; i < n_threads; i++) {

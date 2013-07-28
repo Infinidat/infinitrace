@@ -39,6 +39,7 @@ static inline unsigned current_read_index(const struct trace_mapped_records *map
 
 static long calc_backlog_len(const struct trace_mapped_records *mapped_records)
 {
+    TRACE_COMPILE_TIME_ASSERT_IS_ZERO(TRACE_RECORD_INVALID_COUNT + 1UL);
     const trace_record_counter_t next_record_to_write = mapped_records->mutab->last_committed_record + 1UL;
 
     /* Verify the record counters haven't wrapped around. On 64-bit platforms this should never happen. */
@@ -127,9 +128,25 @@ void init_buffer_chunk_record(struct trace_dumper_configuration_s *conf, const s
     (*bd)->prev_chunk_offset = mapped_records->last_flush_offset;
     (*bd)->dump_header_offset = conf->last_flush_offset;
     (*bd)->ts = cur_ts;
-    (*bd)->lost_records = deltas->lost + mapped_records->num_records_discarded;
     (*bd)->records = deltas->total;
     (*bd)->severity_type = mapped_records->imutab->severity_type;
+
+    const trace_record_counter_t records_lost_in_process =
+                mapped_records->mutab->records_discarded_due_to_no_space - mapped_records->num_records_discarded_by_process;
+    (*bd)->lost_records = deltas->lost + mapped_records->num_records_discarded_by_dumper + records_lost_in_process;
+    if (records_lost_in_process > 0) {
+        mapped_records->num_records_discarded_by_process     += records_lost_in_process;
+        mapped_records->unreported_traces_discard_by_process += records_lost_in_process;
+
+        const trace_ts_t RECORD_LOSS_IN_PROCESS_REPORTING_INTERVAL = TRACE_SECOND;  /* TODO: Move this to the global configuration */
+        if (cur_ts > mapped_records->trace_discard_by_process_last_reprorted_time + RECORD_LOSS_IN_PROCESS_REPORTING_INTERVAL) {
+            WARN("The process pid=", mapped_buffer->pid, mapped_buffer->name, "has discarded", mapped_records->unreported_traces_discard_by_process,
+                    "trace records in", cur_ts - mapped_records->trace_discard_by_process_last_reprorted_time, "ns in a buffer with mask",
+                    TRACE_INT_AS_HEX((*bd)->severity_type));
+            mapped_records->trace_discard_by_process_last_reprorted_time = cur_ts;
+            mapped_records->unreported_traces_discard_by_process = 0;
+        }
+    }
 
     mapped_records->next_flush_offset = conf->record_file.records_written + total_written_records;
 

@@ -1,7 +1,7 @@
 #!/bin/sh
 
 echo Running dumper stress
-../../../build/common/traces/tools/dumper_stress &
+../../../build/common/traces/tools/dumper_stress "$@" &
 stress_pid=$!
 echo dumper_stress started, pid= $stress_pid
 

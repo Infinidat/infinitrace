@@ -78,11 +78,19 @@ static trace_record_counter_t adjust_for_overrun(struct trace_mapped_records *ma
 
 static void mark_records_as_written(const struct trace_mapped_records *mapped_records)
 {
+    if (mapped_records->next_flush_record <= mapped_records->current_read_record) {
+        TRACE_ASSERT(mapped_records->next_flush_record == mapped_records->current_read_record);
+        return;
+    }
+
+    const unsigned mask = mapped_records->imutab->max_records_mask;
+    TRACE_ASSERT((mask & (mask + 1)) == 0);
+
     for (trace_record_counter_t i = mapped_records->current_read_record; i < mapped_records->next_flush_record; i++) {
         /* Set the severity field of each trace record to TRACE_SEV_INVALID, a.k.a 0. We do so in a way that (hopefully) doesn't
          * pollute the CPU cache using an intrinsic (uses SSE2 on x86-64). In order to accomplish this we have to set the entire
          * aligned 32-bit word containing the severity field to 0 */
-        struct trace_record *const rec = (struct trace_record *) (mapped_records->records) + (i & mapped_records->imutab->max_records_mask);
+        struct trace_record *const rec = (struct trace_record *) (mapped_records->records) + (i & mask);
         const uintptr_t bit_fields_aligned_p = (uintptr_t) (rec->bit_fields) - offsetof(struct trace_record, bit_fields) % sizeof(int);
         write_int_to_ptr_uncached((int *) bit_fields_aligned_p, TRACE_COMPILE_TIME_VERIFY_IS_ZERO(TRACE_SEV_INVALID));
     }
@@ -114,7 +122,7 @@ static void reset_discarded_record_counters(struct trace_dumper_configuration_s 
     struct trace_mapped_records *mapped_records = NULL;
 
 	for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
-		mapped_records->num_records_discarded = 0;
+		mapped_records->num_records_discarded_by_dumper = 0;
 	}
 
 	conf->record_file.records_discarded = 0;
@@ -148,7 +156,7 @@ static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *co
 					        TRACE_ASSERT(mapped_records->current_read_record <= mapped_records->next_flush_record);
 					        trace_record_counter_t n_discarded_records = mapped_records->next_flush_record - mapped_records->current_read_record;
 					        WARN("Trace dumper has had to discard records due to insufficient buffer space for pid", mapped_buffer->pid, mapped_buffer->name, rid, n_discarded_records);
-					        mapped_records->num_records_discarded += n_discarded_records;
+					        mapped_records->num_records_discarded_by_dumper += n_discarded_records;
 					    }
 					}
 

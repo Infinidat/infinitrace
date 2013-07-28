@@ -509,10 +509,9 @@ void TraceCall::expandRepr()
 void TraceCall::expandWithDeclaration(const std::string& declaration, bool check_threshold)
 {
     std::stringstream replaced;
-    replaced << "if ((current_trace_buffer != 0)";
+    replaced << "if (trace_is_initialized()";
     if (check_threshold) {
-		static const char sev_threshold_expr[] = "((TRACE_SEV_INVALID != trace_thread_severity_threshold) ? trace_thread_severity_threshold : trace_runtime_control_get_default_min_sev())";
-		replaced << " && (" << getSeverity() <<  " >= " << sev_threshold_expr << ")";
+		replaced << " && (" << getSeverity() <<  " >= trace_runtime_get_current_thread_effective_sev_threshold())";
 	}
 
     std::string expr = isRepr() ? varlength_getTraceWriteExpression() : getFullTraceWriteExpression();

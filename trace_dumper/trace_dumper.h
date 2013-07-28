@@ -66,7 +66,11 @@ struct trace_mapped_records {
     trace_record_counter_t next_flush_record;
     unsigned int next_flush_offset;
 
-    trace_record_counter_t num_records_discarded;
+    trace_record_counter_t num_records_discarded_by_dumper;
+    trace_record_counter_t num_records_discarded_by_process;
+    trace_record_counter_t unreported_traces_discard_by_process;
+    trace_ts_t trace_discard_by_process_last_reprorted_time;
+
     struct trace_record buffer_dump_record;
 };
 
