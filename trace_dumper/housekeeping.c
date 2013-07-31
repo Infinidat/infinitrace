@@ -132,7 +132,7 @@ int do_housekeeping_if_necessary(struct trace_dumper_configuration_s *conf)
     handle_overwrite(conf);
     apply_requested_file_operations(conf, TRACE_REQ_ALL_OPS);
 
-    if (!conf->attach_to_pid && !conf->stopping) {
+    if (!conf->stopping) {
         rc = map_new_buffers(conf);
         if (0 != rc) {
             ERR("map_new_buffers returned", rc, TRACE_NAMED_PARAM(errno, errno), strerror(errno));

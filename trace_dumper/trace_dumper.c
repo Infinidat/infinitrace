@@ -36,6 +36,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "../min_max.h"
 #include "../array_length.h"
 #include "../trace_clock.h"
+#include "../trace_proc_util.h"
 #include <syslog.h>
 #include <time.h>
 #include <sys/mman.h>
@@ -364,7 +365,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
 
 static bool_t dumping_should_stop(struct trace_dumper_configuration_s *conf)
 {
-	if (conf->attach_to_pid && !has_mapped_buffers(conf)) {
+	if (conf->attach_to_pid && !has_mapped_buffers(conf) && !trace_process_exists(conf->attach_to_pid)) {
 		conf->stopping = TRUE;
 	}
 

@@ -75,6 +75,24 @@ extern struct trace_log_descriptor __static_log_information_end[];
 extern struct trace_type_definition *__type_information_start;
 
 
+/* Support for explicit initialization of the trace subsystem, as a future alternative to the present implicit initialization */
+
+struct trace_init_params;   /* Will be defined in the future */
+int trace_init(const struct trace_init_params *conf);
+
+/* Free all the objects associated with the trace subsystem. */
+int trace_finalize(void);
+
+/* Check whether the trace subsystem is initialized in the current process. Return TRUE if it is, FALSE otherwise */
+static inline int trace_is_initialized(void) { return 0 != current_trace_buffer; }
+
+/* Wrapper for the fork() system call which creates trace shared-memory objects for the newly forked process efficiently */
+pid_t trace_fork(void);
+
+
+
+/* Support for runtime control of the trace subsystem */
+
 /* Used to control at runtime what data will be written to the trace */
 struct trace_runtime_control {
 	enum trace_severity default_min_sev; /* Minimum severity for reporting. Per-subsystem definitions take precedence over it */

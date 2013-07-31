@@ -23,7 +23,9 @@
 #include <errno.h>
 #include <sys/types.h>
 
+#include "bool.h"
 #include "min_max.h"
+#include "trace_clock.h"
 
 /* Get the name of the current executable. Return 0 if successful, -1 otherwise. */
 int trace_get_current_exec_basename(char *exec_name, size_t exec_name_size);
@@ -50,5 +52,14 @@ static inline int trace_capped_errno()
 {
     return MIN(errno, 0xFF);
 }
+
+/* Check whether the process 'pid' exists */
+bool_t trace_process_exists(pid_t pid);
+
+/* Get the last execution time of the process 'pid' intp 'curtime'. Return 0 on success, -1 otherwise. */
+int trace_get_process_time(pid_t pid, trace_ts_t *curtime);
+
+/* Check whether the process 'pid' is descended from any of the process given as 'potential_parents' */
+bool_t trace_is_process_descended_from_pids(pid_t pid, const pid_t potential_parents[], size_t n_potential_parents);
 
 #endif /* TRACE_PROC_UTIL_H_ */

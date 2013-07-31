@@ -26,7 +26,6 @@
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/time.h>
 #include <unistd.h>
 #include <signal.h>
 #include <fcntl.h>
@@ -34,12 +33,12 @@
 #include <errno.h>
 #include <syslog.h>
 
-#include "../bool.h"
 #include "../trace_lib.h"
 #include "../trace_user.h"
 #include "../trace_clock.h"
 #include "../trace_str_util.h"
 #include "../file_naming.h"
+#include "../trace_proc_util.h"
 #include "trace_dumper.h"
 #include "metadata.h"
 #include "open_close.h"
@@ -61,62 +60,11 @@ static bool_t is_dynamic_log_data_shm_region(const char *shm_name)
     return trace_str_ends_with_suffix(shm_name, TRACE_DYNAMIC_SUFFIX);
 }
 
-static bool_t process_exists(pid_t pid) {
-	int saved_errno = errno;
-	if (0 == kill(pid, 0)) {
-		return TRUE;
-	}
-
-	switch (errno) {
-	case EPERM:
-		errno = saved_errno;
-		return TRUE;
-
-	case ESRCH:
-		errno = saved_errno;
-		break;
-
-	default:
-		syslog(LOG_USER|LOG_ERR, "Failed to check for the existence of pid %d due to %s", pid, strerror(errno));
-		ERR("Failed to check for the existence of", pid, "due to error", errno, strerror(errno));
-		break;
-	}
-
-	return FALSE;
-}
-
-static int stat_pid(pid_t pid, struct stat *stat_buf)
-{
-    char filename[0x100];
-    snprintf(filename, sizeof(filename), "/proc/%d", pid);
-    return stat(filename, stat_buf);
-}
-
-static int get_process_time(pid_t pid, trace_ts_t *curtime)
-{
-	if (NULL == curtime) {
-		errno = EFAULT;
-		return -1;
-	}
-
-    struct stat stat_buf;
-    int rc = stat_pid(pid, &stat_buf);
-    if (0 != rc) {
-    	if (ENOENT == errno) {
-    		errno = ESRCH;
-    	}
-    	return -1;
-    }
-
-    *curtime = stat_buf.st_ctim.tv_sec * TRACE_SECOND + stat_buf.st_ctim.tv_nsec;
-    return 0;
-}
-
 /* Obtain the process time for active process, or return 0 if the process had exited or cannot have its time obtained for whatever reason */
 static trace_ts_t get_effective_process_time(pid_t pid)
 {
     trace_ts_t process_time = 0;
-    if (0 != get_process_time(pid, &process_time)) {
+    if (0 != trace_get_process_time(pid, &process_time)) {
         if (ESRCH == errno) {
             INFO("About to start collecting traces from the defunct process", pid);
         }
@@ -365,7 +313,7 @@ delete_shm_files:
     }
 
 	if (0 != rc) {
-	    if ((ENOENT == errno) && !process_exists(pid)) {
+	    if ((ENOENT == errno) && !trace_process_exists(pid)) {
 	        errno = ESRCH;
 	    }
 	    const int err = errno;
@@ -376,7 +324,7 @@ delete_shm_files:
 	return rc;
 }
 
-static bool_t buffer_mapped(struct trace_dumper_configuration_s * conf, unsigned short pid)
+static bool_t buffer_mapped(struct trace_dumper_configuration_s * conf, pid_t pid)
 {
     int i;
     for (i = 0; i < MappedBuffers__element_count(&conf->mapped_buffers); i++) {
@@ -390,6 +338,23 @@ static bool_t buffer_mapped(struct trace_dumper_configuration_s * conf, unsigned
     return FALSE;
 }
 
+static bool_t process_is_child_of_mapped_process(struct trace_dumper_configuration_s *conf, pid_t pid)
+{
+    int num_pids = MappedBuffers__element_count(&conf->mapped_buffers);
+    pid_t pids[num_pids];
+
+    struct trace_mapped_buffer *mapped_buffer = NULL;
+    int i;
+    for_each_mapped_buffer(i, mapped_buffer) {
+        pids[i] = mapped_buffer->pid;
+        if (pids[i] == pid) {
+            return TRUE;
+        }
+    }
+
+    return trace_is_process_descended_from_pids(pid, pids, num_pids);
+}
+
 static int process_potential_trace_buffer(struct trace_dumper_configuration_s *conf, const char *shm_name)
 {
     if (  is_trace_shm_region(shm_name) &&
@@ -398,10 +363,14 @@ static int process_potential_trace_buffer(struct trace_dumper_configuration_s *c
         if (pid <= 0) {
             return -1;
         }
-
-        if (!buffer_mapped(conf, pid)) {
-            return map_buffer(conf, pid);
+        else if (buffer_mapped(conf, pid)) {
+            return 0;
         }
+        else if ((conf->attach_to_pid > 0) && (conf->attach_to_pid != pid) && !process_is_child_of_mapped_process(conf, pid)) {
+            return 0;
+        }
+
+        return map_buffer(conf, pid);
     }
 
     return 0;
@@ -506,24 +475,29 @@ static void discard_buffer_unconditionally(struct trace_mapped_buffer *mapped_bu
 /* Discard all the dumper resources the trace buffer of a process that has ended. */
 void discard_buffer(struct trace_dumper_configuration_s *conf, struct trace_mapped_buffer *mapped_buffer)
 {
-    INFO("Discarding pid", mapped_buffer->pid, mapped_buffer->name);
+    const pid_t pid = mapped_buffer->pid;
+    INFO("Discarding pid", pid, mapped_buffer->name);
     check_discarded_buffer(mapped_buffer);
 
     discard_buffer_unconditionally(mapped_buffer);
 
-    int rc = delete_shm_files(mapped_buffer->pid);
+    int rc = delete_shm_files(pid);
     if (0 != rc) {
         REPORT_BUF_ERR("Error deleting shm files");
     }
 
-    if (! PidList__insertable(&conf->dead_pids)) {
-        WARN("Trace dumper has too many pids pending removal, exceeding the limit of",  (int)PidList_NUM_ELEMENTS,
-                ". Not enough space to insert pid", mapped_buffer->pid, mapped_buffer->name);
+    if ((trace_pid_t) pid != pid) {
+        WARN("Could not instruct the reader to remove resources associated with", pid, "because it can't fit in", 8*sizeof(trace_pid_t), "bits");
+    }
+    else if (! PidList__insertable(&conf->dead_pids)) {
+        WARN("Trace dumper has too many pids pending removal, exceeding the limit of", PidList_NUM_ELEMENTS,
+                ". Not enough space to insert", pid, mapped_buffer->name);
     	syslog(LOG_USER|LOG_WARNING, "Trace dumper has too many pids pending removal, exceeding the limit of %d. Not enough space to insert pid %u for process %s",
-    			PidList_NUM_ELEMENTS, mapped_buffer->pid, mapped_buffer->name);
+    			PidList_NUM_ELEMENTS, pid, mapped_buffer->name);
     }
     else {
-    	PidList__add_element(&conf->dead_pids, &mapped_buffer->pid);
+        trace_pid_t tmp_pid = pid;
+    	PidList__add_element(&conf->dead_pids, &tmp_pid);
     }
 
     struct trace_mapped_buffer *tmp_mapped_buffer;
@@ -538,7 +512,7 @@ void discard_buffer(struct trace_dumper_configuration_s *conf, struct trace_mapp
 
     int buffers_remaining = MappedBuffers__element_count(&conf->mapped_buffers);
     syslog(LOG_USER|LOG_INFO, "Discarded %d instance(s) of the buffer for %s pid %u, %d mapped buffer(s) remaining",
-    		removed_count,  mapped_buffer->name, mapped_buffer->pid, buffers_remaining);
+    		removed_count,  mapped_buffer->name, pid, buffers_remaining);
 }
 
 #undef REPORT_BUF_ERR
@@ -572,7 +546,7 @@ int unmap_discarded_buffers(struct trace_dumper_configuration_s *conf)
     int i;
     struct trace_mapped_buffer *mapped_buffer;
     for_each_mapped_buffer(i, mapped_buffer) {
-        if (!process_exists(mapped_buffer->pid)) {
+        if (!trace_process_exists(mapped_buffer->pid)) {
         	adjust_buffer_for_final_dumping(mapped_buffer);
             mapped_buffer->dead = 1;
         }
@@ -583,39 +557,44 @@ int unmap_discarded_buffers(struct trace_dumper_configuration_s *conf)
 
 int attach_and_map_buffers(struct trace_dumper_configuration_s *conf)
 {
-	int rc;
-	    if (!conf->attach_to_pid) {
-	        rc = map_new_buffers(conf);
-	    }  else {
-	        const pid_t target_pid = atoi(conf->attach_to_pid);
-	        if (target_pid <= 0) {
-	            errno = EINVAL;
-	            rc = -1;
-	        }
-	        else do {
-	            rc = map_buffer(conf, target_pid);
-	            if ((0 == rc) || (ENOENT != errno)) {
-	                break;
-	            }
-	            const useconds_t retry_interval_ms = 10;
-	            usleep(1000 * retry_interval_ms);
-	        } while(process_exists(target_pid));
-	    }
+	if (    trace_is_initialized() &&
+	        (0 == MappedBuffers__element_count(&conf->mapped_buffers)) &&
+	        (0 != map_buffer(conf, getpid()))) {
 
-	    if (0 != rc) {
-	    	rc = errno;
-	    	ERR("Failed to attach to buffers, error code =", rc);
-	        syslog(LOG_USER|LOG_CRIT, "trace_dumper: Attach to buffers failed due to error %d", rc);
-	        return -1;
-	    }
+        const int err = errno;
+        ERR("Failed to attach to the dumper's own trace buffers", err, strerror(err));
+        syslog(LOG_USER|LOG_CRIT, "Failed to attach to the dumper's own trace buffers. errno=%d - %s", err, strerror(err));
+        return -1;
+    }
 
-	    return 0;
+	const int rc = map_new_buffers(conf);
+	if (rc < 0) {
+	    const int err = errno;
+	    ERR("Failed to attach to buffers, error code =", err, strerror(err));
+        syslog(LOG_USER|LOG_CRIT, "trace_dumper: Attach to buffers failed due to error %d - %s", err, strerror(err));
+        return rc;
+	}
+
+	return 0;
 }
 
 
 bool_t has_mapped_buffers(const struct trace_dumper_configuration_s *conf)
 {
-    return MappedBuffers__element_count(&conf->mapped_buffers) > 0;
+    switch (MappedBuffers__element_count(&conf->mapped_buffers)) {
+    case 0:
+        TRACE_ASSERT(! trace_is_initialized());
+        return FALSE;
+
+    case 1: {
+        struct trace_mapped_buffer *mapped_buf;
+        TRACE_ASSERT(0 == MappedBuffers__get_element_ptr(&conf->mapped_buffers, 0, &mapped_buf));
+        return getpid() != mapped_buf->pid;
+    }
+
+    default:
+        return TRUE;
+    }
 }
 
 void clear_mapped_records(struct trace_dumper_configuration_s *conf)

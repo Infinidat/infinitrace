@@ -52,7 +52,6 @@ static const char usage[] = {
     "                                                                                                              \n" \
     " -h, --help                            Display this help message                                              \n" \
     " -f  --filter [buffer_name]            Filter out specified buffer name                                       \n" \
-    " -o  --online                          Show data from buffers as it arrives (slows performance)               \n" \
     " -n  --no-color                        Show online data without color                                         \n" \
     " -w  --write-to-file[filename]         Write log records to file                                              \n" \
     " -l  --low-latency-write[param=value]  Write to files in low-latency mode (which uses mmap), optionally specifying a parameter \n"
@@ -63,12 +62,7 @@ static const char usage[] = {
     " -N  --notification-file[filename]     Write notifications (messages with severity > notification level) to a separate file\n" \
     " -L  --notification-level[level]       Specify minimum severity that will be written to the notification file (default: WARN)\n" \
     " -b  --logdir                          Specify the base log directory trace files are written to              \n" \
-    " -p  --pid [pid]                       Attach the specified process                                           \n" \
-    " -d  --debug-online                    Display DEBUG records in online mode                                   \n" \
-    " -i  --info-online                     Dump info traces online                                                \n" \
-    " -a  --warn-online                     Dump warning traces online                                             \n" \
-    " -e  --error-online                    Dump error traces online                                               \n" \
-    " -s  --syslog                          In online mode, write the entries to syslog instead of displaying them \n" \
+    " -p  --pid [pid]                       Attach the specified process and its descendants                       \n" \
     " -q  --quota-size [bytes/percent]      Specify the total number of bytes that may be taken up by trace files  \n" \
     " -r  --record-write-limit [records]    Specify maximal amount of records that can be written per-second (unlimited if not specified)  \n" \
     " -I  --instrument[option]              Turn on one of the dumper's instrumentation options. Available option values: time_writes \n"     \
@@ -80,15 +74,8 @@ static const char usage[] = {
 static const struct option longopts[] = {
     { "help", 0, 0, 'h'},
 	{ "filter", required_argument, 0, 'f'},
-	{ "online", 0, 0, 'o'},
-    { "trace-online", 0, 0, 't'},
-    { "debug-online", 0, 0, 'd'},
-    { "info-online", 0, 0, 'i'},
-    { "warn-online", 0, 0, 'a'},
-    { "error-online", 0, 0, 'e'},
     { "logdir", required_argument, 0, 'b'},
 	{ "no-color", 0, 0, 'n'},
-    { "syslog", 0, 0, 's'},
     { "pid", required_argument, 0, 'p'},
     { "write-to-file", optional_argument, 0, 'w'},
     { "low-latency-write", optional_argument, 0, 'l'},
@@ -124,6 +111,7 @@ static void init_compiled_in_defaults(struct trace_dumper_configuration_s *conf)
     conf->max_records_pending_write_via_mmap = ULONG_MAX;
     conf->max_flush_interval = 1 * TRACE_SECOND;
     conf->preferred_flush_bytes = 0; /* Use page size */
+    conf->attach_to_pid = 0;
 }
 
 static bool_t param_eq(const char *user_given_name, const char *param_name)
@@ -208,6 +196,17 @@ return_einval:
     return -1;
 }
 
+static pid_t get_pid_from_optarg(void)
+{
+    long long pid;
+    if (trace_get_number(optarg, &pid) && (pid > 0)) {
+        return (pid_t) pid;
+    }
+
+    errno = EINVAL;
+    return -1;
+}
+
 int parse_commandline(struct trace_dumper_configuration_s *conf, int argc, char **argv)
 {
     char shortopts[MAX_SHORT_OPTS_LEN(ARRAY_LENGTH(longopts))];
@@ -222,9 +221,6 @@ int parse_commandline(struct trace_dumper_configuration_s *conf, int argc, char 
 		case 'f':
 			add_buffer_filter(conf, optarg);
 			break;
-        case 'o':
-            conf->online = 1;
-            break;
         case 'b':
             conf->logs_base = optarg;
             break;
@@ -232,11 +228,12 @@ int parse_commandline(struct trace_dumper_configuration_s *conf, int argc, char 
             conf->no_color_specified = 0;
             break;
         case 'p':
-            conf->attach_to_pid = optarg;
-            if (atoi(conf->attach_to_pid) <= 0) {
-                fprintf(stderr, "Invalid process-id to attach specified: %s\n", conf->attach_to_pid);
+            conf->attach_to_pid = get_pid_from_optarg();
+            if (conf->attach_to_pid <= 0) {
+                fprintf(stderr, "Invalid process-id to attach specified: %s\n", optarg);
                 return -1;
             }
+            INFO("Trace dumper will attach to pid", conf->attach_to_pid);
             break;
         case 'w':
             conf->write_to_file = 1;
@@ -260,29 +257,11 @@ int parse_commandline(struct trace_dumper_configuration_s *conf, int argc, char 
         		return -1;
         	}
         	break;
-        case 's':
-            conf->syslog = 1;
-            break;
         case 'q':
             conf->quota_specification = optarg;
             break;
         case 'r':
             conf->max_records_per_second = atoi(optarg);
-            break;
-        case 't':
-            conf->trace_online = 1;
-            break;
-        case 'd':
-            conf->debug_online = 1;
-            break;
-        case 'i':
-            conf->info_online = 1;
-            break;
-        case 'a':
-            conf->warn_online = 1;
-            break;
-        case 'e':
-            conf->error_online = 1;
             break;
         case 'I':
         	if (param_eq(optarg, "time_writes")) {
@@ -293,7 +272,7 @@ int parse_commandline(struct trace_dumper_configuration_s *conf, int argc, char 
         		return -1;
         	}
         	break;
-       case 'E':
+        case 'E':
             if (parse_execute_on_event_param(conf, optarg) < 0) {
                 fprintf(stderr, "Bad execute-on-event specification %s\n", optarg);
                 return -1;
@@ -314,11 +293,6 @@ int parse_commandline(struct trace_dumper_configuration_s *conf, int argc, char 
 
 #define ROTATION_COUNT 10
 static const trace_ts_t FLUSH_DELTA = 5000;  /* In ns */
-
-static int parser_event_handler(trace_parser_t __attribute__((unused)) *parser, enum trace_parser_event_e __attribute__((unused))event, void __attribute__((unused))*event_data, void __attribute__((unused)) *arg)
-{
-    return 0;
-}
 
 static unsigned long long parse_quota_specification(const char *quota_specification, const char *logdir)
 {
@@ -366,13 +340,6 @@ static int set_quota(struct trace_dumper_configuration_s *conf)
     return 0;
 }
 
-static void set_default_online_severities(struct trace_dumper_configuration_s *conf)
-{
-    conf->info_online = 1;
-    conf->warn_online = 1;
-    conf->error_online = 1;
-}
-
 static int init_record_file(struct trace_record_file *record_file, size_t initial_iov_len)
 {
 	record_file->fd = -1;
@@ -403,7 +370,7 @@ int init_dumper(struct trace_dumper_configuration_s *conf)
     set_trace_cleanup_for_dumper();
     clear_mapped_records(conf);
 
-    if (!conf->write_to_file && !conf->online && conf->dump_online_statistics) {
+    if (!conf->write_to_file && conf->dump_online_statistics) {
         conf->op_type = OPERATION_TYPE_DUMP_BUFFER_STATS;
     } else {
         conf->op_type = OPERATION_TYPE_DUMP_RECORDS;
@@ -425,46 +392,14 @@ int init_dumper(struct trace_dumper_configuration_s *conf)
     conf->ts_flush_delta = FLUSH_DELTA;
     conf->next_housekeeping_ts = 0;
 
-    TRACE_PARSER__from_external_stream(&conf->parser, parser_event_handler, NULL);
-    TRACE_PARSER__set_indent(&conf->parser, TRUE);
-    TRACE_PARSER__set_show_field_names(&conf->parser, TRUE);
-
-    TRACE_PARSER__set_relative_ts(&conf->parser, TRUE);
-    if (conf->no_color_specified) {
-        conf->color = 0;
-        TRACE_PARSER__set_color(&conf->parser, FALSE);
-    } else {
-        conf->color = 1;
-        TRACE_PARSER__set_color(&conf->parser, TRUE);
-    }
 
     if (conf->syslog) {
         openlog("traces", 0, 0);
-        TRACE_PARSER__set_indent(&conf->parser, 0);
-        TRACE_PARSER__set_color(&conf->parser, 0);
-        TRACE_PARSER__set_show_timestamp(&conf->parser, 0);
-        TRACE_PARSER__set_show_field_names(&conf->parser, 0);
-    }
-
-    unsigned int severity_mask = get_allowed_online_severity_mask(conf);
-    if (0 == severity_mask) {
-        set_default_online_severities(conf);
-        severity_mask = get_allowed_online_severity_mask(conf);
-    }
-
-    if (conf->trace_online) {
-        TRACE_PARSER__set_indent(&conf->parser, TRUE);
-    } else {
-        TRACE_PARSER__set_indent(&conf->parser, FALSE);
     }
 
     if (conf->minimal_notification_severity < TRACE_SEV__MIN) {
     	conf->minimal_notification_severity = TRACE_SEV_WARN;
     }
-
-    TRACE_PARSER__matcher_spec_from_severity_mask(severity_mask, conf->severity_filter, ARRAY_LENGTH(conf->severity_filter));
-    TRACE_PARSER__set_filter(&conf->parser, conf->severity_filter);
-    TRACE_PARSER__set_free_dead_buffer_contexts(&conf->parser, TRUE);
 
     if (set_quota(conf) != 0) {
         return EX_IOERR;

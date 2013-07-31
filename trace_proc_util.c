@@ -30,6 +30,8 @@
 #include <limits.h>
 #include <signal.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <sys/time.h>
 
 #include "halt.h"
 #include "bool.h"
@@ -179,4 +181,106 @@ pid_t trace_fork_with_child_init(
     }
 
     return pid;
+}
+
+bool_t trace_process_exists(pid_t pid) {
+    const int saved_errno = errno;
+    if (0 == kill(pid, 0)) {
+        return TRUE;
+    }
+
+    switch (errno) {
+    case EPERM:
+        errno = saved_errno;
+        return TRUE;
+
+    case ESRCH:
+        errno = saved_errno;
+        break;
+
+    default:
+        TRACE_ASSERT(EINVAL != errno);
+        break;
+    }
+
+    return FALSE;
+}
+
+static int stat_pid(pid_t pid, struct stat *stat_buf)
+{
+    char filename[0x100];
+    snprintf(filename, sizeof(filename), "/proc/%d", pid);
+    return stat(filename, stat_buf);
+}
+
+static void set_esrch_if_necessary(void)
+{
+    if (ENOENT == errno) {
+       errno = ESRCH;
+    }
+}
+
+int trace_get_process_time(pid_t pid, trace_ts_t *curtime)
+{
+    if (NULL == curtime) {
+        errno = EFAULT;
+        return -1;
+    }
+
+    struct stat stat_buf;
+    int rc = stat_pid(pid, &stat_buf);
+    if (0 != rc) {
+        set_esrch_if_necessary();
+        return -1;
+    }
+
+    *curtime = stat_buf.st_ctim.tv_sec * TRACE_SECOND + stat_buf.st_ctim.tv_nsec;
+    return 0;
+}
+
+
+static pid_t get_proc_ppid(pid_t pid)
+{
+    char name[NAME_MAX + 10];
+    TRACE_ASSERT(sprintf(name, "/proc/%d/stat", (int) pid) > 0);
+
+    FILE *const fp = fopen(name, "rt");
+    if (NULL == fp) {
+        set_esrch_if_necessary();
+        return -1;
+    }
+
+    static const char fmt[] = "%d %s %c %d";
+    pid_t reported_pid = -1, ppid = -1;
+    char state;
+
+    if ((fscanf(fp, fmt, &reported_pid, name, &state, &ppid) != 4) ||
+        (reported_pid != pid)) {
+        errno = EPROTO;
+        return -1;
+    }
+
+    return ppid;
+}
+
+
+bool_t trace_is_process_descended_from_pids(pid_t pid, const pid_t potential_parents[], size_t n_potential_parents)
+{
+    const pid_t ppid = get_proc_ppid(pid);
+    if (ppid < 0) {
+       return FALSE;
+    }
+
+    size_t i;
+    for (i = 0; i < n_potential_parents; i++) {
+        if (potential_parents[i] == ppid) {
+            return TRUE;
+        }
+    }
+
+    if (ppid <= 1) {  /* init process */
+        return FALSE;
+    }
+
+    return trace_is_process_descended_from_pids(ppid, potential_parents, n_potential_parents);
 }

@@ -57,21 +57,16 @@ static int run_executable(const char *executable, const char *arg)
         return -1;
     }
 
-    case 0: { /* Child */
-        /* If we can reasonably assume that the parent trace_dumper process will clean after us (i.e. it is not attached to a
-         * particular process), then avoid doing our own cleanup with a function that has been registered via atexit,
-         * so that the trace file we produce will remain.
-         * This is achieved by calling _exit() instead of exit(). */
-        void (*const exit_func)(int) = trace_dumper_get_configuration()->attach_to_pid ? exit : _exit;
-
-        /* Now we create a second child that will perform exec(). The reason for this double fork is to leave the child process parentless so that
+    case 0: /* Child */
+         /* Now we create a second child that will perform exec(). The reason for this double fork is to leave the child process parentless so that
          * it will not become a zombie.
          * Here we use plain fork(), since we don't want to create shared-memory objects which might be overwritten if the process we exec()
-         * is also traces, possibly leading to data corruption and inconsistency in the dumper. */
+         * is also traces, possibly leading to data corruption and inconsistency in the dumper.
+         * We exit the intermediate child process using _exit() instead of exit(), since we want the trace buffers to be left for the parent dumper to dump.*/
         switch (fork()) {
         case -1:
             ERR("Attempt to fork second child failed with err=", errno, strerror(errno));
-            exit_func(trace_capped_errno());
+            _exit(trace_capped_errno());
             break;
 
         case 0: { /* grand-child */
@@ -83,27 +78,27 @@ static int run_executable(const char *executable, const char *arg)
                 ERR("Failed to exec", executable, "with", arg, "due to", err, strerror(err));
             }
             else {
-                syslog(LOG_USER|LOG_ERR, "Failed to initialize traces errno=%d (%s)", errno, strerror(errno));
+                syslog(LOG_USER|LOG_ERR, "Failed to initialize traces due to errno=%d (%s) after failing execvp() with errno=%d (%s)",
+                        errno, strerror(errno), err, strerror(err));
             }
-            exit_func(EX_OSERR);
+            _exit(EX_OSERR);
             break;
         }
 
         default:
             DEBUG("Intermediate child completed successfully");
-            exit_func(0);
             break;
         }
 
+        _exit(0);
         break;
-    }
 
     default: { /* Parent */
         TRACE_ASSERT(pid > 0);
         DEBUG("Forked intermediate child with", pid);
         int status = -1;
         if (waitpid(pid, &status, 0) != pid) {
-            ERR("waitpid failed for 1st child", pid);
+            ERR("waitpid failed for 1st child", pid, errno);
             return -1;
         }
 
@@ -119,7 +114,8 @@ static int run_executable(const char *executable, const char *arg)
                 errno = EINTR;
             }
             else {
-                ERR("1st child", pid, "returned exited inexplicably returning", status);
+                ERR("1st child", pid, "exited inexplicably returning", status);
+                errno = EPROTO;
             }
 
             return -1;

@@ -24,8 +24,9 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "../platform.h"
 
 #include <stdio.h>
+#include <dirent.h>     /* for MANE_MAX */
 #include <sys/uio.h>
-
+#include <sys/types.h>
 
 #include "../bool.h"
 #include "../trace_metadata_util.h"
@@ -69,7 +70,7 @@ struct trace_mapped_records {
     struct trace_record buffer_dump_record;
 };
 
-#define TRACE_BUFNAME_LEN (0x100)
+#define TRACE_BUFNAME_LEN NAME_MAX
 #define MAX_BUFFER_COUNT (10)
 
 struct trace_mapped_buffer {
@@ -81,7 +82,7 @@ struct trace_mapped_buffer {
     bool_t notification_metadata_dumped;
     struct trace_mapped_records *mapped_records;
     struct trace_mapped_metadata metadata;
-    trace_pid_t pid;
+    pid_t pid;
     int n_record_buffers;
     bool_t dead;
     trace_ts_t process_time;
@@ -105,7 +106,7 @@ struct trace_record_io_timestamps {
 
 struct trace_record_file {
     unsigned long records_written;
-    char filename[0x100];
+    char filename[NAME_MAX];
     int fd;
     struct trace_output_mmap_info *mapping_info;
     trace_record_counter_t records_discarded;
@@ -161,9 +162,8 @@ CREATE_LIST_PROTOTYPE(PidList, trace_pid_t, MappedBuffers_NUM_ELEMENTS);
 struct trace_dumper_configuration_s {
     const char *logs_base;
     const char *notifications_subdir;
-    const char *attach_to_pid;
+    pid_t  attach_to_pid;
     struct trace_post_event_actions post_event_actions;
-    int should_quit;
     unsigned int request_flags;
     unsigned int header_written;
     unsigned int write_to_file;

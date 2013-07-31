@@ -4,7 +4,7 @@ CXXFLAGS=-fno-rtti
 LIBTRACE_OBJS=trace_metadata_util.o halt.o 
 LIBPARSER_OBJS=timeformat.o parser.o renderer.o filter.o parser_mmap.o hashmap.o trace_metadata_util.o hashmap.o validator.o
 LIBTRACEUSER_OBJS=trace_metadata_util.o trace_user.o halt.o trace_clock.o
-LIBTRACEUTIL_OBJS=opt_util.o trace_str_util.o file_naming.o trace_clock.o
+LIBTRACEUTIL_OBJS=opt_util.o trace_str_util.o file_naming.o trace_clock.o trace_proc_util.o
 LIBSNAPPY_OBJS=snappy/snappy.o
 DUMPER_OBJS=trace_dumper/trace_dumper.o trace_dumper/filesystem.o trace_dumper/events.o trace_dumper/writer.o trace_dumper/write_prep.o trace_dumper/buffers.o trace_dumper/init.o trace_dumper/open_close.o trace_dumper/metadata.o trace_dumper/housekeeping.o trace_user_stubs.o
 
