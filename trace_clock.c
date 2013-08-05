@@ -10,6 +10,8 @@
 #include <assert.h>
 #include "trace_clock.h"
 
+#if defined(CLOCK_MONOTONIC) && defined(CLOCK_REALTIME)
+
 static trace_ts_t trace_get_nsec_from_clk(clockid_t clk_id)
 {
 	struct timespec now;
@@ -30,6 +32,8 @@ trace_ts_t trace_get_nsec_monotonic(void)
 {
 	return trace_get_nsec_from_clk(CLOCK_MONOTONIC);
 }
+
+#endif
 
 trace_ts_t trace_get_walltime_ns(void)
 {

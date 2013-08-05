@@ -26,6 +26,8 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>
+
 #include "trace_str_util.h"
 
 
@@ -112,6 +114,43 @@ bool_t trace_get_number(const char* str, long long *num) { /* home made atoll / 
     }
     *num = negative ? 0-n : n;
     return TRUE;
+}
+
+
+bool_t trace_parse_name_value_pair(char *str, char **name, char **str_value, long long *num_value)
+{
+    if ((NULL == name) || (NULL == str_value) || (NULL == str)) {
+        return FALSE;
+    }
+
+    *name = str;
+
+    char *name_end = strchr(str, '=');
+    if (NULL != name_end) {
+        *name_end = '\0';
+        *str_value = name_end + 1;
+
+        /* Delete any space characters at the beginning of the value */
+        while (isspace(**str_value)) {
+            ++(*str_value);
+        }
+    }
+    else {  /* No equal sign, so it's just a name without a value */
+        name_end = str + strlen(str);
+        *str_value = name_end;
+    }
+
+    /* Delete any space characters at the end of the name */
+    name_end--;
+    while (isspace(*name_end)) {
+        *(name_end--) = '\0';
+    }
+
+    if (NULL != num_value) {
+        return trace_get_number(*str_value, num_value);
+    }
+
+    return FALSE;
 }
 
 size_t trace_strncpy(char* dest, const char* source, size_t max_size)
