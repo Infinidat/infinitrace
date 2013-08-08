@@ -7,13 +7,16 @@ Import('TracesDisabled')
 
 with TracesDisabled(xn_env) as untraced_env:
     optflags=Split("""$CCFLAGS -Wall -O2""")
+    optflags_so = optflags + Split("-fPIC")   # Compiler flags for object files that could go into a shared-object library. 
     lib = untraced_env.SConscript("trace_instrumentor/SConscript")
 
-    srcs = untraced_env.AutoSplit('''trace_user.c trace_metadata_util_untraced.c  halt.c trace_clock_untraced.c''')
+    objs = [Object(target = 'untraced_' + S + '.o', source = S + '.c', CCFLAGS = optflags_so) for S in 'file_naming_untraced', 'trace_clock_untraced']
+
+    srcs = untraced_env.AutoSplit('''trace_user.c trace_metadata_util_untraced.c  halt.c trace_proc_util.c untraced_trace_clock_untraced.o untraced_file_naming_untraced.o''')
     lib = untraced_env.XnStaticLibrary(target = 'traces', source = srcs, CCFLAGS = optflags)
     untraced_env.Alias('xn', lib)
 
-    srcs = untraced_env.AutoSplit('''opt_util_untraced.c trace_str_util_untraced.c file_naming_untraced.c untraced_trace_clock_untraced.o''')
+    srcs = untraced_env.AutoSplit('''opt_util_untraced.c trace_str_util_untraced.c untraced_file_naming_untraced.o untraced_trace_clock_untraced.o''')
     lib = untraced_env.XnStaticLibrary(target = 'trace_util', source = srcs, CCFLAGS = optflags)
     untraced_env.Alias('xn', lib)
     
@@ -25,6 +28,10 @@ with TracesDisabled(xn_env) as untraced_env:
     lib = untraced_env.XnStaticLibrary(target = 'tracesstubs', source = srcs, CCFLAGS = optflags)
     untraced_env.Alias('xn', lib)
     
+    srcs = xn_env.AutoSplit('''timeformat.c parser.c filter.c parser_mmap.c hashmap.c renderer.cpp''')
+    lib = untraced_env.XnStaticLibrary(target = 'reader', source = srcs, CCFLAGS = optflags)
+    untraced_env.Alias('xn', lib)
+
     run_swig = os.environ.get('XN_SWIG', 0)
     if run_swig:
     	srcs = untraced_env.AutoSplit('''trace_user_stubs.c trace_user_stubs.i''')
@@ -32,12 +39,11 @@ with TracesDisabled(xn_env) as untraced_env:
     	untraced_env.Alias('xn', lib)
 
 safer_optflags=[f for f in optflags if not f.startswith('-O')] + ['-O1']
+cflags = Split("-std=gnu99")
 
 srcs = xn_env.AutoSplit('''validator.c trace_metadata_util.c''')
-xn_env.BuildStaticLibraries(target = 'trace_bin_fmts', source = srcs, CCFLAGS = safer_optflags + ['-std=gnu99'])
+xn_env.BuildStaticLibraries(target = 'trace_bin_fmts', source = srcs, CCFLAGS = safer_optflags, CFLAGS = cflags)
 
-srcs = xn_env.AutoSplit('''timeformat.c parser.c filter.c parser_mmap.c hashmap.c renderer.cpp''')
-xn_env.BuildStaticLibraries(target = 'reader', source = srcs, CCFLAGS = optflags)
 
 srcs = xn_env.AutoSplit('''opt_util.c trace_str_util.c trace_clock.c file_naming.c trace_fatal.c''')
 xn_env.BuildStaticLibraries(target = 'trace_util_traced', source = srcs, CCFLAGS = optflags)

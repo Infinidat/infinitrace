@@ -22,6 +22,7 @@
 #include <unistd.h>
 #include <sysexits.h>
 #include <assert.h>
+#include <stdlib.h>
 
 #include "array_length.h"
 #include "trace_fatal.h"
