@@ -171,6 +171,29 @@ struct trace_records_immutable_metadata {
 	unsigned int severity_type;
 };
 
+#define TRACE_BUFFER_NUM_RECORDS (4)  /* The number of trace buffers per traced process */
+
+#define IS_PWR_OF_2(x) (0 == ((x) & ((x) - 1)))
+
+#define TRACE_DEFAULT_RECORD_BUFFER_RECS 0x100000
+
+#ifndef TRACE_RECORD_BUFFER_RECS
+#define TRACE_RECORD_BUFFER_RECS  TRACE_DEFAULT_RECORD_BUFFER_RECS
+#endif
+
+#if (!IS_PWR_OF_2(TRACE_RECORD_BUFFER_RECS))
+#error "TRACE_RECORD_BUFFER_RECS is not a power of 2"
+#endif
+
+#ifndef TRACE_RECORD_BUFFER_FUNCS_RECS
+#define TRACE_RECORD_BUFFER_FUNCS_RECS TRACE_RECORD_BUFFER_RECS
+#elif (!IS_PWR_OF_2(TRACE_RECORD_BUFFER_FUNCS_RECS))
+#error "TRACE_RECORD_BUFFER_FUNCS_RECS is not a power of 2"
+#endif
+
+#undef IS_PWR_OF_2
+
+
 struct trace_records {
 	struct trace_records_immutable_metadata imutab;
 	volatile struct trace_records_mutable_metadata mutab;
@@ -180,10 +203,13 @@ struct trace_records {
 
 struct trace_buffer {
     pid_t pid;
+    int n_record_buffers;
+    unsigned buffer_indices[TRACE_SEV__COUNT];
     union {
         struct trace_records _all_records[TRACE_BUFFER_NUM_RECORDS];
         struct {
             struct trace_records _debug;
+            struct trace_records _above_info;
             struct trace_records _other;
             struct trace_records _funcs;
         } records;

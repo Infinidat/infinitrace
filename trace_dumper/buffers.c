@@ -178,7 +178,15 @@ static void *map_single_buffer(pid_t pid, enum trace_shm_object_type shm_type, o
         return MAP_FAILED;
     }
 
-    void *const addr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    void *addr = MAP_FAILED;
+    if (size > 0) {
+        addr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    }
+    else {
+        errno = EINVAL;
+        ERR("Invalid buffer file with size 0", name, pid);
+    }
+
     if (0 != close(fd)) {
         const int err = errno;
         ERR("Failed to close fd for the mapped buffer", name, fd, addr, err, strerror(err), "unmapping the buffer");
@@ -188,6 +196,7 @@ static void *map_single_buffer(pid_t pid, enum trace_shm_object_type shm_type, o
     if (MAP_FAILED == addr) {
         const int err = errno;
         ERR("Unable to map the buffer", name, fd, TRACE_NAMED_INT_AS_HEX(size), err, strerror(err));
+        TRACE_ASSERT(0 != errno);
         return MAP_FAILED;
     }
 
@@ -244,8 +253,8 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
      * had been mapped at static_log_data_region->base_address. We have to adjust them to the dumper's address space, where the same region
      * is now mapped at static_log_data_region, and update the base_address field with the new base address relative to which the pointers are now valid. */
     const void *const client_base_addr = static_log_data_region->base_address;
-    if ((static_log_data_region_size > MAX_METADATA_SIZE) || (NULL == client_base_addr)) {
-        ERR("Metadata size too large or invalid base address for", static_log_data_region->name, pid, static_log_data_region_size, client_base_addr);
+    if ((static_log_data_region_size > MAX_METADATA_SIZE) || (static_log_data_region_size < (off_t) sizeof(*static_log_data_region)) || (NULL == client_base_addr)) {
+        ERR("Metadata bad size or invalid base address for", static_log_data_region->name, pid, static_log_data_region_size, client_base_addr);
         rc = -1;
         goto unmap_static;
     }
@@ -274,6 +283,12 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
         goto unmap_static;
     }
 
+    if (pid != dynamic_trace_buffer->pid) {
+        ERR("Dynamic buffer pid", dynamic_trace_buffer->pid, "inconsistent with the one implied by its name", pid);
+        errno = EUCLEAN;
+        goto unmap_dynamic;
+    }
+
     new_mapped_buffer->records_buffer_base_address = dynamic_trace_buffer;
     new_mapped_buffer->records_buffer_size = trace_region_size;
     new_mapped_buffer->pid = (trace_pid_t) pid;
@@ -281,13 +296,23 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
     new_mapped_buffer->notification_metadata_dumped = FALSE;
     new_mapped_buffer->process_time = get_effective_process_time(pid);
 
+    if (dynamic_trace_buffer->n_record_buffers <= 0) {
+        errno = EINVAL;
+        ERR("Bad number of record buffers", dynamic_trace_buffer->n_record_buffers, "for dynamic buffer of", pid, static_log_data_region->name);
+        goto unmap_dynamic;
+    }
+    new_mapped_buffer->n_record_buffers = dynamic_trace_buffer->n_record_buffers;
+    new_mapped_buffer->mapped_records = calloc(new_mapped_buffer->n_record_buffers, sizeof(new_mapped_buffer->mapped_records[0]));
+    if (NULL == new_mapped_buffer->mapped_records) {
+        ERR("Dynamic memory allocation failed", pid, static_log_data_region->name);
+        goto unmap_dynamic;
+    }
+
     init_metadata_iovector(&new_mapped_buffer->metadata, new_mapped_buffer->pid);
     trace_array_strcpy(new_mapped_buffer->name, static_log_data_region->name);
-    unsigned int i;
-    for (i = 0; i < TRACE_BUFFER_NUM_RECORDS; i++) {
-        struct trace_mapped_records *mapped_records;
-
-        mapped_records = &new_mapped_buffer->mapped_records[i];
+    int i;
+    for (i = 0; i < new_mapped_buffer->n_record_buffers; i++) {
+        struct trace_mapped_records *const mapped_records = new_mapped_buffer->mapped_records + i;
         mapped_records->records = dynamic_trace_buffer->u._all_records[i].records;
         mapped_records->mutab = &dynamic_trace_buffer->u._all_records[i].mutab;
         mapped_records->imutab = &dynamic_trace_buffer->u._all_records[i].imutab;
@@ -308,7 +333,16 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
 
     return 0;
 
+unmap_dynamic:
+    TRACE_ASSERT(trace_region_size > 0);
+    if (munmap(dynamic_trace_buffer, trace_region_size) < 0) {
+        const int err = errno;
+        ERR("Failed to unmap the dynamic buffer", dynamic_trace_buffer, trace_region_size, pid, new_mapped_buffer->name, err, strerror(err));
+        rc = -1;
+    }
+
 unmap_static:
+    TRACE_ASSERT(static_log_data_region_size > 0);
     if (munmap(static_log_data_region, static_log_data_region_size) < 0) {
         const int err = errno;
         ERR("Failed to unmap the static buffer", static_log_data_region, static_log_data_region_size, pid, new_mapped_buffer->name, err, strerror(err));
@@ -316,18 +350,18 @@ unmap_static:
     }
 
 remove_mapped_buffer:
+    {
+        const char *const proc_name = (NULL == new_mapped_buffer) ? "(unknown)" : new_mapped_buffer->name;
+        WARN("Failed to attach to the process", pid, proc_name, "Removing the data structures for it.");
+    }
     TRACE_ASSERT(0 == MappedBuffers__remove_element(&conf->mapped_buffers, MappedBuffers__last_element_index(&conf->mapped_buffers)));
 
 delete_shm_files:
-    WARN("The shared-memory areas for the process", pid, new_mapped_buffer->name, "could not be open and will be deleted.");
+    WARN("The shared-memory areas for the process", pid, "could not be open and will be deleted.");
     if (delete_shm_files(pid) < 0) {
         const int err = errno;
-        ERR("Failed to delete shared-memory files for", new_mapped_buffer->name, pid, err, strerror(err));
+        ERR("Failed to delete shared-memory files for", pid, err, strerror(err));
         rc = -1;
-    }
-
-    if ((ENOENT == errno) && !process_exists(pid)) {
-        errno = ESRCH;
     }
 
 	if (0 != rc) {
@@ -336,9 +370,8 @@ delete_shm_files:
 	    }
 	    const int err = errno;
 		const char *err_name = strerror(err);
-		const char *proc_name = ((NULL == new_mapped_buffer) ? "(unknown)" : new_mapped_buffer->name);
-		ERR("Failed to map a buffer for process", proc_name, pid, err, err_name);
-		syslog(LOG_USER|LOG_ERR, "Failed to map buffer for pid %d - %s. Last Error: %s.", (int) pid, proc_name, err_name);
+		ERR("Failed to map a buffer for process", pid, err, err_name);
+		syslog(LOG_USER|LOG_ERR, "Failed to map buffer for pid %d. Last Error: %s.", (int) pid, err_name);
 	}
 	return rc;
 }
@@ -463,6 +496,10 @@ static void discard_buffer_unconditionally(struct trace_mapped_buffer *mapped_bu
     }
     else {
         REPORT_BUF_ERR("Error unmapping records for buffer");
+    }
+
+    if (NULL != mapped_buffer->mapped_records) {
+        free(mapped_buffer->mapped_records);
     }
 }
 

@@ -79,9 +79,10 @@ struct trace_mapped_buffer {
     trace_record_counter_t last_metadata_offset;
     bool_t metadata_dumped;
     bool_t notification_metadata_dumped;
-    struct trace_mapped_records mapped_records[TRACE_BUFFER_NUM_RECORDS];
+    struct trace_mapped_records *mapped_records;
     struct trace_mapped_metadata metadata;
     trace_pid_t pid;
+    int n_record_buffers;
     bool_t dead;
     trace_ts_t process_time;
 };

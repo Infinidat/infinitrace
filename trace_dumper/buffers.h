@@ -39,7 +39,7 @@ void add_buffer_filter(struct trace_dumper_configuration_s *conf, char *buffer_n
 
 #define for_each_mapped_records(_i_, _rid_, _mapped_buffer_, _mr_)      \
     for_each_mapped_buffer(_i_, _mapped_buffer_) \
-        for (_rid_ = 0; (_rid_ < TRACE_BUFFER_NUM_RECORDS) && (_mr_ = &_mapped_buffer_->mapped_records[_rid_]); _rid_++)
+        for (_rid_ = 0; (_rid_ < _mapped_buffer_->n_record_buffers) && (_mr_ = &_mapped_buffer_->mapped_records[_rid_]); _rid_++)
 
 
 #endif /* BUFFERS_H_ */

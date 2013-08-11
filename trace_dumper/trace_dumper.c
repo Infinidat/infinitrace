@@ -33,7 +33,6 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "../list_template.h"
 #include "../bool.h"
 #include "../trace_metadata_util.h"
-#include "../trace_parser.h"
 #include "../min_max.h"
 #include "../array_length.h"
 #include "../trace_clock.h"
@@ -115,7 +114,7 @@ static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *co
 		conf->prev_flush_ts = cur_ts;
 		conf->next_flush_ts = cur_ts + conf->ts_flush_delta;
 
-        const int bytes_written = trace_dumper_write(conf, &conf->record_file, conf->flush_iovec, num_iovecs, FALSE);
+        const int bytes_written = trace_dumper_write(conf, &conf->record_file, conf->flush_iovec, num_iovecs);
 		if ((unsigned int)bytes_written != (total_written_records * sizeof(struct trace_record))) {
 			if (bytes_written < 0) {
 				if (EAGAIN != errno) {
@@ -161,21 +160,10 @@ static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *co
     return 0;
 }
 
-static inline enum trace_severity get_minimal_severity(int severity_type)
+/* Return TRUE if the given mapped records could include records with severity equal or greater than the given severity */
+static inline bool_t mapped_records_may_exceed_severity(const struct trace_mapped_records *mapped_records, enum trace_severity sev)
 {
-    unsigned int count = TRACE_SEV__MIN;
-    while (!(severity_type & 1)) {
-        severity_type >>= 1;
-        count++;
-    }
-
-    return count;
-}
-
-
-static inline bool_t record_buffer_matches_online_severity(const struct trace_dumper_configuration_s *conf, unsigned int severity_type)
-{
-    return get_allowed_online_severity_mask(conf) & severity_type;
+    return (1U << sev) <= mapped_records->imutab->severity_type;
 }
 
 static void possibly_report_record_loss(
@@ -287,7 +275,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
             return rc;
         }
         
-        if (get_minimal_severity(mapped_records->imutab->severity_type) <= conf->minimal_allowed_severity) {
+        if (! mapped_records_may_exceed_severity(mapped_records, conf->minimal_allowed_severity)) {
             WARN("Not dumping pid", mapped_buffer->pid, "with severity type", mapped_records->imutab->severity_type, "due to overwrite");
             continue;
         }
@@ -309,7 +297,6 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
             continue;
         }
         
-        unsigned int iovec_base_index = num_iovecs;
         init_buffer_chunk_record(
         		conf, mapped_buffer, mapped_records,
         		&bd, &iovec, &num_iovecs,
@@ -340,25 +327,13 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
         possibly_report_record_loss(conf, mapped_buffer, mapped_records, &deltas);
         min_remaining = MIN(min_remaining, (trace_record_counter_t)(deltas.remaining_before_loss));
 
-        if (conf->write_notifications_to_file && (mapped_records->imutab->severity_type >= (1U << conf->minimal_notification_severity))) {
+        if (conf->write_notifications_to_file && mapped_records_may_exceed_severity(mapped_records, conf->minimal_notification_severity)) {
             unsigned int num_warn_iovecs = add_warn_records_to_iov(mapped_records, deltas.total, conf->minimal_notification_severity, &conf->notification_file);
 			if (num_warn_iovecs > 0) {
 			    rc = write_notification_records(conf);
 			}
         }
 
-        if (conf->online && record_buffer_matches_online_severity(conf, mapped_records->imutab->severity_type)) {
-            rc = dump_iovector_to_parser(conf, &conf->parser, &conf->flush_iovec[iovec_base_index], num_iovecs - iovec_base_index);
-            if (0 != rc) {
-                syslog(LOG_USER|LOG_WARNING,
-					"Trace dumper encountered the following error while parsing and filtering %lu records bound for %s to %s: %s",
-					total_iovec_len(&conf->flush_iovec[iovec_base_index], num_iovecs - iovec_base_index) / sizeof(struct trace_record),
-					conf->record_file.filename,
-					conf->syslog ? "syslog" : "standard output",
-					strerror(errno));
-            }
-        }
-        
 		total_written_records += deltas.total + 1;
 	}
 
@@ -498,10 +473,10 @@ static int run_dumper(struct trace_dumper_configuration_s *conf)
     switch (conf->op_type) {
     case OPERATION_TYPE_DUMP_RECORDS:
         return op_dump_records(conf);
-        break;
+
     case OPERATION_TYPE_DUMP_BUFFER_STATS:
         return op_dump_stats(conf);
-        break;
+
     default:
         break;
     }
@@ -513,15 +488,14 @@ static int run_dumper(struct trace_dumper_configuration_s *conf)
 int main(int argc, char **argv)
 {
     struct trace_dumper_configuration_s *conf = trace_dumper_get_configuration();
-    memset(conf, 0, sizeof(*conf));
     
     if (0 != parse_commandline(conf, argc, argv)) {
     	print_usage(argv[0]);
         return EX_USAGE;
     }
 
-    if (!conf->write_to_file && !conf->online && !conf->dump_online_statistics) {
-            fprintf(stderr, "%s: Must specify either -w, -o or -v\n", argv[0]);
+    if (!conf->write_to_file && !conf->dump_online_statistics) {
+            fprintf(stderr, "%s: Must specify either -w or -v\n", argv[0]);
             print_usage(argv[0]);
             return EX_USAGE;
     }
@@ -543,7 +517,7 @@ int main(int argc, char **argv)
     }
 
     rc = run_dumper(conf);
-    if ((0 != rc) && (conf->online)) {
+    if (0 != rc) {
     	fprintf(stderr,
     		"Error encountered while writing traces: %s, please see the syslog for more details.\nExiting with error code %d (see sysexits.h for its meaning)\n",
     		strerror(errno), rc);

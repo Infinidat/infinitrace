@@ -160,6 +160,58 @@ static volatile const struct trace_record *previous_record(volatile const struct
     return n_records_after(rec, mapped_records, -1);
 }
 
+/* Get the minimum severity level which can be found in particular mapped records */
+static enum trace_severity min_sev_in_trace_records(const struct trace_mapped_records *mapped_records)
+{
+    const unsigned sev_type = mapped_records->imutab->severity_type & ((1U << TRACE_SEV__COUNT) - 1);
+    if (0 == sev_type) {
+        return TRACE_SEV__COUNT;
+    }
+
+    const int trailing_zeros = __builtin_ctz(sev_type);
+    TRACE_ASSERT(trailing_zeros <= TRACE_SEV__MAX);
+    return (enum trace_severity) trailing_zeros;
+}
+
+/* Get the minimum severity level which can be found in particular mapped records */
+static unsigned add_n_recs_from_idx(
+        const struct trace_mapped_records *mapped_records,
+        trace_record_counter_t start,
+        unsigned count,
+        struct trace_record_file *record_file
+        )
+{
+    if (0 == count) {
+        return 0;
+    }
+
+    const unsigned n_iovs = (count + start < mapped_records->imutab->max_records) ? 1 : 2;
+    struct iovec *const iov = increase_iov_if_necessary(record_file, record_file->iov_count + n_iovs) + record_file->iov_count;
+    iov[0].iov_base = (void *) (mapped_records->records + start);
+
+    switch (n_iovs) {
+    case 1:
+        iov[0].iov_len = TRACE_RECORD_SIZE * count;
+        break;
+
+    case 2:
+        iov[0].iov_len = TRACE_RECORD_SIZE * (mapped_records->imutab->max_records - start);
+        iov[1].iov_base = (void *) (mapped_records->records);
+        iov[1].iov_len = TRACE_RECORD_SIZE * count - iov[0].iov_len;
+
+        DEBUG("Wrap around while preparing an iov for a contiguous block of records", start, count, "*", TRACE_RECORD_SIZE, "=", iov[0].iov_len, "+", iov[1].iov_len);
+        break;
+
+    default:
+        TRACE_ASSERT(0);
+        break;
+    }
+
+    TRACE_ASSERT(total_iovec_len(iov, n_iovs) == TRACE_RECORD_SIZE * count);
+    record_file->iov_count += n_iovs;
+    return n_iovs;
+}
+
 unsigned add_warn_records_to_iov(
         const struct trace_mapped_records *mapped_records,
         unsigned count,
@@ -174,6 +226,10 @@ unsigned add_warn_records_to_iov(
     const useconds_t retry_wait_len = 10;
     const unsigned num_retries_on_partial_record = 3;
     unsigned retries_left = num_retries_on_partial_record;
+
+    if (min_sev_in_trace_records(mapped_records) >= threshold_severity) {
+        return add_n_recs_from_idx(mapped_records, start_idx, count, record_file);
+    }
 
     volatile const struct trace_record *const end_rec = n_records_after(mapped_records->records + start_idx, mapped_records, count);
     for (i = 0; i < count; i+= recs_covered) {

@@ -188,43 +188,15 @@ int trace_runtime_control_configure_buffer_allocation(unsigned initial_records_p
 
 static struct trace_records *trace_get_records(enum trace_severity severity)
 {
-	TRACE_ASSERT(TRACE_SEV_INVALID != severity);
-
-	switch ((int)severity) {
-	case TRACE_SEV_FUNC_TRACE:
-		return &current_trace_buffer->u.records._funcs;
-
-	case TRACE_SEV_DEBUG:
-		return &current_trace_buffer->u.records._debug;
-
-	default:
-		return &current_trace_buffer->u.records._other;
-	}
+	TRACE_ASSERT((TRACE_SEV_INVALID != severity) && (severity < TRACE_SEV__COUNT));
+	const int rec_idx = current_trace_buffer->buffer_indices[severity];
+	TRACE_ASSERT(rec_idx < current_trace_buffer->n_record_buffers);
+	return current_trace_buffer->u._all_records + rec_idx;
 }
 
 static inline trace_generation_t trace_get_generation(trace_record_counter_t record_num, const struct trace_records_immutable_metadata *imutab)
 {
 	return (trace_generation_t)(record_num >> imutab->max_records_shift);
-}
-
-static inline int trace_compare_generation(trace_generation_t a, trace_generation_t b)
-{
-#ifndef _LP64
-#warning "This function was tested with sizeof(trace_generation_t)=4, sizeof(trace_atomic_t)=8, if this is not true please test it!"
-#endif
-
-	enum thresholds {
-		GEN_LOW  = 0x4U << (8 * sizeof(trace_generation_t) - 4),
-		GEN_HIGH = 0xcU << (8 * sizeof(trace_generation_t) - 4),
-	};
-
-	if (a >= GEN_HIGH   &&  b < GEN_LOW)
-		return 1;
-	if (b > a)
-		return 1;
-	if (b < a)
-		return -1;
-	return 0;
 }
 
 static inline unsigned bytes_left_in_buf(const struct trace_record *records, unsigned rec_idx, const unsigned char *typed_buf)
@@ -775,15 +747,38 @@ static void init_record_mutable_data(struct trace_records *recs)
 	memset(recs->records + recs->imutab.max_records - 1, TRACE_SEV_INVALID, sizeof(recs->records[0]));
 }
 
+static void init_sev_to_buffer_cache(void)
+{
+    int i, j;
+    for (i = 0; i < TRACE_SEV__COUNT; i++) {
+        current_trace_buffer->buffer_indices[i] = &(current_trace_buffer->u.records._funcs) - current_trace_buffer->u._all_records; /* Default */
+        for (j = 0; j < current_trace_buffer->n_record_buffers; j++) {
+            if ((1U << i) & current_trace_buffer->u._all_records[j].imutab.severity_type) {
+                current_trace_buffer->buffer_indices[i] = j;
+                break;
+            }
+        }
+    }
+}
+
 static void init_records_metadata(void)
 {
 
+    current_trace_buffer->n_record_buffers = TRACE_BUFFER_NUM_RECORDS;
+    current_trace_buffer->pid = getpid();
+
 #define ALL_SEVS_ABOVE(sev) ((1 << (TRACE_SEV__MAX + 1))) - (1 << (sev + 1))
 
+    init_records_immutable_data(&current_trace_buffer->u.records._above_info, TRACE_RECORD_BUFFER_RECS, ALL_SEVS_ABOVE(TRACE_SEV_INFO));
     init_records_immutable_data(&current_trace_buffer->u.records._other, TRACE_RECORD_BUFFER_RECS, ALL_SEVS_ABOVE(TRACE_SEV_DEBUG));
     init_records_immutable_data(&current_trace_buffer->u.records._debug, TRACE_RECORD_BUFFER_RECS, (1 << TRACE_SEV_DEBUG));
 	init_records_immutable_data(&current_trace_buffer->u.records._funcs, TRACE_RECORD_BUFFER_FUNCS_RECS, (1 << TRACE_SEV_FUNC_TRACE));
 
+#undef ALL_SEVS_ABOVE
+
+	init_sev_to_buffer_cache();
+
+	init_record_mutable_data(&(current_trace_buffer->u.records._above_info));
  	init_record_mutable_data(&(current_trace_buffer->u.records._other));
 	init_record_mutable_data(&(current_trace_buffer->u.records._debug));
 	init_record_mutable_data(&(current_trace_buffer->u.records._funcs));
