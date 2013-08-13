@@ -552,7 +552,7 @@ typedef struct log_stats {
     unsigned int unique_count;
     unsigned int record_count;
     unsigned long long lost_records;
-    unsigned int record_count_by_severity[TRACE_SEV__MAX];
+    unsigned int record_count_by_severity[TRACE_SEV__COUNT];
     struct trace_parser_buffer_context *buffer_context;
 } log_stats_t;
 
@@ -1463,6 +1463,7 @@ static void free_stats_pool(log_stats_pool_t stats_pool)
         }
 
         free(stats_pool[i].data.logs);
+        log_stats_pool__deallocate(stats_pool, &(stats_pool[i].data));
     }
 }
 
