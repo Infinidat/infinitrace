@@ -767,10 +767,10 @@ static void init_records_metadata(void)
     current_trace_buffer->n_record_buffers = TRACE_BUFFER_NUM_RECORDS;
     current_trace_buffer->pid = getpid();
 
-#define ALL_SEVS_ABOVE(sev) ((1 << (TRACE_SEV__MAX + 1))) - (1 << (sev + 1))
+#define ALL_SEVS_ABOVE(sev) (((1 << (TRACE_SEV__MAX + 1))) - (1 << (sev + 1)))
 
     init_records_immutable_data(&current_trace_buffer->u.records._above_info, TRACE_RECORD_BUFFER_RECS, ALL_SEVS_ABOVE(TRACE_SEV_INFO));
-    init_records_immutable_data(&current_trace_buffer->u.records._other, TRACE_RECORD_BUFFER_RECS, ALL_SEVS_ABOVE(TRACE_SEV_DEBUG));
+    init_records_immutable_data(&current_trace_buffer->u.records._other, TRACE_RECORD_BUFFER_RECS, ALL_SEVS_ABOVE(TRACE_SEV_DEBUG) & ~ALL_SEVS_ABOVE(TRACE_SEV_INFO));
     init_records_immutable_data(&current_trace_buffer->u.records._debug, TRACE_RECORD_BUFFER_RECS, (1 << TRACE_SEV_DEBUG));
 	init_records_immutable_data(&current_trace_buffer->u.records._funcs, TRACE_RECORD_BUFFER_FUNCS_RECS, (1 << TRACE_SEV_FUNC_TRACE));
 
