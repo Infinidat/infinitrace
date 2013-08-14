@@ -38,7 +38,7 @@ int trace_get_fd_path(int fd, char *file_path, size_t file_path_buf_size);
  * - child_init: Called from the child process to initialize the child.
  * - cleanup_on_failure: Used to perform clean-up if the child initialization fails. May be called from either the parent or the child, and takes the child's pid as
  *   an argument.
- * Both functions return a negative value on failure, otherwise a result >= 0
+ * Both functions return a negative value on failure, otherwise a result >= 0. On failure, they must set errno != 0.
  *  */
 pid_t trace_fork_with_child_init(
         int (*child_init)(void),

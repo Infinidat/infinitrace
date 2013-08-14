@@ -76,19 +76,14 @@ int trace_get_fd_path(int fd, char *file_path, size_t file_path_buf_size)
     return 0;
 }
 
-
-static int reset_sigchld_to_dfl(struct sigaction *old_sigchld_act)
+static void wait_until_process_exited(pid_t pid, siginfo_t *si)
 {
-    struct sigaction sigchld_act;
-    memset(&sigchld_act, 0, sizeof(sigchld_act));
-    sigchld_act.sa_handler = SIG_DFL;
-    sigchld_act.sa_flags   = SA_RESTART;
-    return sigaction(SIGCHLD, &sigchld_act, old_sigchld_act);
-}
-
-static int restore_sigchld(const struct sigaction *old_sigchld_act)
-{
-    return sigaction(SIGCHLD, old_sigchld_act, NULL);
+    siginfo_t ignored_si;
+    if (NULL == si) {
+        si = &ignored_si;
+    }
+    memset(si, 0, sizeof(*si));
+    TRACE_ASSERT(0 == TEMP_FAILURE_RETRY(waitid(P_PID, pid, si, WEXITED)));
 }
 
 pid_t trace_fork_with_child_init(
@@ -96,80 +91,92 @@ pid_t trace_fork_with_child_init(
         int (*cleanup_on_failure)(pid_t child_pid)
         )
 {
-
     /* In order to guarantee that either success or failure is returned consistently in both the parent and the child we follow this procedure:
+     * - The parent creates a pipe
      * - The parent forks
-     * - The child creates the shared-memory areas. If it fails it exits, using the exit value to communicate errno.
-     * - The child suspends itself using SIGSTOP
-     * - The parent waits until the child has either stopped itself with SIGSTOP or exited.
-     * - The parent resumes the child with SIGCONT, and waits for it to receive SIGCONT.
+     * - The child calls the supplied child_init function.
+     * - The child sends either 0 (if successful) or otherwise the errno value via the pipe. In case of failure it exits.
+     * - If the child failed to send a completion status via the pipe or reported an error, the parent waits for it to exit.
      * */
 
-    /* In case the parent process was playing funny tricks with SIGCHLD, try to disable them temporarily. */
-    struct sigaction old_sigchld_act;
-    if (0 != reset_sigchld_to_dfl(&old_sigchld_act)) {
+    int pipefd[2];
+    if (pipe(pipefd) < 0) {
         return -1;
     }
 
-    pid_t pid = fork();
+    int status = 0;
+    const pid_t pid = fork();
 
-    if (0 == pid) {    /* Child */
-        if (    (child_init() < 0)                       ||
-                (restore_sigchld(&old_sigchld_act) != 0) ||
-                (raise(SIGSTOP) != 0)      ) {
-            TRACE_ASSERT(0 != errno);
-            const int err = trace_capped_errno();
-            cleanup_on_failure(getpid());
-            _exit(err);
+    if (pid < 0) {
+        status = errno;
+    }
+    else if (0 == pid) {    /* Child */
+        if (child_init() < 0) {
+            status = errno;
+            TRACE_ASSERT(0 != status);
         }
 
-        return 0;
+        switch (write(pipefd[1], &status, sizeof(status))) {
+        case sizeof(status):
+            break;
+
+        default:
+            errno = EIO;
+            /* no break - fall through to the regular error case */
+
+        case -1:
+            if (0 == status) {
+                status = errno;
+            }
+            TRACE_ASSERT(0 != status);
+            break;
+        }
+
+        if (0 != status) {
+            cleanup_on_failure(getpid());
+            _exit(MIN(status, 0xFF));
+        }
     }
-    else if (pid > 0) {  /* Parent */
+    else {  /* Parent */
+        TRACE_ASSERT(pid > 0);
+        switch (read(pipefd[0], &status, sizeof(status))) {
+        case sizeof(status):
+            if (0 != status) {
+                wait_until_process_exited(pid, NULL);
+            }
+            break;
 
-        siginfo_t si;
-        memset(&si, 0, sizeof(si));
-
-        /* Make sure that the child has stopped and then deliver SIGCONT to wake it up. */
-        TRACE_ASSERT(0 == TEMP_FAILURE_RETRY(waitid(P_PID, pid, &si, WSTOPPED | WEXITED)));
-        TRACE_ASSERT(pid == si.si_pid);
-        if (CLD_STOPPED != si.si_code) {    /* The child encountered an error and exited */
-            /* If the child exited normally, propagate the code it conveyed via its exit status to errno. Otherwise use generic EIO. */
+        case 0: { /* The child process exited without writing a status to the pipe. */
+            siginfo_t si;
+            wait_until_process_exited(pid, &si);
             if (CLD_EXITED == si.si_code) {
-                errno = (0 != si.si_status) ? si.si_status : EIO;
+                status = (0 != si.si_status) ? si.si_status : EIO;
             }
             else {
                 cleanup_on_failure(pid);  /* The child most likely was killed by a signal, so clean after it. */
-                errno = EIO;
+                status = EIO;
             }
-            pid = -1;
+            TRACE_ASSERT(0 != status);
+            break;
         }
-        else if (pid == si.si_pid) {  /* The child has completed its initialization and stopped, and is waiting for us to sent it SIGCONT */
-            TRACE_ASSERT(SIGSTOP == si.si_status);
-            if (0 == kill(pid, SIGCONT)) {
-                /* Wait for the child to continue, so that if user-code in the parent process waits for it to continue it will not
-                 * return prematurely */
-                memset(&si, 0, sizeof(si));
-                TRACE_ASSERT(0 == TEMP_FAILURE_RETRY(waitid(P_PID, pid, &si, WCONTINUED)));
-                TRACE_ASSERT(CLD_CONTINUED == si.si_code);
-            }
-            else {
-                if (ESRCH == errno) {  /* Process gone */
-                    cleanup_on_failure(pid);
-                }
-                pid = -1;
-            }
-        }
-        else {  /* Someone else has stopped our child, e.g. by using pkill / killall on our process name */
+
+        default: /* Something went badly wrong with the pipe */
             if (0 == kill(pid, SIGKILL)) {
-                TRACE_ASSERT(0 == TEMP_FAILURE_RETRY(waitid(P_PID, pid, &si, WEXITED)));
+                wait_until_process_exited(pid, NULL);
                 cleanup_on_failure(pid);
             }
-            errno = EINTR;
-            pid = -1;
+            status = EIO;
+            break;
         }
     }
 
-    TRACE_ASSERT(0 == restore_sigchld(&old_sigchld_act));
+    close(pipefd[0]);
+    close(pipefd[1]);
+
+    if (0 != status) {
+        errno = status;
+        return -1;
+    }
+
     return pid;
 }
