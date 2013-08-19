@@ -145,6 +145,7 @@ typedef struct trace_parser {
     int nanoseconds_ts;
     bool_t wait_for_input;
     bool_t silent_mode;
+    bool_t show_pid;
     int inotify_fd;
     int inotify_descriptor;
     enum trace_parser_param_name_disp_mode field_disp;

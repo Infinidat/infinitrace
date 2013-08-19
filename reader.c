@@ -48,6 +48,7 @@ struct trace_reader_conf {
     int nanoseconds_ts;
     int empty_timestamp;
     int compact_trace;
+    int show_pid;
     int free_dead_process_metadata;
     // long long from_time;
     int after_count;
@@ -91,6 +92,7 @@ static const char usage[] =
  -F  --no-function       : Avoid displaying function names \n\
  -L  --show-trace-file   : Display faked log messages with trace's file name \n\
  -E  --no-timestamp      : Avoid displaying timestamp, process name/id (mnemonic - EMPty) \n\
+ -I --pid                : Show process-id \n\
  -M  --compact-traces    : Compact trace output \n\
  -P  --nano-timestamp    : Print timestamps as raw nano-seconds-since-Epoch units \n\
  -O  --field-names [a[ll] | e[xplicit] (default) | f[ield] | n[one]]: Parameter name display mode \n\
@@ -146,6 +148,7 @@ static const struct option longopts[] = {
     { "no-timestamp"    , 0, 0, 'E'},
     { "show-trace-file" , 0, 0, 'L'},
     { "no-timestamp"    , 0, 0, 'E'},
+    { "pid"             , 0, 0, 'I'},
     { "compact-trace"   , 0, 0, 'M'},
     { "nano-timestamp"  , 0, 0, 'P'},
     { "field-names"     , optional_argument, 0, 'O'},
@@ -406,6 +409,9 @@ static int parse_command_line(struct trace_reader_conf *conf, int argc, const ch
         case 'E':
             conf->empty_timestamp = 1;
             break;
+        case 'I':
+            conf->show_pid = 1;
+            break;
         case 'M':
             conf->compact_trace = 1;
             break;
@@ -485,6 +491,7 @@ static void set_parser_params(const struct trace_reader_conf *conf, trace_parser
     parser->field_disp         = conf->field_disp;
     parser->show_function_name = ! conf->hide_funtion_name; 
     parser->compact_traces     = conf->compact_trace;
+    parser->show_pid           = conf->show_pid;
     parser->always_hex         = conf->hex;
     parser->after_count        = conf->after_count;
     parser->free_dead_buffer_contexts = conf->free_dead_process_metadata;

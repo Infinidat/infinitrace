@@ -482,6 +482,14 @@ int TRACE_PARSER__format_typed_record(
         SAY_S  (out, "[");
         SAY_COL(out, MAGENTA);
     }
+
+    if (parser->show_pid && !parser->compact_traces) {
+        SAY_COL(out, MAGENTA);
+        SAY_F  (out, "%5d", record->pid);
+        SAY_COL(out, ANSI_RESET);
+        SAY_S  (out, ":");
+    }
+
     SAY_COL(out, BLUE_B);
     SAY_F  (out, "%5d", record->tid);
     SAY_COL(out, ANSI_RESET);
