@@ -1178,7 +1178,7 @@ static bool_t inside_record_dump(const trace_parser_t *parser)
     return FALSE;
 }
 
-static int read_smallest_ts_record(trace_parser_t *parser, struct trace_record *record)
+static const struct trace_record *read_smallest_ts_record(trace_parser_t *parser)
 {
     unsigned int i;
     unsigned long long min_ts = ULLONG_MAX;
@@ -1202,7 +1202,7 @@ static int read_smallest_ts_record(trace_parser_t *parser, struct trace_record *
         }
 
         if (NULL == tmp_rec) {
-            return -1;
+            return NULL;
         }
 
         if (tmp_rec->ts < min_ts) {
@@ -1214,19 +1214,17 @@ static int read_smallest_ts_record(trace_parser_t *parser, struct trace_record *
     
     if (min_ts == ULLONG_MAX) {
         assert(NULL == src_rec);
-        memset(record, 0, sizeof(*record));
-    } else {
+    }
+    else {
         assert(NULL != src_rec);
-        memcpy(record, src_rec, TRACE_RECORD_SIZE);
         parser->buffer_dump_context.record_dump_contexts[index_of_minimal_chunk].current_offset++;
+        if (!inside_record_dump(parser) &&
+            (capped_seek(parser, parser->buffer_dump_context.end_offset, SEEK_SET) == -1)) {
+                return NULL;
+        }
     }
 
-    if (!inside_record_dump(parser) &&
-        (TRACE_PARSER__seek(parser, parser->buffer_dump_context.end_offset, SEEK_SET) == -1)) {
-        	return -1;
-    }
-
-    return 0;
+    return src_rec;
 }
 
 static int restore_parsing_buffer_dump_context(trace_parser_t *parser, const struct buffer_dump_context_s *dump_context)
@@ -1238,29 +1236,38 @@ static int restore_parsing_buffer_dump_context(trace_parser_t *parser, const str
 static int process_next_record_from_file(trace_parser_t *parser, const struct trace_record_matcher_spec_s *filter,
                                          trace_parser_event_handler_t event_handler, void *arg, iter_t* iter)
 {
-    struct trace_record record;
+    if (!iter) {
+        errno = EFAULT;
+        return -1;
+    }
 
+    struct trace_record record;
+    const struct trace_record *p_rec = NULL;
     bool_t complete_typed_record_processed = FALSE;
     int rc = -1;
     
-    while (!iter || iter->keep_going) {
-        if (inside_record_dump(parser)) {
-            rc = read_smallest_ts_record(parser, &record);
-            if (record.ts == 0) {
-                if (-1 == capped_seek(parser, parser->buffer_dump_context.end_offset, SEEK_SET)) {
-                    return -1;
-                }
-                continue;
+    while (iter->keep_going) {
+        p_rec = read_smallest_ts_record(parser);
+        if (NULL == p_rec) {
+            if (inside_record_dump(parser)) {
+                errno = EINVAL;
+                return -1;
             }
-        } else {
+
             rc = read_next_record(parser, &record);
+            if (0 != rc) {
+                break;
+            }
+
+            p_rec = &record;
         }
-        
-        if (0 != rc) {
-            break;
+        else if ((TRACE_REC_TYPE_TYPED != p_rec->rec_type) && ((TRACE_REC_TYPE_UNKNOWN != p_rec->rec_type))) {
+            errno = EINVAL;
+            return -1;
         }
 
-        rc = process_single_record(parser, filter, &record, &complete_typed_record_processed, TRUE, event_handler, arg, iter);
+        assert(NULL != p_rec);
+        rc = process_single_record(parser, filter, p_rec, &complete_typed_record_processed, TRUE, event_handler, arg, iter);
         if (0 != rc) {
             break;
         }
