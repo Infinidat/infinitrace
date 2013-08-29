@@ -231,7 +231,7 @@ struct trace_buffer {
             struct trace_records _other;
             struct trace_records _funcs;
         } records;
-    } u;
+    } u __attribute__((aligned(TRACE_RECORD_SIZE)));
 };
 
 

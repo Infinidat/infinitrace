@@ -37,6 +37,31 @@ static inline unsigned current_read_index(const struct trace_mapped_records *map
     return mapped_records->current_read_record & mapped_records->imutab->max_records_mask;
 }
 
+static long calc_backlog_len(const struct trace_mapped_records *mapped_records)
+{
+    const trace_record_counter_t next_record_to_write = mapped_records->mutab->last_committed_record + 1UL;
+
+    /* Verify the record counters haven't wrapped around. On 64-bit platforms this should never happen. */
+    TRACE_ASSERT(next_record_to_write >= mapped_records->current_read_record);
+
+    const unsigned mask = mapped_records->imutab->max_records_mask;
+    const trace_record_counter_t start_rec = mapped_records->current_read_record;
+    trace_record_counter_t rec_idx;
+    for (rec_idx = next_record_to_write - MIN(next_record_to_write - start_rec, mapped_records->imutab->max_records);
+            rec_idx < next_record_to_write; rec_idx++) {
+        const volatile struct trace_record *const rec = mapped_records->records + (rec_idx & mask);
+        if ((TRACE_SEV_INVALID == rec->severity) && (rec->termination & TRACE_TERMINATION_FIRST)) {
+            /* TODO: Ignore trace gaps that are very old */
+
+            DEBUG("Some records prior to the nominal last committed were unwritten",
+                    start_rec, rec_idx, next_record_to_write, TRACE_NAMED_INT_AS_HEX(mapped_records->imutab->severity_type));
+            break;
+        }
+    }
+
+    return rec_idx - start_rec;
+}
+
 void calculate_delta(
         const struct trace_mapped_records *mapped_records,
         struct records_pending_write *delta)
@@ -47,29 +72,11 @@ void calculate_delta(
 #endif
 
 
-    trace_record_counter_t last_written_record = mapped_records->mutab->last_committed_record;
-    unsigned last_written_idx = last_written_record & mapped_records->imutab->max_records_mask;
-    volatile const struct trace_record *last_record = &mapped_records->records[last_written_idx];
-
-    memset(delta, 0, sizeof(*delta));
-    if(TRACE_SEV_INVALID == last_record->severity) {
-        if (-1UL != last_written_record) {  /* Some traces have been written */
-            syslog(LOG_USER|LOG_ERR,
-                    "Record %lu was uninitialized but marked as committed while dumping from a buffer with for pid %d",
-                    last_written_record, last_record->pid);
-        }
-        delta->remaining_before_loss = mapped_records->imutab->max_records;
-        return;
-    }
-
-    /* Verify the record counters haven't wrapped around. On 64-bit platforms this should never happen. */
-    TRACE_ASSERT(last_written_record + 1UL >= mapped_records->current_read_record);
-    long backlog_len = last_written_record + 1UL - mapped_records->current_read_record;
+    const long backlog_len = calc_backlog_len(mapped_records);
 
     /* Check whether the number of records written to the shared-memory buffers exceeds the number read by the dumper by more than the buffer size.
            * If so - we have lost records. */
-    long overrun_records =
-            (long)(backlog_len - mapped_records->imutab->max_records);
+    const long overrun_records = backlog_len - (long)(mapped_records->imutab->max_records);
 
     delta->lost = MAX(overrun_records, 0L);
     delta->remaining_before_loss = MAX(-overrun_records, 0L);

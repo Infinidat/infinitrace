@@ -309,6 +309,7 @@ struct trace_record {
 	trace_pid_t pid;		/* Process ID */
 	trace_pid_t tid;		/* Thread ID */
     short nesting;			/* Call stack depth for the current thread, used for function traces. */
+	short bit_fields[0];    /* An addressable, zero-length field that marks the location of the bit-fields, allowing their address to be taken. */
 	unsigned termination:2; /* The values of trace_termination_type, possible or-ed */
 	unsigned reserved:6;
 	unsigned severity:4;	/* One of the values of the trace_severity enum */
@@ -329,7 +330,7 @@ struct trace_record {
 		struct trace_record_buffer_dump buffer_chunk;
 		struct trace_record_data_loss data_loss;
 	} __attribute__((packed)) u;
-} __attribute__((packed));
+} __attribute__((packed, aligned(16)));
 
 /* Flags used to indicate the type of trace parameters */
 enum trace_param_desc_flags {

@@ -49,6 +49,13 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 
 #endif
 
+#define TRACE_COMPILE_TIME_VERIFY_IS_NON_ZERO(e) (e + (sizeof(struct { int: -!(e);  })))
+#define TRACE_COMPILE_TIME_VERIFY_IS_ZERO(e)     (e + (sizeof(struct { int: -!!(e); })))
+
+#define TRACE_COMPILE_TIME_ASSERT_IS_NON_ZERO(e) (void) TRACE_COMPILE_TIME_VERIFY_IS_NON_ZERO(e)
+#define TRACE_COMPILE_TIME_ASSERT_IS_ZERO(e)     (void) TRACE_COMPILE_TIME_VERIFY_IS_ZERO(e)
+#define TRACE_COMPILE_TIME_ASSERT_EQ(e1, e2)    TRACE_COMPILE_TIME_ASSERT_IS_ZERO((e1) != (e2))
+
 #define REPORT_ERROR_RETURN(ret_val) ERR(__func__, "() (in", __FILE__, ":", __LINE__,") returned", (ret_val));
 #define REPORT_AND_RETURN(ret_val) if (0 != (ret_val)) { REPORT_ERROR_RETURN(ret_val); } return ret_val;
 #endif  /* __TRACE_MACROS_H__ */

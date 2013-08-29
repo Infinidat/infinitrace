@@ -30,6 +30,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include <string.h>
 #include <libgen.h>
 #include <limits.h>
+#include <emmintrin.h>
 
 #include "trace_macros.h"
 #include "trace_lib.h"
@@ -49,6 +50,11 @@ __thread enum trace_severity trace_thread_severity_threshold = TRACE_SEV_INVALID
 
 
 static __thread pid_t tid_cache = 0;
+
+static inline void __attribute__((unused)) __compile_time_checks__(void)
+{
+    TRACE_COMPILE_TIME_ASSERT_EQ(TRACE_RECORD_SIZE, sizeof(struct trace_record));
+}
 
 /* Runtime support functions for obtaining information from the system */
 static trace_pid_t trace_get_tid(void)
@@ -312,6 +318,31 @@ static void update_last_committed_record(struct trace_records *records, trace_re
 	} while (found_value != expected_value);
 }
 
+/* Copy traces to the buffers using intrinsics that generate write-through memory access, reducing the likelihood cache coherency issues. */
+static void copy_trace_record_wt(struct trace_record *target, const struct trace_record *src)
+{
+
+#define IS_MULTIPLE_OF_16(p) (0 == ((p) % 16))
+
+#if (!IS_MULTIPLE_OF_16(TRACE_RECORD_SIZE))
+#error Trace record size must be a multiple of 16, please fix!
+#endif
+
+#define IS_PTR_MULTIPLE_OF_16(p) IS_MULTIPLE_OF_16((uintptr_t) (p))
+
+    TRACE_ASSERT(IS_PTR_MULTIPLE_OF_16(target) && IS_PTR_MULTIPLE_OF_16(src));
+
+#undef IS_MULTIPLE_OF_16
+#undef IS_PTR_MULTIPLE_OF_16
+
+    TRACE_COMPILE_TIME_ASSERT_EQ(sizeof(__m128i), 16);
+    const __m128i *const s = (const __m128i *) src;
+    __m128i *const       t = (__m128i *) target;
+
+    for (unsigned i = 0; i < TRACE_RECORD_SIZE / 16; i++) {
+        _mm_stream_si128(t + i, s[i]);
+    }
+}
 
 void trace_commit_records(
 		struct trace_record *source_records,
@@ -320,6 +351,7 @@ void trace_commit_records(
 {
 	TRACE_ASSERT(n_records > 0);
 	TRACE_ASSERT(NULL != source_records);
+	TRACE_ASSERT(TRACE_SEV_INVALID != severity);
 
 	const trace_ts_t  ts  = trace_get_nsec();
 	const trace_pid_t pid = trace_get_pid();
@@ -332,26 +364,40 @@ void trace_commit_records(
 	/* TODO: Consider allowing an option for lossless tracing. */
 	const trace_record_counter_t base_index = __sync_fetch_and_add(&records->mutab.current_record, n_records);
 
+
+	source_records->termination = TRACE_TERMINATION_FIRST;
+	source_records->severity    = TRACE_SEV_INVALID;
+	struct trace_record *first_rec_in_buf = NULL;
+
 	size_t i;
 	for (i = 0; i < n_records; i++) {
-		source_records[i].termination = (i > 0) ? 0 : TRACE_TERMINATION_FIRST;
-		if (n_records - 1 == i) {
-			source_records[i].termination |= TRACE_TERMINATION_LAST;
-		}
 		/* TODO: This could be a good place to pre-fetch the next trace record using e.g. __builtin_prefetch */
 		source_records[i].ts = ts;
 		source_records[i].pid = pid;
 		source_records[i].tid = tid;
-		source_records[i].severity = severity;
 		source_records[i].rec_type = TRACE_REC_TYPE_TYPED;
 
 		const trace_record_counter_t record_index = base_index + i;
 		source_records[i].generation = trace_get_generation(record_index, &records->imutab);
 		struct trace_record *target = records->records + (record_index & records->imutab.max_records_mask);
+		if (0 == i) {
+			first_rec_in_buf = target;
+		}
+		else {
+			source_records[i].termination = 0;
+			source_records[i].severity = severity;
+		}
 
-		/* TODO: Consider writing a custom copy function using _mm_stream_si128 or similar. This will avoid needless thrashing of the CPU cache on writes. */
-		memcpy(target, source_records + i, sizeof(*target));
+		if (n_records - 1 == i) {
+			source_records[i].termination |= TRACE_TERMINATION_LAST;
+		}
+
+		copy_trace_record_wt(target, source_records + i);
 	}
+
+	__sync_synchronize();
+	/* TODO: When we have overrun protection, assert that the previous severity value was 0 */
+	first_rec_in_buf->severity = severity;
 
 	trace_free_records_array();
 

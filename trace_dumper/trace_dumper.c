@@ -25,6 +25,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include <limits.h>
 #include <stdlib.h>
 #include <fcntl.h>
+#include <stddef.h>
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
@@ -75,7 +76,17 @@ static trace_record_counter_t adjust_for_overrun(struct trace_mapped_records *ma
 	 * A safer solution is required in the longer term */
 }
 
-
+static void mark_records_as_written(const struct trace_mapped_records *mapped_records)
+{
+    for (trace_record_counter_t i = mapped_records->current_read_record; i < mapped_records->next_flush_record; i++) {
+        /* Set the severity field of each trace record to TRACE_SEV_INVALID, a.k.a 0. We do so in a way that (hopefully) doesn't
+         * pollute the CPU cache using an intrinsic (uses SSE2 on x86-64). In order to accomplish this we have to set the entire
+         * aligned 32-bit word containing the severity field to 0 */
+        struct trace_record *const rec = (struct trace_record *) (mapped_records->records) + (i & mapped_records->imutab->max_records_mask);
+        const uintptr_t bit_fields_aligned_p = (uintptr_t) (rec->bit_fields) - offsetof(struct trace_record, bit_fields) % sizeof(int);
+        write_int_to_ptr_uncached((int *) bit_fields_aligned_p, TRACE_COMPILE_TIME_VERIFY_IS_ZERO(TRACE_SEV_INVALID));
+    }
+}
 
 static void advance_mapped_record_counters(struct trace_dumper_configuration_s *conf)
 {
@@ -86,6 +97,8 @@ static void advance_mapped_record_counters(struct trace_dumper_configuration_s *
 
 	for_each_mapped_records(i, rid, mapped_buffer, mapped_records) {
 		mapped_records->mutab->latest_flushed_ts = mapped_records->next_flush_ts;
+
+        mark_records_as_written(mapped_records);
         mapped_records->current_read_record = mapped_records->next_flush_record;
 		mapped_records->last_flush_offset = mapped_records->next_flush_offset;
 		mapped_records->mutab->next_flush_record = mapped_records->current_read_record;

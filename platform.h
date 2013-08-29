@@ -69,4 +69,12 @@ typedef off_t off64_t;
 #define MAP_ANON MAP_ANONYMOUS
 #endif
 
+/* Since CLANG sometimes has trouble with <emmintrin.h> we try to avoid it in traced code. Instead we call compiler intrinsics directly where we can */
+#ifdef __SSE2__
+#define write_int_to_ptr_uncached(__p, __v) __builtin_ia32_movnti(__p, __v);
+#else
+/* Fallback for platforms we don't support specifically here. This requires <emmintrin.h> to be included */
+#define write_int_to_ptr_uncached(__p, __v) _mm_stream_si32(__p, __v)
+#endif
+
 #endif /* __PLATFORM_H__ */
