@@ -49,8 +49,7 @@ static long calc_backlog_len(const struct trace_mapped_records *mapped_records)
     trace_record_counter_t rec_idx;
     for (rec_idx = next_record_to_write - MIN(next_record_to_write - start_rec, mapped_records->imutab->max_records);
             rec_idx < next_record_to_write; rec_idx++) {
-        const volatile struct trace_record *const rec = mapped_records->records + (rec_idx & mask);
-        if ((TRACE_SEV_INVALID == rec->severity) && (rec->termination & TRACE_TERMINATION_FIRST)) {
+        if (TRACE_SEV_INVALID == mapped_records->records[rec_idx & mask].severity) {
             /* TODO: Ignore trace gaps that are very old */
 
             DEBUG("Some records prior to the nominal last committed were unwritten",

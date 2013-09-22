@@ -86,6 +86,7 @@ static void mark_records_as_written(const struct trace_mapped_records *mapped_re
         const uintptr_t bit_fields_aligned_p = (uintptr_t) (rec->bit_fields) - offsetof(struct trace_record, bit_fields) % sizeof(int);
         write_int_to_ptr_uncached((int *) bit_fields_aligned_p, TRACE_COMPILE_TIME_VERIFY_IS_ZERO(TRACE_SEV_INVALID));
     }
+    __sync_synchronize();
 }
 
 static void advance_mapped_record_counters(struct trace_dumper_configuration_s *conf)
