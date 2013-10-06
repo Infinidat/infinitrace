@@ -247,15 +247,17 @@ unsigned add_warn_records_to_iov(
             (rec->severity >= threshold_severity)) {
                 unsigned iov_idx = record_file->iov_count;
                 volatile const struct trace_record *const starting_rec = rec;
+                iov[iov_idx].iov_base = (void *)starting_rec;
+                unsigned n_recs_before_wraparound = 0;
                 do {
                     /* In case of wrap-around within the record sequence for a single trace, start a new iovec */
                     if (__builtin_expect(rec >= mapped_records->records + mapped_records->imutab->max_records, 0)) {
                         TRACE_ASSERT(rec == mapped_records->records + mapped_records->imutab->max_records);
-                        recs_covered = mapped_records->imutab->max_records - (start_idx + i);
-                        TRACE_ASSERT(recs_covered > 0);
-                        DEBUG("Buffer wrap-around while scanning for notifications", recs_covered, iov_idx, i);
-                        iov[iov_idx].iov_len = sizeof(*rec) * recs_covered;
-                        i+= recs_covered;
+                        TRACE_ASSERT(0 == n_recs_before_wraparound);
+                        n_recs_before_wraparound = mapped_records->imutab->max_records - (start_idx + i);
+                        TRACE_ASSERT((n_recs_before_wraparound > 0) && (n_recs_before_wraparound < mapped_records->imutab->max_records));
+                        DEBUG("Buffer wrap-around while scanning for notifications", start_idx, n_recs_before_wraparound, iov_idx, i);
+                        iov[iov_idx].iov_len = TRACE_RECORD_SIZE * n_recs_before_wraparound;
                         iov_idx++;
                         rec = mapped_records->records;
                         iov[iov_idx].iov_base = (void *)rec;
@@ -288,9 +290,15 @@ unsigned add_warn_records_to_iov(
                 }
 
                 retries_left = num_retries_on_partial_record;
-                iov[iov_idx].iov_base = (void *)starting_rec;
-                iov[iov_idx].iov_len = sizeof(*rec) * recs_covered;
-                record_file->iov_count = iov_idx + 1;
+                TRACE_ASSERT(iov[iov_idx].iov_base);
+                if (recs_covered > n_recs_before_wraparound) {
+                    iov[iov_idx++].iov_len = TRACE_RECORD_SIZE * (recs_covered - n_recs_before_wraparound);
+                }
+                else {
+                    TRACE_ASSERT(recs_covered == n_recs_before_wraparound);
+                }
+                TRACE_ASSERT(iov_idx > record_file->iov_count);
+                record_file->iov_count = iov_idx;
         }
         else {
             recs_covered = 1;
