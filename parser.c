@@ -1236,17 +1236,12 @@ static int restore_parsing_buffer_dump_context(trace_parser_t *parser, const str
 static int process_next_record_from_file(trace_parser_t *parser, const struct trace_record_matcher_spec_s *filter,
                                          trace_parser_event_handler_t event_handler, void *arg, iter_t* iter)
 {
-    if (!iter) {
-        errno = EFAULT;
-        return -1;
-    }
-
     struct trace_record record;
     const struct trace_record *p_rec = NULL;
     bool_t complete_typed_record_processed = FALSE;
     int rc = -1;
     
-    while (iter->keep_going) {
+    while ((NULL == iter) || iter->keep_going) {
         p_rec = read_smallest_ts_record(parser);
         if (NULL == p_rec) {
             if (inside_record_dump(parser)) {
