@@ -141,7 +141,8 @@ pid_t trace_fork_with_child_init(
     }
     else {  /* Parent */
         TRACE_ASSERT(pid > 0);
-        switch (read(pipefd[0], &status, sizeof(status))) {
+        const ssize_t n_bytes_read = read(pipefd[0], &status, sizeof(status));
+        switch (n_bytes_read) {
         case sizeof(status):
             if (0 != status) {
                 wait_until_process_exited(pid, NULL);
@@ -163,11 +164,11 @@ pid_t trace_fork_with_child_init(
         }
 
         default: /* Something went badly wrong with the pipe */
+            status = (n_bytes_read < 0) ? errno : EIO;
             if (0 == kill(pid, SIGKILL)) {
                 wait_until_process_exited(pid, NULL);
                 cleanup_on_failure(pid);
             }
-            status = EIO;
             break;
         }
     }
@@ -257,9 +258,10 @@ static pid_t get_proc_ppid(pid_t pid)
     if ((fscanf(fp, fmt, &reported_pid, name, &state, &ppid) != 4) ||
         (reported_pid != pid)) {
         errno = EPROTO;
-        return -1;
+        ppid = -1;
     }
 
+    fclose(fp);
     return ppid;
 }
 
