@@ -26,6 +26,7 @@
 #include "../trace_clock.h"
 #include "../trace_str_util.h"
 #include "trace_dumper.h"
+#include "mm_writer.h"
 #include "writer.h"
 #include "write_prep.h"
 #include "buffers.h"
@@ -70,11 +71,11 @@ static void handle_overwrite(struct trace_dumper_configuration_s *conf)
 static int prefetch_mmapped_pages(struct trace_dumper_configuration_s *conf)
 {
     int rc = 0;
-    if ((NULL != conf->record_file.mapping_info) && (trace_dumper_prefetch_records_if_necessary(conf->record_file.mapping_info, 0) < 0)) {
+    if (trace_is_record_file_using_mm(&conf->record_file) && (trace_dumper_prefetch_records_if_necessary(conf->record_file.mapping_info, 0) < 0)) {
         rc = -1;
     }
 
-    if ((NULL != conf->notification_file.mapping_info) && (trace_dumper_prefetch_records_if_necessary(conf->notification_file.mapping_info, 0x400) < 0)) {
+    if (trace_is_record_file_using_mm(&conf->notification_file) && (trace_dumper_prefetch_records_if_necessary(conf->notification_file.mapping_info, 0x400) < 0)) {
         rc = -1;
     }
 

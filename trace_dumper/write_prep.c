@@ -29,6 +29,7 @@
 #include "trace_dumper.h"
 #include "buffers.h"
 #include "metadata.h"
+#include "sgio_util.h"
 #include "writer.h"
 #include "write_prep.h"
 

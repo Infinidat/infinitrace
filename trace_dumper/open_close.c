@@ -44,13 +44,16 @@
 #include <unistd.h>
 #include <sys/utsname.h>
 #include <sys/mman.h>
+#include <sys/ioctl.h>
 
 #include "../trace_user.h"
 #include "../file_naming.h"
 #include "filesystem.h"
 #include "open_close.h"
+#include "mm_writer.h"
 #include "writer.h"
 #include "buffers.h"
+#include "events.h"
 
 static int trace_write_header(struct trace_dumper_configuration_s *conf, struct trace_record_file *record_file)
 {
@@ -174,6 +177,15 @@ static int trace_open_file(struct trace_dumper_configuration_s *conf, struct tra
     record_file->fd = TEMP_FAILURE_RETRY(open(filename, mode | O_CREAT | O_TRUNC, 0644));
     if (record_file->fd < 0) {
     	syslog(LOG_ERR|LOG_USER, "Failed to open new trace file %s due to error %s", filename, strerror(errno));
+    	ERR("Failed to open new trace file ", filename, "due to error", strerror(errno));
+        return -1;
+    }
+
+    if (ioctl(record_file->fd, FIOCLEX) < 0) {
+        close(record_file->fd);
+        record_file->fd = -1;
+        syslog(LOG_ERR|LOG_USER, "Failed to set close-on-exec for the trace file %s due to error %s", filename, strerror(errno));
+        ERR("Failed to set close-on-exec for the trace file", filename, "due to error", strerror(errno));
         return -1;
     }
 
@@ -294,12 +306,15 @@ static int close_file(struct trace_record_file *file, bool_t wait_for_flush) {
 	int rc = 0;
 	if (!is_closed(file)) {
 		trace_dumper_update_written_record_count(file);
-		if (NULL != file->mapping_info) {
+		if (trace_is_record_file_using_mm(file)) {
 			rc = trace_dumper_flush_mmapping(file, wait_for_flush);
 		}
 		else {
 			rc = close(file->fd);
 			INFO("Closed the file", file->filename, TRACE_NAMED_PARAM(fd, file->fd), rc);
+
+			trace_event_details_t details = { .filename = file->filename };
+			trace_send_event(TRACE_FILE_CLOSED, &details);
 		}
 
 		if (0 == rc) {

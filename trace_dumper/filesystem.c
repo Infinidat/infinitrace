@@ -18,7 +18,7 @@
 #include "../file_naming.h"
 #include "../trace_str_util.h"
 #include "trace_dumper.h"
-#include "writer.h"
+#include "sgio_util.h"
 #include "filesystem.h"
 
 
