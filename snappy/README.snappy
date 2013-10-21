@@ -5,7 +5,7 @@ https://github.com/andikleen/snappy-c/
 See the file LICENSE for details about the license under which the code is made available.
 
 Some adaptations have been made by Yitzik Casapu of Infinidat to support building on the MacOS/X platform and to accommodate stricter compiler warnings.
-The adapted version of the code is publicly available on https://github.com/yitzikc/snappy-c/
+The adapted version of the code is publicly available on https://github.com/yitzikc/snappy-c/ on the infinidat_adaptation branch.
 
-Specifically, the files in this directory correspond to Git commit 9ce72e2a1cf7830316270958a53f740261a2e7fa in the yitzikc/snappy-c repository.
+Specifically, the files in this directory correspond to Git commit 33d0ae4ad903d7183b415dd85534348ba6f8b94a in the yitzikc/snappy-c repository.
 

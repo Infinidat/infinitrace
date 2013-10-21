@@ -20,7 +20,7 @@ with TracesDisabled(xn_env) as untraced_env:
     lib = untraced_env.XnStaticLibrary(target = 'trace_util', source = srcs, CCFLAGS = optflags)
     untraced_env.Alias('xn', lib)
     
-    srcs = untraced_env.AutoSplit('''snappy/snappy.c''')
+    srcs = untraced_env.AutoSplit('''snappy/snappy_untraced.c''')
     lib = untraced_env.XnStaticLibrary(target = 'snappy', source = srcs, CCFLAGS = optflags, CPPDEFINES = {'NDEBUG': '1'})
     untraced_env.Alias('xn', lib)
 
@@ -44,6 +44,8 @@ cflags = Split("-std=gnu99")
 srcs = xn_env.AutoSplit('''validator.c trace_metadata_util.c''')
 xn_env.BuildStaticLibraries(target = 'trace_bin_fmts', source = srcs, CCFLAGS = safer_optflags, CFLAGS = cflags)
 
+srcs = xn_env.AutoSplit('''snappy/snappy.c''')
+xn_env.BuildStaticLibraries(target = 'snappy_traced', source = srcs, CCFLAGS = optflags, CPPDEFINES = {'NDEBUG': '1'})  # For scatter-gather support add 'SG': '1' to the CPPDEFINES dictionary
 
 srcs = xn_env.AutoSplit('''opt_util.c trace_str_util.c trace_clock.c file_naming.c trace_fatal.c''')
 xn_env.BuildStaticLibraries(target = 'trace_util_traced', source = srcs, CCFLAGS = optflags)
@@ -53,7 +55,7 @@ xn_env.Append(LIBPATH = Dir('.'))
 with TracesDisabled(xn_env) as untraced_env:
     optflags=Split("""$CCFLAGS -Wall -O2""")
     srcs = untraced_env.AutoSplit('''reader.c dummy.cpp''')
-    libs = ["reader", "trace_bin_fmts", "rt", "trace_util", "snappy"]
+    libs = ["reader", "trace_bin_fmts", "rt", "trace_util", "snappy_traced"]
     prog = untraced_env.XnProgram(target = "reader", source = srcs, LIBS = libs, CCFLAGS = optflags, LINKFLAGS="-lz")
     untraced_env.Alias('xn', prog)
 
