@@ -99,6 +99,7 @@ struct trace_mapped_buffer {
 #define TRACE_PREFERRED_MAX_RECORDS_PER_LOGDIR        (TRACE_PREFERRED_FILE_MAX_RECORDS_PER_FILE) * PREFERRED_NUMBER_OF_TRACE_HISTORY_FILES;
 #define TRACE_FILE_MAX_RECORDS_PER_CHUNK       0x10000
 #define TRACE_FILE_IMMEDIATE_FLUSH_THRESHOLD	(TRACE_FILE_MAX_RECORDS_PER_CHUNK / 2)
+#define TRACE_FILE_DESIRED_RECORD_PER_DUMP     (TRACE_FILE_IMMEDIATE_FLUSH_THRESHOLD / 4)
 
 struct trace_output_mmap_info;  /* See writer.h for its full definition */
 struct trace_record_io_timestamps {
@@ -184,8 +185,8 @@ struct trace_dumper_configuration_s {
     bool_t		 log_performance_to_file;
     bool_t	     low_latency_write;
     unsigned     compression_algo;
-    trace_ts_t   buffered_mode_flush_max_interval;
     size_t       internal_buf_size;
+    trace_ts_t   new_dump_max_interval;   /* Maximum time interval between "dump" records (if there is data) */
     trace_ts_t 	 start_time;
     unsigned int no_color_specified;
     unsigned int color;

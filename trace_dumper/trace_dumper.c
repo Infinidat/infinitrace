@@ -244,12 +244,17 @@ rollback_on_err:
     return -1;
 }
 
-static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *conf, unsigned int total_written_records, trace_ts_t cur_ts)
+static bool_t should_write_records_now(const struct trace_dumper_configuration_s *conf, unsigned int total_written_records, trace_ts_t cur_ts, bool_t force_flush)
+{
+    return force_flush || (cur_ts >= conf->prev_flush_ts + conf->new_dump_max_interval) || (total_written_records >= TRACE_FILE_DESIRED_RECORD_PER_DUMP);
+}
+
+static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *conf, unsigned int total_written_records, trace_ts_t cur_ts, bool_t force_flush)
 {
     unsigned int num_iovecs = conf->record_file.iov_count;
     int bytes_written = 0;
 
-    if (num_iovecs > 1) {
+    if ((num_iovecs > 1) && should_write_records_now(conf, total_written_records, cur_ts, force_flush)) {
     	TRACE_ASSERT(num_iovecs >= 3);  /* Should have at least dump and chunk headers and some data */
         conf->last_flush_offset = conf->record_file.records_written;
 		conf->prev_flush_ts = cur_ts;
@@ -259,13 +264,10 @@ static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *co
 
 	    if (conf->compression_algo) {
 	        bytes_written = write_records_to_internal_buffer(conf);
-	        if ((bytes_written < 0) && (ENOMEM == errno)) {
-	            return -1;
-            }
 	    }
 	    else {
-            const struct trace_record *const dump_header = (const struct trace_record *) iov[0].iov_base;
-            assert((dump_header->rec_type != TRACE_REC_TYPE_DUMP_HEADER) || (dump_header->u.dump_header.total_dump_size + 1 == total_written_records));
+            const struct trace_record *const dump_header = trace_record_from_iov(iov);
+            TRACE_ASSERT((dump_header->rec_type != TRACE_REC_TYPE_DUMP_HEADER) || (dump_header->u.dump_header.total_dump_size + 1 == total_written_records));
 
             bytes_written = trace_dumper_write(conf, &conf->record_file, iov, num_iovecs);
             if ((unsigned int)bytes_written != (total_written_records * sizeof(struct trace_record))) {
@@ -308,14 +310,13 @@ static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *co
 	    }
 	}
 
-    if (bytes_written >= 0) {
+    if ((bytes_written >= 0) || ((ENOMEM == errno) && (conf->internal_buf_size > 0))) {
         conf->record_file.iov_count = 0;
         if (bytes_written > 0) {
             advance_mapped_record_counters(conf);
         }
     }
     else {
-        // TODO: Failing to write due to insufficient buffer space is not an error!
         ERR("Not advancing counters due to write error, errno=", errno, strerror(errno));
         return -1;
     }
@@ -425,6 +426,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
     unsigned int num_iovecs = 0;
     int i = 0, rid = 0;
     unsigned int total_written_records = 0;
+    unsigned int total_warn_iovecs = 0;
     int total_unflushed_records = 0;
     long lost_records = 0L;
     trace_record_counter_t min_remaining = TRACE_RECORD_BUFFER_RECS;
@@ -491,6 +493,7 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
             unsigned int num_warn_iovecs = add_warn_records_to_iov(mapped_records, deltas.total, conf->minimal_notification_severity, &conf->notification_file);
 			if (num_warn_iovecs > 0) {
 			    write_notification_records(conf);
+			    total_warn_iovecs += num_warn_iovecs;
 			}
         }
 
@@ -506,9 +509,9 @@ static int trace_flush_buffers(struct trace_dumper_configuration_s *conf)
     conf->record_file.validator_context = NULL;
     conf->record_file.iov_count = num_iovecs;
 
-    if (possibly_write_iovecs_to_disk(conf, total_written_records, cur_ts) < 0) {
+    if (possibly_write_iovecs_to_disk(conf, total_written_records, cur_ts, total_warn_iovecs > 0) < 0) {
         TRACE_ASSERT(0 != errno);
-        if (ENOMEM != errno) {
+        if ((ENOMEM != errno) || (NULL == conf->record_file.internal_buf)) {  /* Any error other than no space in internal buffer */
             WARN("Writing records did not complete successfully. errno=", errno, num_iovecs, total_written_records, cur_ts);
         }
         return -1;

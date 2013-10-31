@@ -69,6 +69,7 @@ static const char usage[] = {
     " -p  --pid [pid]                       Attach the specified process and its descendants                       \n" \
     " -q  --quota-size [bytes/percent]      Specify the total number of bytes that may be taken up by trace files  \n" \
     " -r  --record-write-limit [records]    Specify maximal amount of records that can be written per-second (unlimited if not specified)  \n" \
+    " -F  --flush-interval [ms]             Specify the desired interval for traces writes (50ms if not specified)  \n" \
     " -I  --instrument[option]              Turn on one of the dumper's instrumentation options. Available option values: time_writes \n"     \
     " -E  --execute-on-event[evant=path]    Run the executable at 'path' when 'event' occurs. Supported events:\n"     \
     "                                            file_closed:           An output file, whose name is supplied to the executable as argument, was closed." \
@@ -88,6 +89,7 @@ static const struct option longopts[] = {
     { "notification-level", required_argument, 0, 'L'},
     { "quota-size", required_argument, 0, 'q'},
     { "record-write-limit", required_argument, 0, 'r'},
+    { "flush-interval", required_argument, 0, 'F'},
     { "instrument", required_argument, 0, 'I'},
     { "execute-on-event", required_argument, 0, 'E'},
     { "dump-online-statistics", 0, 0, 'v'},
@@ -111,15 +113,15 @@ static void init_compiled_in_defaults(struct trace_dumper_configuration_s *conf)
     /* TODO: Make the following parameters configurable at runtime. */
     conf->notifications_subdir = "warn";
     conf->log_details = FALSE;
-    conf->buffered_mode_flush_max_interval = TRACE_MS * 50;
 
     /* Compiled-in defaults, can be overridden via the command-line */
-    conf->max_records_pending_write_via_mmap = ULONG_MAX;
+    conf->max_records_pending_write_via_mmap = ULONG_MAX;  /* unlimited */
     conf->max_flush_interval = 1 * TRACE_SECOND;
     conf->preferred_flush_bytes = 0; /* Use page size */
     conf->attach_to_pid = 0;
     conf->compression_algo = 0;     /* disabled */
     conf->internal_buf_size = 2 << 26;
+    conf->new_dump_max_interval = TRACE_MS * 50;
 }
 
 static bool_t param_eq(const char *user_given_name, const char *param_name)
@@ -314,6 +316,17 @@ int parse_commandline(struct trace_dumper_configuration_s *conf, int argc, char 
             break;
         case 'r':
             conf->max_records_per_second = atoi(optarg);
+            break;
+        case 'F': {
+            long long interval_ms = -1LL;
+            if (trace_get_number(optarg, &interval_ms) && (interval_ms >= 0)) {
+                conf->new_dump_max_interval = TRACE_MS * interval_ms;
+            }
+            else {
+                fprintf(stderr, "Bad flush interval specification %s, must be a non-negative number\n", optarg);
+                return -1;
+            }
+            }
             break;
         case 'I':
         	if (param_eq(optarg, "time_writes")) {
