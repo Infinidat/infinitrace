@@ -169,6 +169,16 @@ unmap_shm:
     return MAP_FAILED;
 }
 
+static void init_mapped_records_from_trace_records(struct trace_mapped_records *const mapped_records, struct trace_records *trace_recs)
+{
+    mapped_records->records = trace_recs->records;
+    mapped_records->imutab  = &trace_recs->imutab;
+    mapped_records->mutab   = &trace_recs->mutab;
+    mapped_records->last_flush_offset = 0;
+    mapped_records->current_read_record = mapped_records->mutab->next_flush_record;
+    mapped_records->next_flush_record   = mapped_records->current_read_record;
+}
+
 static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
 {
     int rc = -1;
@@ -260,12 +270,7 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
     trace_array_strcpy(new_mapped_buffer->name, static_log_data_region->name);
     int i;
     for (i = 0; i < new_mapped_buffer->n_record_buffers; i++) {
-        struct trace_mapped_records *const mapped_records = new_mapped_buffer->mapped_records + i;
-        mapped_records->records = dynamic_trace_buffer->u._all_records[i].records;
-        mapped_records->mutab = &dynamic_trace_buffer->u._all_records[i].mutab;
-        mapped_records->imutab = &dynamic_trace_buffer->u._all_records[i].imutab;
-        mapped_records->last_flush_offset = 0;
-        mapped_records->current_read_record = mapped_records->mutab->next_flush_record;
+        init_mapped_records_from_trace_records(new_mapped_buffer->mapped_records + i, dynamic_trace_buffer->u._all_records + i);
     }
 
     INFO("Starting to collect traces from the process", new_mapped_buffer->name, pid, static_log_data_region, static_log_data_region_size, dynamic_trace_buffer, trace_region_size);
@@ -415,16 +420,19 @@ static void check_discarded_buffer(const struct trace_mapped_buffer *mapped_buff
 	memcpy(&mutab, (const void *)(mapped_buffer->mapped_records->mutab), sizeof(mutab));
 	const volatile struct trace_record *last_rec = &mapped_buffer->mapped_records->records[mutab.last_committed_record & mapped_buffer->mapped_records->imutab->max_records_mask];
 
-	bool_t buffer_was_active = (TRACE_RECORD_INVALID_COUNT != mutab.last_committed_record);
-	trace_pid_t pid = mapped_buffer->pid;
-	const char * proc_name = mapped_buffer->name;
+	const bool_t buffer_was_active = (TRACE_RECORD_INVALID_COUNT != mutab.last_committed_record);
+	const trace_pid_t pid = mapped_buffer->pid;
+	const char *const proc_name = mapped_buffer->name;
+	const trace_record_counter_t expected_next_rec = mutab.last_committed_record + 1UL;
 
 	if (mapped_buffer->dead) {
-		TRACE_ASSERT(mutab.last_committed_record + 1UL == mapped_buffer->mapped_records->next_flush_record);
-		TRACE_ASSERT(mutab.last_committed_record + 1UL == mapped_buffer->mapped_records->current_read_record);
-		if (buffer_was_active) {
-			TRACE_ASSERT(mutab.latest_flushed_ts == last_rec->ts);
-		}
+	    if (    (expected_next_rec != mapped_buffer->mapped_records->next_flush_record)   ||
+	            (expected_next_rec != mapped_buffer->mapped_records->current_read_record) ||
+	            (buffer_was_active && (last_rec->ts != mutab.latest_flushed_ts))) {
+	        ERR("Some records appear to have been written after the process", pid, proc_name, "had died",
+	                mapped_buffer->mapped_records->next_flush_record, mapped_buffer->mapped_records->current_read_record,
+	                mutab.latest_flushed_ts, last_rec->ts);
+	    }
 	}
 
 	if (buffer_was_active) {
@@ -434,8 +442,9 @@ static void check_discarded_buffer(const struct trace_mapped_buffer *mapped_buff
 		}
 	}
 
-	trace_record_counter_t uncommitted_records = mutab.current_record - mutab.last_committed_record - 1;
+	trace_record_counter_t uncommitted_records = mutab.current_record - expected_next_rec;
 	if (uncommitted_records > 0) {
+	    WARN("The process", proc_name, pid, "has died leaving", uncommitted_records, "allocated but not committed");
 		syslog(LOG_USER|LOG_WARNING, "The process %s (pid %d) has died leaving %lu records allocated but not committed",
 				proc_name, pid, uncommitted_records);
 	}
@@ -535,9 +544,15 @@ void discard_all_buffers_immediately(struct trace_dumper_configuration_s *conf)
 static void adjust_buffer_for_final_dumping(struct trace_mapped_buffer *mapped_buffer)
 {
 	int i;
-	for (i = 0; i < TRACE_BUFFER_NUM_RECORDS; i++) {
-		volatile struct trace_records_mutable_metadata *mutab =  mapped_buffer->mapped_records[i].mutab;
-		mutab->last_committed_record = mutab->current_record - 1;
+	for (i = 0; i < mapped_buffer->n_record_buffers; i++) {
+		volatile struct trace_records_mutable_metadata *const mutab =  mapped_buffer->mapped_records[i].mutab;
+		const trace_record_counter_t expected_last_committed = mutab->current_record - 1;
+		if (expected_last_committed != mutab->last_committed_record) {
+		    WARN("Some records at the end of the trace for pid", mapped_buffer->pid, mapped_buffer->name,
+		            "may be incomplete at the final flush", expected_last_committed, "!=", mutab->last_committed_record);
+		}
+		TRACE_ASSERT(expected_last_committed + 1 == mutab->current_record); /* Should not change, since process is dead */
+		mutab->last_committed_record = expected_last_committed;
 	}
 }
 
@@ -548,7 +563,7 @@ int unmap_discarded_buffers(struct trace_dumper_configuration_s *conf)
     for_each_mapped_buffer(i, mapped_buffer) {
         if (!trace_process_exists(mapped_buffer->pid)) {
         	adjust_buffer_for_final_dumping(mapped_buffer);
-            mapped_buffer->dead = 1;
+            mapped_buffer->dead = TRUE;
         }
     }
 
