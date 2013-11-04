@@ -957,7 +957,7 @@ static size_t calc_dymanic_buf_size(void)
 
 static int init_shm_dir_from_fd(int shm_fd)
 {
-    char shm_path[PATH_MAX];
+    char shm_path[PATH_MAX] = "";
     if (trace_get_fd_path(shm_fd, shm_path, sizeof(shm_path)) < 0) {
         return -1;
     }
