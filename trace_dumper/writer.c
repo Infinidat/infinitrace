@@ -222,7 +222,9 @@ trace_record_counter_t trace_dumper_get_effective_record_file_pos(const struct t
     /* TODO: This function can be used to eliminate the need for trace_dumper_update_written_record_count.
      * NOTE: In a multithreaded implementation there can be a race condition between the update of the records written by the writer thread and the
      * obtaining of the number of records pending here, causing some records to be counted twice. */
-    return record_file->records_written + internal_buf_num_recs_pending(record_file->internal_buf);
+    return  record_file->records_written +
+            trace_dumper_net_num_records_pending(record_file) +
+            trace_dumper_async_num_recs_pending_active_file(record_file);
 }
 
 bool_t trace_dumper_record_file_state_is_ok(const struct trace_record_file *record_file)
@@ -232,4 +234,119 @@ bool_t trace_dumper_record_file_state_is_ok(const struct trace_record_file *reco
 	}
 
 	return TRUE;
+}
+
+bool_t trace_dumper_record_file_has_pending_async_io(const struct trace_record_file *record_file)
+{
+    return record_file->async_writes[0].aio_fildes >= 0;
+}
+
+size_t trace_dumper_net_num_records_pending(const struct trace_record_file *record_file)
+{
+    const size_t internal_buf_pending = internal_buf_num_recs_pending(record_file->internal_buf);
+    const size_t async_write_pending  = trace_dumper_async_num_recs_pending(record_file);
+    TRACE_ASSERT(internal_buf_pending >= async_write_pending);
+    return internal_buf_pending - async_write_pending;
+}
+
+struct aiocb *trace_dumper_get_vacant_aiocb(struct trace_record_file *record_file, trace_ts_t timeout)
+{
+    if (!trace_dumper_record_file_has_pending_async_io(record_file)) {
+        return record_file->async_writes;
+    }
+
+    const struct aiocb *const cblist[] = { record_file->async_writes };
+    struct timespec ts_timeout;
+    struct timespec *p_timeout = NULL;
+
+    if ((TRACE_FOREVER != timeout)) {
+        p_timeout = &ts_timeout;
+        trace_init_timespec(p_timeout, timeout);
+    }
+
+    const int rc = aio_suspend(cblist, ARRAY_LENGTH(cblist), p_timeout);
+    if (rc < 0) {
+        switch (errno) {
+        case EINTR:
+            DEBUG("Wait for a vacant aiocb has been interrupted by a signal");
+            /* no break - handle same as EAGAIN */
+
+        case EAGAIN:
+            break;
+
+        default:
+            ERR("Unexpected error while waiting for async IO", errno, strerror(errno));
+            break;
+        }
+
+        return NULL;
+    }
+
+    const trace_record_counter_t effective_pos = trace_dumper_get_effective_record_file_pos(record_file);
+    const trace_async_write_completion completion = record_file->async_completion_routine;
+    const bool_t completion_failed = completion && (completion(record_file, record_file->async_writes) < 0);
+    off64_t offset_increment = record_file->async_writes[0].aio_nbytes;
+    if (completion_failed) {
+        TRACE_ASSERT(0 != errno);
+        ERR("Async write completion routine failed with error", errno, strerror(errno));
+        offset_increment = 0;
+    }
+
+    const off64_t new_offset = lseek64(record_file->async_writes[0].aio_fildes, 0, SEEK_END);
+    TRACE_ASSERT(record_file->async_writes[0].aio_offset + offset_increment == new_offset);
+    if (record_file->async_writes[0].aio_fildes == record_file->fd) {
+        TRACE_ASSERT(((size_t) new_offset == record_file->records_written * TRACE_RECORD_SIZE));
+    }
+    else if (close_async_write_fd(record_file) < 0) {
+        record_file->async_writes->aio_nbytes = 0;
+        return NULL;
+    }
+
+    trace_dumper_async_clear_iocb(record_file->async_writes);
+
+    /* Make sure that no records were lost or duplicated in the process */
+    TRACE_ASSERT(trace_dumper_get_effective_record_file_pos(record_file) == effective_pos);
+
+    return completion_failed ? NULL : record_file->async_writes;
+}
+
+int trace_dumper_wait_record_file_async_io_completion(struct trace_record_file *record_file, trace_ts_t timeout)
+{
+    if (record_file->async_writes[0].aio_fildes != record_file->fd) {
+        return 0;       /* Pending I/O is for another file, presumably the one we are about to close */
+    }
+
+    if (NULL == trace_dumper_get_vacant_aiocb(record_file, timeout)) {
+        return -1;
+    }
+
+    return 0;
+}
+
+int trace_dumper_write_async_if_possible(
+        struct trace_dumper_configuration_s *conf __attribute__((unused)), struct trace_record_file *record_file, const struct trace_record *records, size_t n_records)
+{
+    if (is_closed(record_file)) {
+        errno = EBADF;
+        return -1;
+    }
+
+    struct aiocb *const cb = trace_dumper_get_vacant_aiocb(record_file, 0);
+    if (NULL == cb) {
+        return -1;
+    }
+
+    TRACE_ASSERT(-1 == cb->aio_fildes);
+    memset(cb, 0, sizeof(*cb));
+    cb->aio_buf = (volatile void *) records;
+    cb->aio_fildes = record_file->fd;
+    cb->aio_nbytes = TRACE_RECORD_SIZE * n_records;
+    cb->aio_offset = TRACE_RECORD_SIZE * record_file->records_written;
+    return aio_write(cb);
+}
+
+void trace_dumper_async_clear_iocb(struct aiocb *cb)
+{
+    memset(cb, 0, sizeof(*cb));
+    cb->aio_fildes = -1;
 }

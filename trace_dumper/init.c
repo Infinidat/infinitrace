@@ -38,9 +38,11 @@
 #include "../trace_str_util.h"
 #include "../trace_clock.h"
 #include "../trace_fatal.h"
+#include "../array_length.h"
 #include "trace_dumper.h"
 #include "filesystem.h"
 #include "buffers.h"
+#include "writer.h"
 #include "init.h"
 #include "open_close.h"
 #include "internal_buffer.h"
@@ -63,6 +65,7 @@ static const char usage[] = {
     " -c  --compressed[param=value]         Write to files in a compressed format using a memory buffer, optionally specifying a parameter \n" \
     "                                       This option may recur multiple times with different parameters. Recognized parameters: \n" \
     "                                           buffer size:            Buffer size in bytes (will be rounded to pages) \n" \
+    "                                           async_io_wait_ms:       Time to wait when trying to obtain an Ansync IO control block" \
     " -N  --notification-file[filename]     Write notifications (messages with severity > notification level) to a separate file\n" \
     " -L  --notification-level[level]       Specify minimum severity that will be written to the notification file (default: WARN)\n" \
     " -b  --logdir                          Specify the base log directory trace files are written to              \n" \
@@ -122,6 +125,7 @@ static void init_compiled_in_defaults(struct trace_dumper_configuration_s *conf)
     conf->compression_algo = 0;     /* disabled */
     conf->internal_buf_size = 2 << 26;
     conf->new_dump_max_interval = TRACE_MS * 50;
+    conf->async_io_wait = 1 * TRACE_MS;
 }
 
 static bool_t param_eq(const char *user_given_name, const char *param_name)
@@ -191,9 +195,15 @@ static int parse_compressed_mode_param(struct trace_dumper_configuration_s *conf
 
         if (param_eq(name, "max_recs_pending")) {
             if (value > 0)
-                conf->internal_buf_size = value;
+                conf->internal_buf_size = TRACE_RECORD_SIZE * value;
             else
                 goto num_out_of_range;
+        }
+        else if (param_eq(name, "async_io_wait_ms")) {
+            if (value >= 0)
+                conf->async_io_wait = TRACE_MS * value;
+            else
+                conf->async_io_wait = TRACE_FOREVER;
         }
         else {
             fprintf(stderr, "Unknown compressed mode parameter %s\n", name);
@@ -414,11 +424,16 @@ static int init_record_file(struct trace_record_file *record_file, size_t initia
 	record_file->post_write_validator = NULL;
 	record_file->validator_context = NULL;
 	record_file->perf_log_file = NULL;
+	for (unsigned i = 0; i < ARRAY_LENGTH(record_file->async_writes); i++) {
+	    trace_dumper_async_clear_iocb(record_file->async_writes + i);
+	}
+
 	record_file->iov_allocated_len = (initial_iov_len > 0U) ? initial_iov_len : (size_t) sysconf(_SC_IOV_MAX);
 	record_file->iov = calloc(record_file->iov_allocated_len, sizeof(struct iovec));
 	if (NULL == record_file->iov) {
 		return -1;
 	}
+
 	return 0;
 }
 
@@ -449,7 +464,10 @@ int init_dumper(struct trace_dumper_configuration_s *conf)
         return EX_CANTCREAT;
     }
 
-    conf->record_file.fd = -1;
+    if (0 != init_record_file(&conf->record_file, 0)) {
+        return EX_SOFTWARE;
+    }
+
     if (conf->write_notifications_to_file && init_record_file(&conf->notification_file, 0) != 0) {
     	return EX_SOFTWARE;
     }

@@ -318,11 +318,9 @@ static int possibly_write_iovecs_to_disk(struct trace_dumper_configuration_s *co
     }
     else {
         ERR("Not advancing counters due to write error, errno=", errno, strerror(errno));
-        return -1;
     }
 
-    TRACE_ASSERT(0 == conf->record_file.iov_count);
-    return 0;
+    return MIN(bytes_written, 0);
 }
 
 /* Return TRUE if the given mapped records could include records with severity equal or greater than the given severity */
@@ -560,7 +558,8 @@ static int dump_records(struct trace_dumper_configuration_s *conf)
         if (! should_dump_metadata(conf)) {
             rc = trace_flush_buffers(conf);
             if (rc > TRACE_FILE_IMMEDIATE_FLUSH_THRESHOLD) {
-                struct timespec ts = { 0, conf->ts_flush_delta };
+                struct timespec ts;
+                trace_init_timespec(&ts, conf->ts_flush_delta);
                 TRACE_ASSERT(0 == TEMP_FAILURE_RETRY(nanosleep(&ts, &ts)));
                 continue;
             }

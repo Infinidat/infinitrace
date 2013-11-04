@@ -267,35 +267,69 @@ unsigned internal_buf_num_recs_pending(const struct trace_internal_buf *buf)
     return effective_capacity_c(buf) + buf->write_idx.c - buf->read_idx.c;
 }
 
-void internal_buf_create_iov_for_pending_writes(struct trace_internal_buf *buf, struct iovec iov[2], int *iovcnt)
+
+static bool_t index_has_wrapped_around(const struct trace_internal_buf_index *idx)
+{
+    return idx->t < idx->c;
+}
+
+bool_t internal_buf_contiguous_pending_read_as_iov(struct trace_internal_buf *buf, struct iovec *iov)
 {
     const unsigned num_recs_pending = internal_buf_num_recs_pending(buf);
-    if (0 == num_recs_pending) {
-        *iovcnt = 0;
-    }
 
-    iov[0].iov_base = buf->records + buf->read_idx.c;
-    if (buf->read_idx.c + num_recs_pending <= effective_capacity_c(buf)) {
-        *iovcnt = 1;
-        iov[0].iov_len = TRACE_RECORD_SIZE * num_recs_pending;
+    TRACE_ASSERT(buf->read_idx.c < effective_capacity_c(buf));
+    const bool_t all_pending_flushed = (buf->read_idx.c + num_recs_pending <= effective_capacity_c(buf));
+    const unsigned len = all_pending_flushed ? num_recs_pending : effective_capacity_c(buf) - buf->read_idx.c;
+
+    memset(iov, 0, sizeof(*iov));
+
+    if (len > 0) {
+        iov->iov_base = buf->records + buf->read_idx.c;
+        iov->iov_len = TRACE_RECORD_SIZE * len;
+
+        if (INTERNAL_BUF_INVALID_INDEX == buf->write_idx.t) {
+            /* No longer full since we read some records */
+            buf->write_idx.t = buf->read_idx.t;
+        }
+
+        /* TODO: Allow adding pending data multiple times, currently we have to commit first. */
+        buf->read_idx.t = internal_buf_recs_ahead_of_read_c(buf, len);
+        if (index_has_wrapped_around(&buf->read_idx)) {
+            TRACE_ASSERT(0 == buf->read_idx.t);
+            buf->n_slack_recs.t = 0;
+        }
     }
     else {
-        *iovcnt = 2;
-        TRACE_ASSERT(effective_capacity_c(buf) > buf->read_idx.c);
-        iov[0].iov_len = TRACE_RECORD_SIZE * (effective_capacity_c(buf) - buf->read_idx.c);
-        iov[1].iov_base = buf->records;
-        iov[1].iov_len = TRACE_RECORD_SIZE * (num_recs_pending - iov[0].iov_len / TRACE_RECORD_SIZE);
+        TRACE_ASSERT(all_pending_flushed);
     }
 
-    if (INTERNAL_BUF_INVALID_INDEX == buf->write_idx.t) {
-        buf->write_idx.t = buf->read_idx.t;
+    return all_pending_flushed;
+}
+
+void internal_buf_create_iov_for_pending_reads(struct trace_internal_buf *buf, struct iovec iov[2], int *iovcnt)
+{
+
+    *iovcnt = 0;
+    const bool_t complete_flush = internal_buf_contiguous_pending_read_as_iov(buf, iov);
+    if (iov[0].iov_len > 0) {
+        ++ *iovcnt;
     }
-    buf->read_idx.t = internal_buf_recs_ahead_of_read_c(buf, num_recs_pending);
+
+    if (!complete_flush) {
+        const unsigned num_recs_pending = internal_buf_num_recs_pending(buf);
+        TRACE_ASSERT(1 == *iovcnt);
+        iov[1].iov_base = buf->records;
+        iov[1].iov_len = TRACE_RECORD_SIZE * (num_recs_pending - iov[0].iov_len / TRACE_RECORD_SIZE);
+        buf->read_idx.t = internal_buf_recs_ahead_of_read_c(buf, num_recs_pending);
+        ++ *iovcnt;
+    }
+
+    TRACE_ASSERT(*iovcnt <= 2);
 }
 
 #define ROLLBACK_COUNTER(ctr) buf-> ctr .t = buf-> ctr .c
 #define COMMIT_COUNTER(ctr)   buf-> ctr .c = buf-> ctr .t
-#define CTR_WRAPPED_AROUND(ctr) (buf-> ctr ##_idx .t < buf-> ctr ##_idx .c)
+#define CTR_WRAPPED_AROUND(ctr) (index_has_wrapped_around(&buf-> ctr ##_idx))
 
 void internal_buf_commit_write(struct trace_internal_buf *buf)
 {

@@ -18,8 +18,15 @@
    limitations under the License.
  */
 
+#include "../platform.h"
+
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <syslog.h>
 #include <errno.h>
+#include <unistd.h>
 
 #include "../trace_lib.h"
 #include "../trace_user.h"
@@ -34,6 +41,7 @@
 #include "buffers.h"
 #include "open_close.h"
 #include "metadata.h"
+#include "sgio_util.h"
 #include "housekeeping.h"
 
 #define COLOR_BOOL conf->color
@@ -104,7 +112,7 @@ static int reap_empty_dead_buffers(struct trace_dumper_configuration_s *conf)
 
         /* Add-up the total number of unwritten records in the buffer */
         total_deltas[i] += deltas.total;
-        INFO("total deltas", total_deltas[i], rid + 1, i, TRACE_BUFFER_NUM_RECORDS);
+        DEBUG("total deltas", total_deltas[i], rid + 1, i, TRACE_BUFFER_NUM_RECORDS);
 
         /* If after adding up all the records this buffer has nothing left to write discard it. */
         if ((rid + 1 == TRACE_BUFFER_NUM_RECORDS) && (total_deltas[i] == 0)) {
@@ -115,31 +123,74 @@ static int reap_empty_dead_buffers(struct trace_dumper_configuration_s *conf)
     return 0;
 }
 
+static int internal_buf_flush_completion(struct trace_record_file *record_file, struct aiocb *cb)
+{
+    const bool_t same_file = (cb->aio_fildes == record_file->fd);
+    TRACE_ASSERT(((trace_record_counter_t) (cb->aio_offset) == record_file->records_written * TRACE_RECORD_SIZE) || !same_file);
+
+    int err = aio_error(cb);
+    switch (err) {
+    case 0: {
+        const ssize_t bytes_written = aio_return(cb);
+        TRACE_ASSERT(bytes_written >= 0);
+        if ((size_t) bytes_written == cb->aio_nbytes) {
+            internal_buf_commit_read(record_file->internal_buf);
+            record_file->records_written += trace_dumper_async_num_recs_pending_active_file(record_file);
+            return 0;
+        }
+        else {
+            TRACE_ASSERT((size_t) bytes_written < cb->aio_nbytes);
+            WARN("Async write only wrote", bytes_written, "<", cb->aio_nbytes, "to", record_file->filename, record_file->fd, "rolling back");
+            err = ETIMEDOUT;
+        }
+        }
+        break;
+
+    case EINPROGRESS:
+        ERR("Flush completion routine called while AIO is still in progress for", record_file->filename);
+        return -1;
+
+    case ECANCELED:
+        INFO("Async file write canceled fd=", cb->aio_fildes, "record_file:", record_file->fd, record_file->filename, "size=", cb->aio_offset);
+        break;
+
+    case ENOSPC:
+        ERR("Aysnc write has failed due to no space");
+        /* TODO: Implement an anti-flooding mechanism */
+        /* no break - continue as for other error conditions */
+
+    default:
+        TRACE_ASSERT(aio_return(cb) < 0);
+        break;
+    }
+
+    internal_buf_rollback_read(record_file->internal_buf);
+    if (ftruncate64(cb->aio_fildes, cb->aio_offset) < 0) {
+        WARN("Could not truncate the file async_fd=", cb->aio_fildes, "record_file:", record_file->fd, record_file->filename, "to size", cb->aio_offset);
+    }
+    errno = err;
+    return -1;
+}
+
 static int flush_internal_buffer(struct trace_dumper_configuration_s *conf)
 {
     int rc = 0;
     if (conf->record_file.internal_buf) {
-        struct iovec iov[2];
-        int iovcnt = 0;
-        memset(iov, 0, sizeof(iov));
-        internal_buf_create_iov_for_pending_writes(conf->record_file.internal_buf, iov, &iovcnt);
-        const ssize_t expected_len = total_iovec_len(iov, iovcnt);
-        if (expected_len > 0) {
-            const int bytes_written = trace_dumper_write(conf, &conf->record_file, iov, iovcnt);
-            if (bytes_written == expected_len) {
-                internal_buf_commit_read(conf->record_file.internal_buf);
+        if (    (trace_dumper_net_num_records_pending(&conf->record_file) > 0) &&
+                (NULL != trace_dumper_get_vacant_aiocb(&conf->record_file, conf->async_io_wait))) {
+            struct iovec iov;
+            if (!internal_buf_contiguous_pending_read_as_iov(conf->record_file.internal_buf, &iov)) {
+                DEBUG("Wrap around while reading internal buffer");
             }
-            else {
-                if (bytes_written >= 0) {
-                    errno = EIO;
+
+            if (iov.iov_len > 0) {
+                conf->record_file.async_completion_routine = internal_buf_flush_completion;
+                rc = trace_dumper_write_async_if_possible(conf, &conf->record_file, (struct trace_record *)(iov.iov_base), iov.iov_len / TRACE_RECORD_SIZE);
+                if ((rc < 0) && trace_dumper_async_timed_out()) {
+                    rc = EAGAIN;
                 }
-                ERR("Flusing to internal buffer of", expected_len, bytes_written, "failed with error", errno, strerror(errno));
-                internal_buf_rollback_read(conf->record_file.internal_buf);
-                rc = -1;
             }
         }
-
-        TRACE_ASSERT(0 == internal_buf_num_recs_pending(conf->record_file.internal_buf));
     }
 
     return rc;
@@ -152,6 +203,9 @@ static int dump_new_metadata(struct trace_dumper_configuration_s *conf)
     for_each_mapped_buffer(i, mapped_buffer) {
         const int rc = dump_metadata_if_necessary(conf, mapped_buffer);
         if (0 != rc) {
+            if (trace_dumper_async_timed_out()) {
+                return EAGAIN;
+            }
             ERR("Failed to dump new metadata for pid", mapped_buffer->pid, mapped_buffer->name, "due to error", errno, strerror(errno));
             return rc;
         }
@@ -162,20 +216,21 @@ static int dump_new_metadata(struct trace_dumper_configuration_s *conf)
 
 int do_housekeeping_if_necessary(struct trace_dumper_configuration_s *conf)
 {
-    if (flush_internal_buffer(conf) < 0) {
-        return -1;
+    int rc = flush_internal_buffer(conf);
+    if (0 != rc) {
+        return rc;
     }
 
     apply_requested_file_operations(conf, TRACE_REQ_CLOSE_ALL_FILES | TRACE_REQ_DISCARD_ALL_BUFFERS);
 
-    const trace_ts_t HOUSEKEEPING_INTERVAL = 10000000; /* 10ms */
+    const trace_ts_t HOUSEKEEPING_INTERVAL = 10 * TRACE_MS;
     const trace_ts_t now = get_nsec_monotonic();
     if (now < conf->next_housekeeping_ts) {
         return EAGAIN;
     }
     conf->next_housekeeping_ts = now + HOUSEKEEPING_INTERVAL;
 
-    int rc = reap_empty_dead_buffers(conf);
+    rc = reap_empty_dead_buffers(conf);
     if (0 != rc) {
         ERR("reap_empty_dead_buffers returned", rc, TRACE_NAMED_PARAM(errno, errno), strerror(errno));
         syslog(LOG_USER|LOG_ERR, "trace_dumper: Error %s encountered while emptying dead buffers.", strerror(errno));

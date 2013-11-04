@@ -31,6 +31,7 @@ bool_t trace_quota_is_enabled(const struct trace_dumper_configuration_s *conf);
 bool_t is_closed(const struct trace_record_file *file);
 int close_record_file(struct trace_dumper_configuration_s *conf);
 int close_notification_file(struct trace_dumper_configuration_s *conf);
+int close_async_write_fd(struct trace_record_file *file);
 int close_all_files(struct trace_dumper_configuration_s *conf);
 
 bool_t is_perf_logging_file_open(struct trace_record_file *record_file);

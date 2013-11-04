@@ -52,7 +52,11 @@ ssize_t internal_buf_write_compressed(struct trace_internal_buf *buf, const stru
 
 unsigned internal_buf_num_recs_pending(const struct trace_internal_buf *buf);
 
-void internal_buf_create_iov_for_pending_writes(struct trace_internal_buf *buf, struct iovec iov[2], int *iovcnt);
+/* Prepare a single iovec with the next segment of contiguous data pending read from the buffer */
+bool_t internal_buf_contiguous_pending_read_as_iov(struct trace_internal_buf *buf, struct iovec *iov);
+
+/* Prepare an iovec with up to 2 entries with all the data pending read from the buffer */
+void internal_buf_create_iov_for_pending_reads(struct trace_internal_buf *buf, struct iovec iov[2], int *iovcnt);
 
 /* Commit (copy tentative counters to committed) and rollback (copy committed to tentative) reads and writes */
 void internal_buf_commit_write(struct trace_internal_buf *buf);

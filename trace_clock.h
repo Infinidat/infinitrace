@@ -37,9 +37,14 @@ Written by: Yitzik Casapu
 #define TRACE_DAY    (TRACE_HOUR * 24)
 #define TRACE_YEAR   (TRACE_DAY * 365)
 
+#define TRACE_FOREVER ((trace_ts_t) -1)
+
 trace_ts_t trace_get_nsec(void);
 trace_ts_t trace_get_nsec_monotonic(void);
 trace_ts_t trace_get_walltime_ns(void);
 unsigned long long trace_get_walltime_ms(void);
+
+struct timespec;
+void trace_init_timespec(struct timespec *ts, trace_ts_t t);
 
 #endif /* TRACE_CLOCK_H_ */

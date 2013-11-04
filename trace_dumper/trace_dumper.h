@@ -26,6 +26,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include <stdio.h>
 #include <dirent.h>     /* for MANE_MAX */
 #include <sys/uio.h>
+#include <aio.h>
 #include <sys/types.h>
 
 #include "../bool.h"
@@ -110,6 +111,9 @@ struct trace_record_io_timestamps {
 };
 
 struct trace_internal_buf;
+struct trace_record_file;
+
+typedef int (*trace_async_write_completion)(struct trace_record_file *record_file, struct aiocb *cb);
 
 struct trace_record_file {
     trace_record_counter_t records_written;  /* Records actually written to the underlying file */
@@ -121,7 +125,9 @@ struct trace_record_file {
     struct iovec *iov;
     unsigned iov_allocated_len;
     unsigned iov_count;
-    trace_post_write_validator post_write_validator;
+    struct aiocb async_writes[1];
+    trace_async_write_completion async_completion_routine;  /* Routine to be called when Asynchronous disk writes complete */
+    trace_post_write_validator   post_write_validator;      /* Used to validate trace data after it has been copied to the dumper's internal storage. */
     unsigned validator_flags_override;
     void *validator_context;
     int validator_last_result;
@@ -209,10 +215,11 @@ struct trace_dumper_configuration_s {
     trace_ts_t prev_flush_ts;
     trace_ts_t next_flush_ts;
     trace_ts_t ts_flush_delta;  /* Polling interval used by the main thread */
+    trace_ts_t async_io_wait;   /* Timeout when trying to obtain an async IO CB */
     trace_ts_t next_stats_dump_ts;
     trace_ts_t next_housekeeping_ts;
 
-    /* Parameters used to size and time calls to msync() in low-latency mode */
+    /* Parameters used to size and time calls to posix_fadvise() in low-latency mode */
     trace_ts_t max_flush_interval;
     size_t     preferred_flush_bytes;
 

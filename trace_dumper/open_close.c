@@ -302,6 +302,15 @@ bool_t is_closed(const struct trace_record_file *file) {
 	return file->fd < 0;
 }
 
+static void send_close_file_event(const struct trace_record_file *file)
+{
+    trace_event_details_t details = { .filename = file->filename };
+    if (trace_send_event(TRACE_FILE_CLOSED, &details) < 0) {
+        int err = errno;
+        WARN("Failed to send TRACE_FILE_CLOSED event for", details.filename, err, strerror(err));
+    }
+}
+
 static int close_file(struct trace_record_file *file, bool_t wait_for_flush) {
 	int rc = 0;
 	if (!is_closed(file)) {
@@ -309,12 +318,13 @@ static int close_file(struct trace_record_file *file, bool_t wait_for_flush) {
 		if (trace_is_record_file_using_mm(file)) {
 			rc = trace_dumper_flush_mmapping(file, wait_for_flush);
 		}
-		else {
+		else if (!trace_dumper_record_file_has_pending_async_io(file)) {
 			rc = close(file->fd);
 			INFO("Closed the file", file->filename, TRACE_NAMED_PARAM(fd, file->fd), rc);
-
-			trace_event_details_t details = { .filename = file->filename };
-			trace_send_event(TRACE_FILE_CLOSED, &details);
+			send_close_file_event(file);
+		}
+		else {
+		    INFO("The file", file->filename, TRACE_NAMED_PARAM(fd, file->fd), "will be closed when async IO completes.");
 		}
 
 		if (0 == rc) {
@@ -322,7 +332,7 @@ static int close_file(struct trace_record_file *file, bool_t wait_for_flush) {
 		}
 	}
 	else {
-        INFO("Not closing the alreay closed file", file->filename, TRACE_NAMED_PARAM(fd, file->fd));
+        INFO("Not closing the already closed file", file->filename, TRACE_NAMED_PARAM(fd, file->fd));
     }
 
 	if (0 == rc) {
@@ -390,6 +400,20 @@ static int close_timing_file_if_necessary(struct trace_record_file *file)
 		}
 	}
 	return rc;
+}
+
+int close_async_write_fd(struct trace_record_file *file)
+{
+    const int rc = close(file->async_writes[0].aio_fildes);
+    if (rc != 0) {
+        ERR("Failed to close the async output fd", file->async_writes[0].aio_fildes);
+    }
+    else {
+        INFO("Successfully closed the async output fd", file->async_writes[0].aio_fildes);
+        send_close_file_event(file);
+    }
+
+    return rc;
 }
 
 int close_all_files(struct trace_dumper_configuration_s *conf)

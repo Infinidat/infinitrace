@@ -18,6 +18,12 @@
    limitations under the License.
  */
 
+#include "../platform.h"
+
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <syslog.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -29,6 +35,7 @@
 #include "trace_dumper.h"
 #include "writer.h"
 #include "open_close.h"
+#include "internal_buffer.h"
 #include "metadata.h"
 
 static void init_metadata_rec(struct trace_record *rec, const struct trace_mapped_buffer *mapped_buffer)
@@ -78,11 +85,30 @@ static int trace_dump_metadata(struct trace_dumper_configuration_s *conf, struct
         return rc;
     }
 
+    if (trace_dumper_wait_record_file_async_io_completion(record_file, TRACE_FOREVER) < 0) {
+        const size_t n_bytes = record_file->async_writes->aio_nbytes;
+        const off64_t offset = record_file->async_writes->aio_offset;
+        if (trace_dumper_async_timed_out()) {
+            DEBUG("Metadata dumping deferred due to", n_bytes, "previous data pending async write at ",  offset, "for the file", record_file->filename, strerror(errno));
+        }
+        else {
+            ERR("Delayed write of ", n_bytes, "failed at", offset, "with err", errno, strerror(errno));
+        }
+        return -1;
+    }
+
+    if (trace_dumper_net_num_records_pending(record_file) > 0) {
+        DEBUG("Metadata dumping deferred because the internal buffer is not fully flushed for the file", record_file->filename);
+        errno = EAGAIN;
+        return -1;
+    }
+
     mapped_buffer->metadata.metadata_payload_record.ts = trace_get_nsec();
 
     /* TODO: write a validator for metadata. */
     record_file->post_write_validator = NULL;
 
+    /* TODO: Introduce rollback logic, like we have for regular data writes */
     rc = write_metadata_header_start(conf, record_file, mapped_buffer);
     if (0 != rc) {
         return -1;
@@ -109,12 +135,14 @@ static int trace_dump_metadata(struct trace_dumper_configuration_s *conf, struct
 int dump_metadata_if_necessary(struct trace_dumper_configuration_s *conf, struct trace_mapped_buffer *mapped_buffer)
 {
     if (!mapped_buffer->metadata_dumped) {
-        mapped_buffer->last_metadata_offset = conf->record_file.records_written;
+        mapped_buffer->last_metadata_offset = trace_dumper_get_effective_record_file_pos(&conf->record_file);
         int rc = trace_dump_metadata(conf, &conf->record_file, mapped_buffer);
         if (0 != rc) {
-        	syslog(LOG_USER|LOG_ERR, "Failed to dump metadata to the file %s due to error: %s", conf->record_file.filename, strerror(errno));
-            ERR("Error dumping metadata");
-            mapped_buffer->last_metadata_offset = -1;
+            if (!trace_dumper_async_timed_out()) {
+                syslog(LOG_USER|LOG_ERR, "Failed to dump metadata to the file %s due to error: %s", conf->record_file.filename, strerror(errno));
+                ERR("Error dumping metadata");
+                mapped_buffer->last_metadata_offset = -1;
+            }
             return rc;
         }
     }
@@ -122,6 +150,7 @@ int dump_metadata_if_necessary(struct trace_dumper_configuration_s *conf, struct
 
     if (conf->write_notifications_to_file) {
 		if (!mapped_buffer->notification_metadata_dumped) {
+		    TRACE_ASSERT(-1 == conf->notification_file.async_writes->aio_fildes);  /* We haven't enabled async here yet */
 			int rc = trace_dump_metadata(conf, &conf->notification_file, mapped_buffer);
 			if (0 != rc) {
 				syslog(LOG_USER|LOG_ERR, "Failed to dump warnings metadata to the file %s due to error: %s", conf->notification_file.filename, strerror(errno));
@@ -175,10 +204,7 @@ void init_metadata_iovector(struct trace_mapped_metadata *metadata, trace_pid_t 
 
 void free_metadata(struct trace_mapped_metadata *metadata)
 {
-	if (NULL != metadata->metadata_iovec) {
-		free(metadata->metadata_iovec);
-	}
-
+    free(metadata->metadata_iovec);
 	metadata->metadata_iovec = NULL;
 	metadata->metadata_iovec_len = 0;
 }
