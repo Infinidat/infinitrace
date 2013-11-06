@@ -37,10 +37,12 @@ def translate(pp_file, out_pp_file, language, cflags, plugin_args):
     else:
         color_or_not =  ""
 
+    args = [clang_path, "-cc1", "-Wno-attributes", "-Wno-unknown-pragmas", color_or_not , "-fgnu-keywords"]
     if language == 'c++':
-        args = [clang_path, "-cc1", "-Wno-attributes", color_or_not , "-fgnu-keywords", "-std=gnu++11", "-x", "c++", "-fcxx-exceptions", pp_file, "-o", out_pp_file]
+        args += ["-std=gnu++11", "-x", "c++", "-fcxx-exceptions"]
     else:
-        args = [clang_path, "-cc1", "-Wno-attributes", color_or_not , "-fgnu-keywords", "-std=gnu99", pp_file, "-o", out_pp_file]
+        args += ["-fgnu-keywords", "-std=gnu99"]
+    args += [pp_file, "-o", out_pp_file]
 
     args.extend(cflags)
     args.extend(["-load", plugin_path, "-plugin", "trace-instrument"])
