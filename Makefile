@@ -9,6 +9,10 @@ LIBSNAPPY_OBJS=snappy/snappy.o
 DUMPER_OBJS=trace_dumper/trace_dumper.o trace_dumper/filesystem.o trace_dumper/events.o trace_dumper/sgio_util.o trace_dumper/internal_buffer.o trace_dumper/mm_writer.o trace_dumper/writer.o trace_dumper/write_prep.o trace_dumper/buffers.o trace_dumper/init.o trace_dumper/open_close.o trace_dumper/metadata.o trace_dumper/housekeeping.o trace_user_stubs.o
 
 TARGET_PLATFORM=$(shell gcc -v 2>&1|fgrep Target|cut -d':' -d' ' -f2|cut -d'-' -f 2,3)
+CLANG=clang
+REQUIRED_CLANG_VER=3.0
+CLANG_VER=$(shell which $(CLANG) > /dev/null && $(CLANG) --version|head -1|grep -oP '\d\.\d '|cut -d' ' -f1)
+
 EXTRA_LIBS=
 ALL_TARGETS=libtrace dump_file_diags reader 
 # Note that interactive_reader has been removed from the default build
@@ -52,7 +56,7 @@ reader: libparser libtraceutil libsnappy reader.o
 dump_file_diags: libtraceutil tools/dump_file_diags.o trace_defs.h
 	gcc -L. tools/dump_file_diags.o -ltraceutil -o tools/dump_file_diags
 
-ifeq ($(TARGET_PLATFORM),linux-gnu)
+ifeq ($(CLANG_VER),$(REQUIRED_CLANG_VER))
 
 TRACE_INSTROMENTOR_OBJS=trace_instrumentor/trace_instrumentor.o trace_instrumentor/trace_call.o trace_instrumentor/trace_param.o trace_instrumentor/util.o
 
@@ -62,6 +66,18 @@ $(TRACE_INSTROMENTOR_OBJS): LDFLAGS := $(shell llvm-config --libs --ldflags)
 trace_instrumentor: $(TRACE_INSTROMENTOR_OBJS)
 	g++ $(LDFLAGS) -shared $(TRACE_INSTROMENTOR_OBJS) -o trace_instrumentor/trace_instrumentor.so
 	
+else
+ifeq ($(CLANG_VER),)
+
+.PHONY: trace_instrumentor
+trace_instrumentor: ; $(warning No clang found, skipping instrumentor build)
+
+else
+
+.PHONY: trace_instrumentor
+trace_instrumentor: ; $(warning Wrong clang version $(CLANG_VER) found. Version $(REQUIRED_CLANG_VER) is required, skipping instrumentor build)
+
+endif
 endif
 
 clean:
