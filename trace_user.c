@@ -254,12 +254,12 @@ static struct trace_records *trace_get_records(enum trace_severity severity)
 	return current_trace_buffer->u._all_records + rec_idx;
 }
 
-static inline trace_generation_t trace_get_generation(trace_record_counter_t record_num, const struct trace_records_immutable_metadata *imutab)
+static trace_generation_t trace_get_generation(trace_record_counter_t record_num, const struct trace_records_immutable_metadata *imutab)
 {
 	return (trace_generation_t)(record_num >> imutab->max_records_shift);
 }
 
-static inline unsigned bytes_left_in_buf(const struct trace_record *records, unsigned rec_idx, const unsigned char *typed_buf)
+static unsigned bytes_left_in_buf(const struct trace_record *records, unsigned rec_idx, const unsigned char *typed_buf)
 {
 	const unsigned bytes_left = records[rec_idx].u.payload + TRACE_RECORD_PAYLOAD_SIZE - typed_buf;
 	TRACE_ASSERT(bytes_left <= TRACE_RECORD_PAYLOAD_SIZE);  /* Check for typed_buf pointing outside the buffer */
