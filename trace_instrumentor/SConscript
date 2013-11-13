@@ -1,44 +1,19 @@
 Import('xn_env')
 Import('TracesDisabled')
 
-CLANG_LIB_PATH = "/usr/local/lib"
-CLANG_INCLUDE_PATH = "/usr/local/include/clang"
+import subprocess
+def get_llvm_build_flags(queries):
+	p = subprocess.Popen(["llvm-config"] + queries.strip().split(), stdout=subprocess.PIPE)
+	if p.wait() != 0:
+		raise RuntimeError("Failed to query llvm-config for the flags: " + queries)
+	return p.communicate()[0]
 
 with TracesDisabled(xn_env) as untraced_env:
-    srcs = untraced_env.Glob("*cpp")
-    libs = [
-        "clang",
-        "clangFrontend",
-        "clangAST",
-        "clangAnalysis",
-        "clangBasic",
-        "clangCodeGen",
-        "clangDriver",
-        "clangFrontendTool",
-        "clangIndex",
-        "clangLex",
-        "clangParse",
-        "clangRewrite",
-        "clangSema",
-        "clangSerialization",
-        "clangStaticAnalyzerCheckers",
-        "clangStaticAnalyzerCore",
-        "clangStaticAnalyzerFrontend"]
+    srcs = untraced_env.Glob("*.cpp")
+    ldflags = Split(get_llvm_build_flags("--libs --ldflags"))
     
-    lib = untraced_env.SharedLibrary(target = 'trace_instrumentor_untraced', source = srcs, LIBS=libs, LIBPATH=CLANG_LIB_PATH)
-    untraced_env['CCFLAGS'] = Split('''-D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -D_GNU_SOURCE -DHAVE_CLANG_CONFIG_H
-    -fPIC
-	-fno-common
-	-Woverloaded-virtual
-	-Wcast-qual
-	-fno-strict-aliasing
-	-Wall
-	-W
-	-Wno-unused-parameter
-	-Wwrite-strings
-	-fno-exceptions
-	-fno-rtti
-	-g''')
+    lib = untraced_env.SharedLibrary(target = 'trace_instrumentor_untraced', source = srcs, LDFLAGS=ldflags)
+    untraced_env['CCFLAGS'] = Split(get_llvm_build_flags("--cxxflags")) + Split('-Wall -g')
 
     untraced_env.Alias('xn', lib)
     untraced_env.Alias('trace_instrumentor', lib)
