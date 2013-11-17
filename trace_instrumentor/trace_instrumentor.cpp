@@ -303,7 +303,7 @@ void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
     stmtiterator.functionName = D->getNameAsString();
 
     bool has_returns = false;
-    Stmt *stmt = D->getBody();
+    Stmt *const stmt = D->getBody();
     SourceLocation function_start = getFunctionBodyStart(stmt);
     TraceParam trace_param(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
     TraceParam function_name_param(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
@@ -326,9 +326,10 @@ void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
 			goto exit;
 		}
 
-		// Avoid instrumenting methods that are part of template classes.
+		// Avoid function traces for methods that are part of template classes.
+		// TODO: Enable function traces when the arguments and return type are not templates.
 		if (class_decl->isDependentType()) {
-			return;
+		    goto exit;
 		}
     }
     
@@ -354,7 +355,7 @@ void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
         trace_call.setKind("TRACE_LOG_DESCRIPTOR_KIND_FUNC_LEAVE");
         trace_call.initSourceLocation(&endLocation);
         trace_call.addTraceParam(function_name_param);
-        Rewrite->ReplaceText(endLocation, 1, "{if (current_trace_buffer != 0) {trace_decrement_nesting_level(); " + trace_call.getExpansion() + "}}}");
+        Rewrite->ReplaceText(endLocation, 1, "{if (trace_is_initialized()) {trace_decrement_nesting_level(); " + trace_call.getExpansion() + "}}}");
     }
     
     for (FunctionDecl::param_const_iterator I = D->param_begin(),
@@ -375,9 +376,9 @@ void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
     }
 
 
-    Rewrite->InsertText(function_start, "if (current_trace_buffer != 0){" + trace_call.getExpansion() + "trace_increment_nesting_level();}", true);
+    Rewrite->InsertText(function_start, "if (trace_is_initialized()){" + trace_call.getExpansion() + "trace_increment_nesting_level();}", true);
 exit:
-    stmtiterator.Visit(D->getBody());
+    stmtiterator.Visit(stmt);
     stmtiterator.functionName = "";
     stmtiterator.enclosingClassDescriptorName = "";
 }
