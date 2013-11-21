@@ -10,14 +10,16 @@ with TracesDisabled(xn_env) as untraced_env:
     optflags_so = optflags + Split("-fPIC")   # Compiler flags for object files that could go into a shared-object library. 
     lib = untraced_env.SConscript("trace_instrumentor/SConscript")
 
-    objs = [Object(target = 'untraced_' + S + '.o', source = S + '.c', CCFLAGS = optflags_so) for S in 'file_naming_untraced', 'trace_clock_untraced']
-
-    srcs = untraced_env.AutoSplit('''trace_user.c trace_metadata_util_untraced.c  halt.c trace_proc_util.c untraced_trace_clock_untraced.o untraced_file_naming_untraced.o''')
+    srcs = untraced_env.AutoSplit('''trace_user_per_module.c''')
     lib = untraced_env.XnStaticLibrary(target = 'traces', source = srcs, CCFLAGS = optflags)
     untraced_env.Alias('xn', lib)
+    
+    srcs = untraced_env.AutoSplit('''trace_user_per_process.c trace_shm_util_untraced.c trace_proc_util.c halt.c file_naming_untraced.c trace_clock_untraced.c''')
+    lib = untraced_env.SharedLibrary(target = 'trace_per_process', source = srcs, CCFLAGS = optflags, LIBS = ['rt'])
+    untraced_env.Alias('xn', lib)
 
-    srcs = untraced_env.AutoSplit('''opt_util_untraced.c trace_str_util_untraced.c trace_mmap_util_untraced.c untraced_file_naming_untraced.o untraced_trace_clock_untraced.o''')
-    lib = untraced_env.XnStaticLibrary(target = 'trace_util', source = srcs, CCFLAGS = optflags)
+    srcs = untraced_env.AutoSplit('''opt_util_untraced.c trace_str_util_untraced.c trace_mmap_util_untraced.c file_naming_untraced.c trace_clock_untraced.c''')
+    lib = untraced_env.XnStaticLibrary(target = 'trace_util', source = srcs, CCFLAGS = optflags_so)
     untraced_env.Alias('xn', lib)
     
     srcs = untraced_env.AutoSplit('''snappy/snappy_untraced.c''')

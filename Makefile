@@ -2,8 +2,9 @@ CPPFLAGS=-I. -c -Wall -g -fPIC
 CFLAGS=-std=gnu99
 CXXFLAGS=-fno-rtti
 LIBTRACE_OBJS=trace_metadata_util.o halt.o 
-LIBPARSER_OBJS=timeformat.o parser.o renderer.o filter.o parser_mmap.o hashmap.o trace_metadata_util.o hashmap.o validator.o
-LIBTRACEUSER_OBJS=trace_metadata_util.o trace_user.o halt.o trace_clock.o
+LIBPARSER_OBJS=timeformat.o parser.o renderer.o filter.o parser_mmap.o hashmap.o trace_shm_util.o trace_metadata_util.o hashmap.o validator.o
+LIBTRACEUSER_PER_PROCESS_OBJS=trace_user_per_process.o halt.o trace_clock.o
+LIBTRACEUSER_PER_MODULE_OBJS=trace_user_per_module.o
 LIBTRACEUTIL_OBJS=opt_util.o trace_str_util.o file_naming.o trace_clock.o trace_mmap_util.o
 LIBSNAPPY_OBJS=snappy/snappy.o
 DUMPER_OBJS=trace_dumper/trace_dumper.o trace_dumper/filesystem.o trace_dumper/events.o trace_dumper/sgio_util.o trace_dumper/internal_buffer.o trace_dumper/mm_writer.o trace_dumper/writer.o trace_dumper/write_prep.o trace_dumper/buffers.o trace_dumper/init.o trace_dumper/open_close.o trace_dumper/metadata.o trace_dumper/housekeeping.o trace_user_stubs.o
@@ -19,7 +20,7 @@ ALL_TARGETS=libtrace dump_file_diags reader
  
 ifeq ($(TARGET_PLATFORM),linux-gnu)
        EXTRA_LIBS+=-lrt
-       ALL_TARGETS+=libtraceuser trace_dumper trace_instrumentor libtrace_so
+       ALL_TARGETS+=libtraceuser_per_process libtraceuser_per_module trace_dumper trace_instrumentor libtrace_so
        LIBTRACEUTIL_OBJS+=trace_proc_util.o
 endif
 
@@ -38,8 +39,11 @@ libtrace: $(LIBTRACE_OBJS) libtraceutil
 libtrace_so: libtrace
 	gcc -shared -g $(LIBTRACE_OBJS) -L. -ltraceutil -o traces.so
 
-libtraceuser: $(LIBTRACEUSER_OBJS)
-	ar rcs libtraceuser.a $(LIBTRACEUSER_OBJS)
+libtraceuser_per_process: $(LIBTRACEUSER_PER_PROCESS_OBJS)
+	gcc -shared -g $(LIBTRACEUSER_PER_PROCESS_OBJS) -L. -o libtraceuser_per_process.so
+
+libtraceuser_per_module: $(LIBTRACEUSER_PER_MODULE_OBJS)
+	ar rcs libtraceuser_per_module.a $(LIBTRACEUSER_PER_MODULE_OBJS)
 	
 libtraceutil: $(LIBTRACEUTIL_OBJS)
 	ar rcs libtraceutil.a  $(LIBTRACEUTIL_OBJS)

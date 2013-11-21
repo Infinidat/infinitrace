@@ -40,6 +40,7 @@
 #include "../file_naming.h"
 #include "../trace_proc_util.h"
 #include "../trace_mmap_util.h"
+#include "../trace_shm_util.h"
 #include "trace_dumper.h"
 #include "metadata.h"
 #include "open_close.h"

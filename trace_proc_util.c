@@ -63,7 +63,7 @@ int trace_get_fd_path(int fd, char *file_path, size_t file_path_buf_size)
     char fd_proc_path[40];
     sprintf(fd_proc_path, "/proc/self/fd/%d", fd);
 
-    const ssize_t path_len = readlink(file_path, file_path, file_path_buf_size);
+    const ssize_t path_len = readlink(fd_proc_path, file_path, file_path_buf_size);
     if (path_len < 0) {
         return -1;
     }

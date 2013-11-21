@@ -18,6 +18,7 @@ import sys
 import os
 import subprocess
 import re
+import functools
 
 def spawn(args):
     return os.spawnvp(os.P_WAIT, args[0], args)
@@ -66,6 +67,16 @@ def get_type_information_section_script(args, linked_objects):
         linker_script_addition.extend(additions)
 
     return linker_script_addition
+
+def xlinkerize(args, linker_direct = False):
+    "Add -Xliner before each argument in the supplied argument list unless linker_direct is True"
+    if linker_direct:
+        return args
+    
+    nargs = len(args)
+    pairs = zip(("-Xlinker",) * nargs, args)
+    return list(functools.reduce(lambda a, b: a + b, pairs))
+    
                      
 def main(args):
 
@@ -78,10 +89,7 @@ def main(args):
         return ret
 
     # Get ld script
-    if linker_direct:
-        vargs = args + ["--verbose"]
-    else:
-        vargs = args + ["-Xlinker", "--verbose"]
+    vargs = args + xlinkerize(["--verbose"], linker_direct)
 
     s = subprocess.Popen(vargs, stdout=subprocess.PIPE, stderr=open("/dev/null"))
     output = s.stdout.read()
@@ -137,17 +145,16 @@ def main(args):
         f.write(line + '\n')
     f.close()
 
-    if linker_direct:
-        xargs.append('--allow-multiple-definition')
-        xargs.append('-T')
-        xargs.append(script_file)
-    else:
-        xargs.append('-Xlinker')
-        xargs.append('--allow-multiple-definition')
-        xargs.append('-Xlinker')
-        xargs.append('-T')
-        xargs.append('-Xlinker')
-        xargs.append(script_file)
+    extra_args = [
+        '--allow-multiple-definition',
+        '-u',
+        'TRACE__implicit_init',
+        '-T',
+        script_file
+        ] 
+    
+    xargs.extend(xlinkerize(extra_args, linker_direct))
+
     try:
         ret = spawn(xargs)
         return ret

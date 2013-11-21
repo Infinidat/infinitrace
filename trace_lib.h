@@ -80,6 +80,10 @@ extern struct trace_type_definition *__type_information_start;
 struct trace_init_params;   /* Will be defined in the future */
 int trace_init(const struct trace_init_params *conf);
 
+/* Map the shared-memory cyclic buffers used to store traces
+ * NOTE: Internal API */
+int trace_dynamic_log_buffers_map(void);
+
 /* Free all the objects associated with the trace subsystem. */
 int trace_finalize(void);
 
@@ -157,6 +161,7 @@ enum trace_severity trace_runtime_control_set_default_min_sev(enum trace_severit
 int trace_runtime_control_set_subsystem_range(int low, int high);
 
 int trace_runtime_control_set_sev_threshold_for_subsystem(int subsystem_id, enum trace_severity sev);
+void trace_runtime_control_free_thresholds(void);
 static inline enum trace_severity trace_runtime_control_get_sev_threshold_for_subsystem(int subsystem_id)
 {
 	return (NULL == p_trace_runtime_control->subsystem_thresholds) ? TRACE_SEV_INVALID :

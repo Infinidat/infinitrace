@@ -17,11 +17,13 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 
 #include <stdio.h>
 #include <unistd.h>
+#include <errno.h>
 #include <assert.h>
 #include <sys/mman.h>
 #include "trace_defs.h"
 #include "trace_lib.h"
 #include "file_naming.h"
+#include "array_length.h"
 #include "trace_metadata_util.h"
 
 
@@ -106,21 +108,4 @@ void relocate_metadata_for_fmt_version(
     }
 }
 
-
-/* Functions for manipulating the shared-memory objects. */
-
-int delete_shm_files(pid_t pid)
-{
-    char dynamic_trace_filename[0x100];
-    char static_log_data_filename[0x100];
-
-    int rc;
-    snprintf(dynamic_trace_filename, sizeof(dynamic_trace_filename), TRACE_DYNAMIC_DATA_REGION_NAME_FMT, (int)pid);
-    snprintf(static_log_data_filename, sizeof(static_log_data_filename), TRACE_STATIC_DATA_REGION_NAME_FMT, (int)pid);
-
-    rc = shm_unlink(dynamic_trace_filename);
-    rc |= shm_unlink(static_log_data_filename);
-
-    return rc;
-}
 
