@@ -64,3 +64,5 @@ with TracesDisabled(xn_env) as untraced_env:
     
 xn_env.SConscript("trace_dumper/SConscript")
 xn_env.SConscript("tools/SConscript")
+xn_env.SConscript("demo/so/SConscript")
+

@@ -1,0 +1,22 @@
+Import('xn_env')
+Import('TracesDisabled')
+
+srcs = xn_env.AutoSplit('''so_lib.c''')
+xn_env.XnSharedLibrary(target = 'so_demo', source = srcs)
+
+with TracesDisabled(xn_env) as untraced_env:
+	build_dir = "build/common/traces/demo/so"
+	
+	srcs = xn_env.AutoSplit('''so_implicit_caller.c''')
+	# Use linkflags to add the library since otherwise Scons would manipulate its name adding _untraced
+
+	linkflags = Split("$LINKFLAGS -L" + build_dir + " -lso_demo_traced -Wl,-rpath=" + build_dir)
+	prog = untraced_env.XnProgram(target = "so_implicit_caller", source = srcs, LINKFLAGS = linkflags)
+
+	srcs = xn_env.AutoSplit('''so_explicit_caller.c''')
+	# Use linkflags to add the library since otherwise Scons would manipulate its name adding _untraced
+
+	linkflags = Split("$LINKFLAGS -Wl,-rpath=" + build_dir)
+	libs = Split('dl')
+	prog = untraced_env.XnProgram(target = "so_explicit_caller", source = srcs, LIBS = libs, LINKFLAGS = linkflags)
+
