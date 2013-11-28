@@ -303,6 +303,15 @@ struct trace_record_data_loss {
 	unsigned long long ts_end;
 };
 
+enum trace_record_bit_field_lengths {
+    TRACE_RECORD_TERMINATION_N_BITS = 2,
+    TRACE_RECORD_SEVERITY_N_BITS    = 4,
+    TRACE_RECORD_REC_TYPE_N_BITS    = 4,
+    TRACE_RECORD_MODULE_ID_N_BITS   = 0,
+    TRACE_RECORD_TOTAL_ALLOCATED_BITS =
+            TRACE_RECORD_TERMINATION_N_BITS + TRACE_RECORD_SEVERITY_N_BITS + TRACE_RECORD_REC_TYPE_N_BITS + TRACE_RECORD_MODULE_ID_N_BITS,
+};
+
 struct trace_record {
 	/* 20 bytes header */
 	trace_ts_t  ts;
@@ -310,10 +319,10 @@ struct trace_record {
 	trace_pid_t tid;		/* Thread ID */
     short nesting;			/* Call stack depth for the current thread, used for function traces. */
 	short bit_fields[0];    /* An addressable, zero-length field that marks the location of the bit-fields, allowing their address to be taken. */
-	unsigned termination:2; /* The values of trace_termination_type, possible or-ed */
-	unsigned reserved:6;
-	unsigned severity:4;	/* One of the values of the trace_severity enum */
-	unsigned rec_type:4;	/* One of the values of the trace_rec_type enum */
+	unsigned termination: TRACE_RECORD_TERMINATION_N_BITS; /* The values of trace_termination_type, possibly or-ed */
+	unsigned reserved:    16 - TRACE_RECORD_TOTAL_ALLOCATED_BITS;
+	unsigned severity:    TRACE_RECORD_SEVERITY_N_BITS;	/* One of the values of the trace_severity enum */
+	unsigned rec_type:    TRACE_RECORD_REC_TYPE_N_BITS;	/* One of the values of the trace_rec_type enum */
 
 	/* A counter that is incremented every-time the writing of records from the traced process wraps around to the beginning
 	 * of the buffer */

@@ -320,7 +320,7 @@ void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
 			assert(! _type_name.empty()) ;
 			std::string descriptor_name = TraceCallNameGenerator::generateTypeName(_type_name);
             std::string logid_def =
-                    "const int __trace_repr_logid = &" + descriptor_name + " - __static_log_information_start; ";
+                    "const trace_log_id_t __trace_repr_logid = trace_get_descriptor_id(&" + descriptor_name + "); ";
             Rewrite->InsertText(function_start, logid_def, true);
             stmtiterator.enclosingClassDescriptorName = descriptor_name;
 			goto exit;

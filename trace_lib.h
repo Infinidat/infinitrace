@@ -34,6 +34,8 @@ extern "C" {
 #undef __repr__
 #endif
 
+#define TRACE_PER_MODULE_SYMBOL __attribute__ ((visibility ("hidden")))
+
 /* Modify __repr__ method declarations and definitions to use the argument list required by the trace runtime. */
 #define __repr__ TRACE_REPR_INTERNAL_METHOD_NAME ( \
 		unsigned char*& __typed_buf         __attribute__((unused)), \
@@ -65,30 +67,22 @@ extern "C" {
     };                                                                                      \
     __ ## cls ## _repr_statically_bound_proxy__ __repr_statically_bound_proxy__() const { return __ ## cls ## _repr_statically_bound_proxy__(this); }
 
-
+/* Pointer to the dymanic trace buffer */
 extern struct trace_buffer *current_trace_buffer;
-
-/* Identifiers that are created by the linker script (see ldwrap.py) and mark the beginning and end of data-structure arrays inserted
- * by the instrumentation mechanism */
-extern struct trace_log_descriptor __static_log_information_start[];
-extern struct trace_log_descriptor __static_log_information_end[];
-extern struct trace_type_definition *__type_information_start;
-
 
 /* Support for explicit initialization of the trace subsystem, as a future alternative to the present implicit initialization */
 
 struct trace_init_params;   /* Will be defined in the future */
-int trace_init(const struct trace_init_params *conf);
-
-/* Map the shared-memory cyclic buffers used to store traces
- * NOTE: Internal API */
-int trace_dynamic_log_buffers_map(void);
+int trace_init(const struct trace_init_params *conf)    TRACE_PER_MODULE_SYMBOL;
 
 /* Free all the objects associated with the trace subsystem. */
 int trace_finalize(void);
 
 /* Check whether the trace subsystem is initialized in the current process. Return TRUE if it is, FALSE otherwise */
 static inline int trace_is_initialized(void) { return 0 != current_trace_buffer; }
+
+/* Get the log id corresponding to a descriptor */
+trace_log_id_t trace_get_descriptor_id(const struct trace_log_descriptor *descriptor);
 
 /* Wrapper for the fork() system call which creates trace shared-memory objects for the newly forked process efficiently */
 pid_t trace_fork(void);
@@ -161,7 +155,6 @@ enum trace_severity trace_runtime_control_set_default_min_sev(enum trace_severit
 int trace_runtime_control_set_subsystem_range(int low, int high);
 
 int trace_runtime_control_set_sev_threshold_for_subsystem(int subsystem_id, enum trace_severity sev);
-void trace_runtime_control_free_thresholds(void);
 static inline enum trace_severity trace_runtime_control_get_sev_threshold_for_subsystem(int subsystem_id)
 {
 	return (NULL == p_trace_runtime_control->subsystem_thresholds) ? TRACE_SEV_INVALID :

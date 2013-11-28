@@ -3,7 +3,7 @@ CFLAGS=-std=gnu99
 CXXFLAGS=-fno-rtti
 LIBTRACE_OBJS=trace_metadata_util.o halt.o 
 LIBPARSER_OBJS=timeformat.o parser.o renderer.o filter.o parser_mmap.o hashmap.o trace_shm_util.o trace_metadata_util.o hashmap.o validator.o
-LIBTRACEUSER_PER_PROCESS_OBJS=trace_user_per_process.o halt.o trace_clock.o
+LIBTRACEUSER_PER_PROCESS_OBJS=trace_user_per_process.o trace_user_shm_setup.o halt.o trace_clock.o
 LIBTRACEUSER_PER_MODULE_OBJS=trace_user_per_module.o
 LIBTRACEUTIL_OBJS=opt_util.o trace_str_util.o file_naming.o trace_clock.o trace_mmap_util.o
 LIBSNAPPY_OBJS=snappy/snappy.o

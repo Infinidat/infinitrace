@@ -24,8 +24,6 @@
 
 #include <errno.h>
 #include <sys/types.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -39,7 +37,7 @@
 
 
 #include "trace_macros.h"
-#include "trace_lib.h"
+#include "trace_lib_internal.h"
 #include "trace_user.h"
 #include "min_max.h"
 #include "trace_metadata_util.h"
@@ -56,6 +54,7 @@
 /* Global per process/thread data structures */
 struct trace_buffer *current_trace_buffer = NULL;
 __thread unsigned short trace_current_nesting;
+static trace_module_id_t num_modules = 0;
 
 
 __thread struct trace_thresholds trace_thread_thresholds = {
@@ -73,6 +72,13 @@ static inline void __attribute__((unused)) __compile_time_checks__(void)
     TRACE_COMPILE_TIME_ASSERT_EQ(TRACE_RUNTIME_USE_GLOBAL_DEFAULT, TRACE_SEV_INVALID);
     TRACE_COMPILE_TIME_ASSERT_IS_NON_ZERO(TRACE_SEV_INVALID < TRACE_SEV__MIN);
     TRACE_COMPILE_TIME_ASSERT_IS_NON_ZERO(TRACE_SEV__COUNT  > TRACE_SEV__MAX);
+}
+
+trace_module_id_t trace_module_id_alloc(void)
+{
+    const trace_module_id_t  mod_id = __sync_fetch_and_add(&num_modules, 1);
+    TRACE_ASSERT(mod_id <= TRACE_MODULE_ID_MAX);
+    return mod_id;
 }
 
 /* Runtime support functions for obtaining information from the system */
@@ -198,11 +204,6 @@ void trace_internal_err_record_if_necessary(int saved_errno, const struct trace_
 }
 
 /* Runtime support functions called when writing traces to shared-memory */
-
-static inline void set_current_trace_buffer_ptr(struct trace_buffer *trace_buffer_ptr)
-{
-    current_trace_buffer = trace_buffer_ptr;
-}
 
 int trace_runtime_control_configure_buffer_allocation(unsigned initial_records_per_trace, unsigned records_array_increase_factor)
 {
@@ -582,165 +583,15 @@ void trace_free_records_array()
     }
 }
 
-
-static unsigned get_nearest_power_of_2(unsigned long n)
-{
-    /* TODO: Consider using the intrinsic __builtin_clz here. */
-    unsigned p;
-    for (p = 0; n > 1; n >>=1, p++)
-        ;
-
-    return p;
-}
-
-static void init_records_immutable_data(struct trace_records *records, unsigned long num_records, int severity_type)
-{
-    records->imutab.max_records_shift = get_nearest_power_of_2(num_records);
-
-    records->imutab.max_records = 1U << records->imutab.max_records_shift;
-    records->imutab.max_records_mask = records->imutab.max_records - 1U;
-
-    TRACE_ASSERT(records->imutab.max_records > 1U);
-
-    records->imutab.severity_type = severity_type;
-    TRACE_ASSERT(0 != records->imutab.severity_type);
-}
-
-static void init_record_mutable_data(struct trace_records *recs)
-{
-    recs->mutab.current_record = 0;
-    recs->mutab.num_records_written = 0;
-    recs->mutab.last_committed_record = TRACE_RECORD_INVALID_COUNT;
-    memset(recs->records, TRACE_SEV_INVALID, sizeof(recs->records[0]));
-    TRACE_ASSERT(recs->imutab.max_records > 0);
-    memset(recs->records + recs->imutab.max_records - 1, TRACE_SEV_INVALID, sizeof(recs->records[0]));
-}
-
-static void init_sev_to_buffer_cache(void)
-{
-    int i, j;
-    for (i = 0; i < TRACE_SEV__COUNT; i++) {
-        current_trace_buffer->buffer_indices[i] = &(current_trace_buffer->u.records._funcs) - current_trace_buffer->u._all_records; /* Default */
-        for (j = 0; j < current_trace_buffer->n_record_buffers; j++) {
-            if ((1U << i) & current_trace_buffer->u._all_records[j].imutab.severity_type) {
-                current_trace_buffer->buffer_indices[i] = j;
-                break;
-            }
-        }
-    }
-}
-
-static void init_records_metadata(void)
-{
-
-    current_trace_buffer->n_record_buffers = TRACE_BUFFER_NUM_RECORDS;
-    current_trace_buffer->pid = getpid();
-
-#define ALL_SEVS_ABOVE(sev) (((1 << (TRACE_SEV__MAX + 1))) - (1 << (sev + 1)))
-
-    init_records_immutable_data(&current_trace_buffer->u.records._above_info, TRACE_RECORD_BUFFER_RECS, ALL_SEVS_ABOVE(TRACE_SEV_INFO));
-    init_records_immutable_data(&current_trace_buffer->u.records._other, TRACE_RECORD_BUFFER_RECS, ALL_SEVS_ABOVE(TRACE_SEV_DEBUG) & ~ALL_SEVS_ABOVE(TRACE_SEV_INFO));
-    init_records_immutable_data(&current_trace_buffer->u.records._debug, TRACE_RECORD_BUFFER_RECS, (1 << TRACE_SEV_DEBUG));
-    init_records_immutable_data(&current_trace_buffer->u.records._funcs, TRACE_RECORD_BUFFER_FUNCS_RECS, (1 << TRACE_SEV_FUNC_TRACE));
-
-#undef ALL_SEVS_ABOVE
-
-    init_sev_to_buffer_cache();
-
-    init_record_mutable_data(&(current_trace_buffer->u.records._above_info));
-    init_record_mutable_data(&(current_trace_buffer->u.records._other));
-    init_record_mutable_data(&(current_trace_buffer->u.records._debug));
-    init_record_mutable_data(&(current_trace_buffer->u.records._funcs));
-}
-
-static size_t calc_dymanic_buf_size(void)
-{
-    return sizeof(struct trace_buffer)
-            - TRACE_RECORD_BUFFER_RECS       * sizeof(struct trace_record)
-            + TRACE_RECORD_BUFFER_FUNCS_RECS * sizeof(struct trace_record);
-}
-
-int trace_dynamic_log_buffers_map(void)
-{
-    trace_shm_name_buf shm_tmp_name;
-    TRACE_ASSERT(trace_generate_shm_name(shm_tmp_name, getpid(), TRACE_SHM_TYPE_DYNAMIC, TRUE) > 0);
-
-    const int shm_fd = trace_open_shm(shm_tmp_name);
-    if (shm_fd < 0) {
-        return shm_fd;
-    }
-
-    if (trace_shm_init_dir_from_fd(shm_fd) < 0) {
-        close(shm_fd);
-        return -1;
-    }
-
-    const size_t buf_size = calc_dymanic_buf_size();
-    void *const mapped_addr = trace_shm_set_size_and_mmap(buf_size, shm_fd);
-
-    if ((0 != close(shm_fd)) || (MAP_FAILED == mapped_addr) || (NULL == mapped_addr)) {
-        goto free_shm;
-    }
-
-#ifdef MADV_DONTFORK
-    if (0 != madvise(mapped_addr, buf_size, MADV_DONTFORK)) {
-        goto free_shm;
-    }
-#else
-#warning "MADV_DONTFORK is not supported, weird behavior could result during forks."
-#endif
-
-    set_current_trace_buffer_ptr((struct trace_buffer *)mapped_addr);
-    init_records_metadata();
-
-    /* In order to avoid a possible race condition of the dumper accessing the shared-memory area before it is fully initialized, we only rename it
-     * to the name the dumper expects after completing its initialization. */
-    trace_shm_name_buf shm_name;
-    TRACE_ASSERT(trace_generate_shm_name(shm_name, getpid(), TRACE_SHM_TYPE_DYNAMIC, FALSE) > 0);
-    if (trace_shm_rename(shm_tmp_name, shm_name) < 0) {
-        goto free_shm;
-    }
-
-    return 0;
-
-
-free_shm:
-    if (MAP_FAILED != mapped_addr) {
-        munmap(mapped_addr, buf_size);
-    }
-    trace_delete_shm_if_necessary(shm_tmp_name);
-    TRACE_ASSERT(0 != errno);
-    return -1;
-}
-
-static int unmap_buffer_if_necessary()
-{
-    if (NULL != current_trace_buffer) {
-        const int saved_errno = errno;
-
-        /* Try to unmap the pages. The unmap could legitimately fail if the current process is the result of a fork(), since the mapping has MADV_DONTFORK set */
-        if (munmap(current_trace_buffer, calc_dymanic_buf_size()) < 0) {
-            if ((EINVAL != errno) && (EFAULT != errno)) {
-                return -1;
-            }
-
-            errno = saved_errno;
-        }
-
-        current_trace_buffer = NULL;
-    }
-
-    TRACE_ASSERT(NULL == current_trace_buffer);
-    return 0;
-}
-
 int trace_finalize(void)
 {
-    int rc = unmap_buffer_if_necessary();
+    int rc = trace_dynamic_log_buffers_unmap_if_necessary();
     trace_runtime_control_free_thresholds();
     rc |= delete_shm_files(getpid());
     return rc;
 }
+
+/* Support for forking traced processes */
 
 static int child_proc_init(void)
 {

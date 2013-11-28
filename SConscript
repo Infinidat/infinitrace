@@ -14,7 +14,7 @@ with TracesDisabled(xn_env) as untraced_env:
     lib = untraced_env.XnStaticLibrary(target = 'traces', source = srcs, CCFLAGS = optflags)
     untraced_env.Alias('xn', lib)
     
-    srcs = untraced_env.AutoSplit('''trace_user_per_process.c trace_shm_util_untraced.c trace_proc_util.c halt.c file_naming_untraced.c trace_clock_untraced.c''')
+    srcs = untraced_env.AutoSplit('''trace_user_per_process.c trace_user_shm_setup.c trace_shm_util_untraced.c trace_proc_util.c halt.c file_naming_untraced.c trace_clock_untraced.c''')
     lib = untraced_env.SharedLibrary(target = 'trace_per_process', source = srcs, CCFLAGS = optflags, LIBS = ['rt'])
     untraced_env.Alias('xn', lib)
 

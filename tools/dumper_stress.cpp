@@ -13,6 +13,7 @@
 
 #include "../trace_defs.h"
 #include "../trace_user.h"
+#include "../trace_lib_internal.h"
 #include "../array_length.h"
 #include "../trace_fatal.h"
 #include "../trace_str_util.h"

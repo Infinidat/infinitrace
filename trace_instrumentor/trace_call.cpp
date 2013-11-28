@@ -265,7 +265,7 @@ std::string TraceCall::initializeOpeningTypedRecord(const std::string& deref_ope
     std::stringstream code;
     const std::string rec_expr("__records[__rec_idx]");
 
-    code << rec_expr << deref_operator << "u.typed.log_id = &" << trace_call_name << " - __static_log_information_start;";
+    code << rec_expr << deref_operator << "u.typed.log_id = trace_get_descriptor_id(&" << trace_call_name << ");";
     return code.str();
 }
 
