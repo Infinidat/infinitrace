@@ -502,7 +502,7 @@ void TraceCall::expand()
 void TraceCall::expandRepr()
 {
 	assert(isRepr());
-	std::string declaration_substitute = varlength_writeSimpleValue("__trace_repr_logid", "int", false, false);
+	std::string declaration_substitute = varlength_writeSimpleValue("__trace_repr_logid", "trace_log_id_t", false, false);
 	expandWithDeclaration(declaration_substitute, false);
 }
 
