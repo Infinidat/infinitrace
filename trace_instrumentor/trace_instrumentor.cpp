@@ -21,8 +21,6 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include <assert.h>
 #include <string.h>
 
-#include "clang/Rewrite/ASTConsumers.h"
-#include "clang/Rewrite/Rewriter.h"
 #include "clang/Lex/Lexer.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/AST/DeclVisitor.h"
@@ -31,6 +29,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "clang/Basic/IdentifierTable.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/AST/AST.h"
+#include "clang/AST/Attr.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "llvm/Support/raw_ostream.h"
 #include "util.h"
@@ -151,18 +150,12 @@ static bool shouldInstrumentFunctionDecl(const FunctionDecl *D, bool whitelistEx
         return false;
     }
     
+    const bool marked_no_instrument = D->hasAttr<clang::NoInstrumentFunctionAttr>();
+
     if (whitelistExceptions) {
-        if (D->hasAttr<NoInstrumentFunctionAttr>()) {
-            return true;
-        } else {
-            return false;
-        }
+        return marked_no_instrument;
     } else {
-        if (D->hasAttr<NoInstrumentFunctionAttr>()) {
-            return false;
-        } else {
-            return true;
-        }
+        return ! marked_no_instrument;
     }
 }
 
@@ -814,6 +807,21 @@ void StmtIterator::VisitGCCAsmStmt(GCCAsmStmt *S)
 }
 
 void StmtIterator::VisitFunctionParmPackExpr(FunctionParmPackExpr *S)
+{
+    VisitStmt(S);
+}
+
+void StmtIterator::VisitMSPropertyRefExpr(MSPropertyRefExpr *S)
+{
+    VisitStmt(S);
+}
+
+void StmtIterator::VisitCapturedStmt(clang::CapturedStmt *S)
+{
+    VisitStmt(S);
+}
+
+void StmtIterator::VisitCXXDefaultInitExpr(CXXDefaultInitExpr *S)
 {
     VisitStmt(S);
 }

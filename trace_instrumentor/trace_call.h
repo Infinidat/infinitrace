@@ -21,8 +21,8 @@
 #ifndef __TRACE_CALL_H__
 #define __TRACE_CALL_H__
 
-#include "clang/Rewrite/ASTConsumers.h"
-#include "clang/Rewrite/Rewriter.h"
+#include "clang/Rewrite/Frontend/ASTConsumers.h"
+#include "clang/Rewrite/Core/Rewriter.h"
 #include "clang/Lex/Lexer.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/AST/DeclVisitor.h"

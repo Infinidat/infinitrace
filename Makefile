@@ -11,7 +11,7 @@ DUMPER_OBJS=trace_dumper/trace_dumper.o trace_dumper/filesystem.o trace_dumper/e
 
 TARGET_PLATFORM=$(shell gcc -v 2>&1|fgrep Target|cut -d':' -d' ' -f2|cut -d'-' -f 2,3)
 CLANG=clang
-REQUIRED_CLANG_VER=3.2
+REQUIRED_CLANG_VER=3.3
 CLANG_VER=$(shell which $(CLANG) > /dev/null && $(CLANG) --version|head -1|grep -oP '\d\.\d '|cut -d' ' -f1)
 
 EXTRA_LIBS=

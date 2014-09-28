@@ -21,7 +21,7 @@
 #ifndef __TRACE_PARAM_H__
 #define __TRACE_PARAM_H__
 
-#include "clang/Rewrite/Rewriter.h"
+#include "clang/Rewrite/Core/Rewriter.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/AST/AST.h"
 #include "llvm/Support/raw_ostream.h"
