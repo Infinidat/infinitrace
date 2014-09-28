@@ -104,11 +104,11 @@ int trace_generate_shm_name(trace_shm_name_buf buf, const struct trace_shm_modul
     return stpcpy(buf + len, extra_suffix) - buf;
 }
 
-#define SHM_GENERIC_PREFIX_REGEXP TRACE_SHM_ID "([[:digit:]]{1,6})"
+#define SHM_GENERIC_PREFIX_REGEXP "^" TRACE_SHM_ID "([[:digit:]]{1,6})"
 
-static const char shm_generic_regexp[] = SHM_GENERIC_PREFIX_REGEXP "_.+ic_trace_.*data";
-static const char shm_dynamic_regexp[] = SHM_GENERIC_PREFIX_REGEXP TRACE_DYNAMIC_SUFFIX;
-static const char shm_static_regexp[]  = SHM_GENERIC_PREFIX_REGEXP "_([[:digit:]]+)" TRACE_STATIC_SUFFIX;
+static const char shm_generic_regexp[] = SHM_GENERIC_PREFIX_REGEXP "_.+ic_trace_.*data$";
+static const char shm_dynamic_regexp[] = SHM_GENERIC_PREFIX_REGEXP TRACE_DYNAMIC_SUFFIX "$";
+static const char shm_static_regexp[]  = SHM_GENERIC_PREFIX_REGEXP "_([[:digit:]]+)" TRACE_STATIC_SUFFIX "$";
 
 #undef SHM_GENERIC_PREFIX_REGEXP
 
