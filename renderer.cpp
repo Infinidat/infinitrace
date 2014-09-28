@@ -29,7 +29,7 @@
 #include "timeformat.h"
 #include "trace_str_util.h"
 #include "hashmap.h"
-#include "parser.h"
+#include "parser_internal.h"
 #include "filter.h"
 #include "renderer.h"
 

@@ -33,7 +33,7 @@ with TracesDisabled(xn_env) as untraced_env:
     lib = untraced_env.XnStaticLibrary(target = 'tracesstubs', source = srcs, CCFLAGS = optflags)
     untraced_env.Alias('xn', lib)
     
-    srcs = xn_env.AutoSplit('''timeformat.c parser.c filter.c parser_mmap.c hashmap.c renderer.cpp''')
+    srcs = xn_env.AutoSplit('''timeformat.c parser.c parser_stats.c filter.c parser_mmap.c hashmap.c renderer.cpp''')
     lib = untraced_env.XnStaticLibrary(target = 'reader', source = srcs, CCFLAGS = optflags)
     untraced_env.Alias('xn', lib)
 

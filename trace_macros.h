@@ -56,14 +56,16 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 /* Macros that expand to statements that would only compile if the stated predicate is true. No value is returned, in order to avoid compilation warnings. */
 #define TRACE_COMPILE_TIME_ASSERT_IS_NON_ZERO(e) (void) TRACE_COMPILE_TIME_VERIFY_IS_NON_ZERO(e)
 #define TRACE_COMPILE_TIME_ASSERT_IS_ZERO(e)     (void) TRACE_COMPILE_TIME_VERIFY_IS_ZERO(e)
-#define TRACE_COMPILE_TIME_ASSERT_EQ(e1, e2)    TRACE_COMPILE_TIME_ASSERT_IS_ZERO((e1) != (e2))
+#define TRACE_COMPILE_TIME_ASSERT_EQ(e1, e2)     TRACE_COMPILE_TIME_ASSERT_IS_NON_ZERO((e1) == (e2))
 
 #ifdef __cplusplus
-#define TRACE_STATIC_CAST(type, value) static_cast<type>(value)
+#define TRACE_STATIC_CAST(type, value)      static_cast<type>(value)
+#define TRACE_REINTERPRET_CAST(type, value) reinterpret_cast<type>(value)
 #else
-#define TRACE_STATIC_CAST(type, value) ((type) value)
+#define TRACE_STATIC_CAST(type, value) ((type) (value))
+#define TRACE_REINTERPRET_CAST(type, value) TRACE_STATIC_CAST(type, value)
 #endif
 
-#define REPORT_ERROR_RETURN(ret_val) ERR(__func__, "() (in", __FILE__, ":", __LINE__,") returned", (ret_val));
+#define REPORT_ERROR_RETURN(ret_val) ERR("Got error:", (ret_val));
 #define REPORT_AND_RETURN(ret_val) if (0 != (ret_val)) { REPORT_ERROR_RETURN(ret_val); } return ret_val;
 #endif  /* __TRACE_MACROS_H__ */

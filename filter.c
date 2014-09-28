@@ -34,7 +34,7 @@
 #include "timeformat.h"
 #include "trace_str_util.h"
 #include "trace_defs.h"
-#include "parser.h"
+#include "parser_internal.h"
 #include "filter.h"
 
 #pragma GCC diagnostic ignored "-Wvla"  /* Allow C99 variable-length arrays */
@@ -517,7 +517,7 @@ bool_t trace_filter_match_record(
         const struct trace_record_matcher_spec_s *matcher,
         const struct trace_parser_buffer_context *buffer,
         const struct trace_record *record,
-        long long *quota,
+        trace_record_counter_t *quota,
         bool_t *keep_going)
 {
     if (NULL == matcher) { /* No filter - anything matches */

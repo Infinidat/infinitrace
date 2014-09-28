@@ -99,6 +99,13 @@ enum trace_parser_param_name_disp_mode {
     TRACE_PARSER_PARAM_NAME_DISP_LAST_FIELD,
 };
 
+struct record_formatting_context_s {
+    int tail;
+    int current_severity;
+    char formatted_record[1024 * 20];
+};
+
+
 #define RECORD_DUMP_CONTEXTS (150)
 struct record_dump_context_s {
     off64_t start_offset;
@@ -169,16 +176,7 @@ int TRACE_PARSER__dump_statistics(trace_parser_t *parser);
 
 off64_t TRACE_PARSER__seek(trace_parser_t *parser, off64_t offset, int whence);
 
-/* Lower-level functions, might change in the future
- * TODO: Move these into a separate implementation details header */
-static inline const struct trace_log_descriptor *get_log_descriptor(const struct trace_parser_buffer_context *context, size_t idx)
-{
-    return (const struct trace_log_descriptor *)((const char *)(context->descriptors) + idx * context->metadata_log_desciptor_size);
-}
-
-
 /* Create the hash for looking up type definitions */
-
 struct trace_type_definition_mapped {
     const struct trace_type_definition* def;
     map_t map;

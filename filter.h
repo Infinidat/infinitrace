@@ -55,13 +55,13 @@ enum trace_record_matcher_type {
 struct trace_record_matcher_spec_s {
     enum trace_record_matcher_type type;
     union trace_record_matcher_data_u {
-        unsigned short pid;
-        unsigned short tid;
-        unsigned int log_id;
+        trace_pid_t pid;
+        trace_pid_t tid;
+        trace_log_id_t log_id;
         unsigned severity;
         struct trace_time_range {
-            unsigned long long start;
-            unsigned long long end;
+            trace_ts_t start;
+            trace_ts_t end;
         } time_range;
 
         char function_name[0x100];
@@ -70,7 +70,7 @@ struct trace_record_matcher_spec_s {
         char const_string[0x100];
         /* unsigned long long param_value; */
         unsigned short nesting;
-        long long quota_max;
+        trace_record_counter_t quota_max;
 
         struct trace_matcher_named_param_value {
             char param_name[0xf8];
@@ -120,7 +120,7 @@ bool_t trace_filter_match_record(
         const struct trace_record_matcher_spec_s *matcher,
         const struct trace_parser_buffer_context *buffer,
         const struct trace_record *record,
-        long long *quota,
+        trace_record_counter_t *quota,
         bool_t *keep_going);
 
 #endif /* _TRACE_FILTER_H_ */
