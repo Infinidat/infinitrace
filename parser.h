@@ -46,10 +46,10 @@ struct trace_parser_buffer_context {
 struct trace_record_accumulator {
     char accumulated_data[MAX_ACCUMULATED_DATA];
     unsigned int data_offset;
-    unsigned short int tid;
-    unsigned long long ts;
-    unsigned severity;
-    unsigned log_id;
+    trace_pid_t tid;
+    trace_ts_t  ts;
+    enum trace_severity severity;
+    trace_log_id_t log_id;
 };
 
 CREATE_LIST_PROTOTYPE(BufferParseContextList, struct trace_parser_buffer_context, 100)
@@ -116,12 +116,13 @@ struct buffer_dump_context_s {
     unsigned int num_chunks;
 };
 
-/*
-struct operation_progress_status_s {
-    long long records_processed;
-    long long current_offset;
+struct file_global_stats {
+    trace_record_counter_t n_compressed_typed_records;
+    trace_record_counter_t n_uncompressed_typed_records;
+    trace_record_counter_t n_metadata_records;
+    unsigned compression_types_used;
+    unsigned n_chunks;
 };
-*/
 
 
 struct trace_record_matcher_spec_s;     /* Defined in filter.h */
@@ -134,7 +135,8 @@ typedef struct trace_parser {
     RecordsAccumulatorList records_accumulators;
     struct buffer_dump_context_s buffer_dump_context;
     trace_parser_event_handler_t event_handler;
-    unsigned long long max_ts;
+    struct file_global_stats global_stats;
+    trace_ts_t max_ts;
     void *arg;
     FILE *out_file;
     int color;

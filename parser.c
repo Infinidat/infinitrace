@@ -414,6 +414,7 @@ static int accumulate_metadata(trace_parser_t *parser, const struct trace_record
         return 0;
     }
     
+    parser->global_stats.n_metadata_records++;
     if (rec->termination & TRACE_TERMINATION_LAST) {
         // Reached end of accumulation. The accumulated offset should be identical to the total size of the metadata
         if (context->metadata_size != context->current_metadata_offset) {
@@ -948,12 +949,16 @@ static int process_dump_header_record(
                 if (NULL == parser->buffer_dump_context.record_dump_contexts[i].uncompressed_data) {
                     goto cleanup;
                 }
+
+                parser->global_stats.compression_types_used |= buffer_chunk->flags;
             }
             else {
                 parser->buffer_dump_context.record_dump_contexts[i].uncompressed_data = NULL;
                 n_uncompressed_recs = buffer_chunk->records;
             }
             parser->buffer_dump_context.record_dump_contexts[i].end_offset = parser->buffer_dump_context.record_dump_contexts[i].start_offset + n_uncompressed_recs;
+            parser->global_stats.n_compressed_typed_records   += buffer_chunk->records;
+            parser->global_stats.n_uncompressed_typed_records += n_uncompressed_recs;
             i++;
         }
 
@@ -988,6 +993,7 @@ static int process_dump_header_record(
     current_offset = capped_seek(parser, next_offset, SEEK_SET);
     if (current_offset != -1) {
         parser->buffer_dump_context.num_chunks = i;
+        parser->global_stats.n_chunks += parser->buffer_dump_context.num_chunks;
         return 0;
     }
 
@@ -1483,6 +1489,35 @@ static void possibly_display_filename_for_statistics(trace_parser_t *parser) {
     }
 }
 
+static double percentage(trace_record_counter_t num, trace_record_counter_t denom)
+{
+    return (100.0 * num) / denom;
+}
+
+static void dump_global_stats(const trace_parser_t *parser)
+{
+    print_underlined("Global statistics");
+    const trace_record_counter_t total_records = parser->file_info.end_offset / TRACE_RECORD_SIZE;
+
+#define PCT_FMT "%.1f%%"
+    printf("Total records in file: %lu\n", total_records);
+    printf("Total metadata records: %lu (" PCT_FMT ")\n", parser->global_stats.n_metadata_records, percentage(parser->global_stats.n_metadata_records, total_records));
+    if (parser->global_stats.n_chunks > 0) {
+        printf("Total typed records (possiblly compressed): %lu (" PCT_FMT ")\n", total_records, percentage(parser->global_stats.n_compressed_typed_records, total_records));
+        const trace_record_counter_t n_header_records = total_records - parser->global_stats.n_metadata_records - parser->global_stats.n_compressed_typed_records;
+        printf("Total header records:  %lu (" PCT_FMT ")\n", n_header_records, percentage(n_header_records, total_records));
+        printf("Total typed records uncompressed: %lu\n", parser->global_stats.n_uncompressed_typed_records);
+        if (parser->global_stats.n_uncompressed_typed_records > 0) {
+            const double net_compression_ratio   = percentage(parser->global_stats.n_compressed_typed_records, parser->global_stats.n_uncompressed_typed_records);
+            const double gross_compression_ratio =
+                    percentage(total_records, total_records + parser->global_stats.n_uncompressed_typed_records - parser->global_stats.n_compressed_typed_records);
+            printf("Compression ratios: net - " PCT_FMT ", gross - " PCT_FMT "\n", net_compression_ratio, gross_compression_ratio);
+        }
+    }
+
+#undef PCT_FMT
+}
+
 int TRACE_PARSER__dump_statistics(trace_parser_t *parser)
 {
     if (parser->stream_type != TRACE_INPUT_STREAM_TYPE_SEEKABLE_FILE) {
@@ -1507,6 +1542,7 @@ int TRACE_PARSER__dump_statistics(trace_parser_t *parser)
     possibly_display_filename_for_statistics(parser);
     dump_stats_pool(log_stats_pool);
     free_stats_pool(log_stats_pool);
+    dump_global_stats(parser);
     return 0;
 }
 #ifdef _USE_INOTIFY_
