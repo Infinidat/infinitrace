@@ -19,6 +19,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <string.h>
 
 #include "clang/Rewrite/ASTConsumers.h"
 #include "clang/Rewrite/Rewriter.h"
@@ -622,7 +623,7 @@ void StmtIterator::VisitObjCDictionaryLiteral(clang::ObjCDictionaryLiteral *S) {
     VisitStmt(S);
 }
 
-void StmtIterator::VisitObjCNumericLiteral(clang::ObjCNumericLiteral *S) {
+void StmtIterator::VisitObjCBoxedExpr(clang::ObjCBoxedExpr *S) {
     VisitStmt(S);
 }
 
@@ -786,11 +787,16 @@ void StmtIterator::VisitReturnStmt(ReturnStmt *S)
 expand:
    std::string traceExpansion = trace_call.getExpansion();
    Rewrite->InsertText(onePastSemiLoc, "}", true);
-   Rewrite->ReplaceText(startLoc, 6, "{if (current_trace_buffer != 0) {trace_decrement_nesting_level(); " + traceExpansion + "} return ");
+   Rewrite->ReplaceText(startLoc, strlen("return"), "{if (current_trace_buffer != 0) {trace_decrement_nesting_level(); " + traceExpansion + "} return ");
    return;
 }
 
-void StmtIterator::VisitAsmStmt(AsmStmt *S)
+void StmtIterator::VisitMSAsmStmt(MSAsmStmt *S)
+{
+    VisitStmt(S);
+}
+
+void StmtIterator::VisitGCCAsmStmt(GCCAsmStmt *S)
 {
 
     VisitStmt(S);
@@ -804,7 +810,12 @@ void StmtIterator::VisitAsmStmt(AsmStmt *S)
         VisitStringLiteral(S->getInputConstraintLiteral(I));
     }
     for (unsigned I = 0, N = S->getNumClobbers(); I != N; ++I)
-        VisitStringLiteral(S->getClobber(I));
+        VisitStringLiteral(S->getClobberStringLiteral(I));
+}
+
+void StmtIterator::VisitFunctionParmPackExpr(FunctionParmPackExpr *S)
+{
+    VisitStmt(S);
 }
 
 void StmtIterator::VisitCXXCatchStmt(CXXCatchStmt *S)
@@ -1518,6 +1529,7 @@ void StmtIterator::VisitTemplateArgument(const TemplateArgument &Arg)
     switch (Arg.getKind())
     {
     case TemplateArgument::Null:
+    case TemplateArgument::NullPtr:
         break;
 
     case TemplateArgument::Type:
