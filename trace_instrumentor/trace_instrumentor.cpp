@@ -606,6 +606,50 @@ void StmtIterator::VisitMaterializeTemporaryExpr(MaterializeTemporaryExpr *S) {
     VisitStmt(S);
 }
 
+void StmtIterator::VisitMSDependentExistsStmt(MSDependentExistsStmt *S) {
+    VisitStmt(S);
+}
+
+void StmtIterator::VisitPseudoObjectExpr(clang::PseudoObjectExpr *S) {
+    VisitStmt(S);
+}
+
+void StmtIterator::VisitObjCBoolLiteralExpr(clang::ObjCBoolLiteralExpr *S) {
+    VisitStmt(S);
+}
+
+void StmtIterator::VisitObjCDictionaryLiteral(clang::ObjCDictionaryLiteral *S) {
+    VisitStmt(S);
+}
+
+void StmtIterator::VisitObjCNumericLiteral(clang::ObjCNumericLiteral *S) {
+    VisitStmt(S);
+}
+
+void StmtIterator::VisitLambdaExpr(clang::LambdaExpr *S) {
+    VisitStmt(S);
+}
+
+void StmtIterator::VisitObjCArrayLiteral(clang::ObjCArrayLiteral *S) {
+    VisitStmt(S);
+}
+
+void StmtIterator::VisitTypeTraitExpr(clang::TypeTraitExpr *S) {
+    VisitStmt(S);
+}
+
+void StmtIterator::VisitUserDefinedLiteral(clang::UserDefinedLiteral *S) {
+    VisitStmt(S);
+}
+
+void StmtIterator::VisitAttributedStmt(clang::AttributedStmt *S) {
+    VisitStmt(S);
+}
+
+void StmtIterator::VisitObjCSubscriptRefExpr(clang::ObjCSubscriptRefExpr *S) {
+    VisitStmt(S);
+}
+
 void StmtIterator::VisitObjCIndirectCopyRestoreExpr(ObjCIndirectCopyRestoreExpr *S) {
     
     VisitStmt(S);
@@ -1093,13 +1137,6 @@ void StmtIterator::VisitBlockExpr(BlockExpr *S)
     VisitDecl(S->getBlockDecl());
 }
 
-void StmtIterator::VisitBlockDeclRefExpr(BlockDeclRefExpr *S)
-{
-
-    VisitExpr(S);
-    VisitDecl(S->getDecl());
-}
-
 void StmtIterator::VisitCXXOperatorCallExpr(CXXOperatorCallExpr *S)
 {
 
@@ -1248,7 +1285,6 @@ void StmtIterator::VisitCXXNewExpr(CXXNewExpr *S)
     VisitType(S->getAllocatedType());
     VisitDecl(S->getOperatorNew());
     VisitDecl(S->getOperatorDelete());
-    VisitDecl(S->getConstructor());
 }
 
 void StmtIterator::VisitCXXPseudoDestructorExpr(CXXPseudoDestructorExpr *S)
@@ -1625,15 +1661,15 @@ public:
         RecordDecl *record_struct = struct_finder.findDeclByName(C.getTranslationUnitDecl(), "trace_log_descriptor");
         assert(record_struct != NULL);
 
-        SourceRange range = getDeclRange(SM, &C.getLangOptions(), record_struct, true);
+        SourceRange range = getDeclRange(SM, &C.getLangOpts(), record_struct, true);
         Rewrite.InsertText(range.getEnd(), global_traces.str());
     }
     
     void HandleTranslationUnit(ASTContext &C) {
-        Rewrite.setSourceMgr(C.getSourceManager(), C.getLangOptions());
+        Rewrite.setSourceMgr(C.getSourceManager(), C.getLangOpts());
         SM = &C.getSourceManager();
         MainFileID = SM->getMainFileID();
-        DeclIterator decliterator(Out, Diags, C, &Rewrite, SM, C.getLangOptions(), referencedTypes, globalTraces, whitelistExceptions);
+        DeclIterator decliterator(Out, Diags, C, &Rewrite, SM, C.getLangOpts(), referencedTypes, globalTraces, whitelistExceptions);
         decliterator.Visit(C.getTranslationUnitDecl());
         buildReferencedTypes();
         buildGlobalTraces();

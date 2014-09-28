@@ -43,7 +43,7 @@ using namespace clang;
 
 static const Type *get_expr_type(const Expr *expr)
 {
-    return expr->getType().getCanonicalType().split().first;
+    return expr->getType().getCanonicalType().split().Ty;
 }
 
 TraceParam::TraceParam(
@@ -181,7 +181,7 @@ std::string TraceParam::getSubsequentParamName() const
 
 bool TraceParam::parseBasicTypeParam(QualType qual_type)
 {
-    const Type *type = qual_type.split().first;
+    const Type *type = qual_type.split().Ty;
     size = ast.getTypeSize(type) / 8;
 
     if (type->isReferenceType() || type->isPointerType()) {
@@ -221,7 +221,7 @@ bool TraceParam::parseBasicTypeParam(QualType qual_type)
         return false;
     }
 
-    type_name = QualType(qual_type.split().first, 0).getAsString();
+    type_name = QualType(qual_type.split().Ty, 0).getAsString();
     if (type_name.compare("_Bool") == 0) {
             type_name = "bool";
     }
@@ -279,11 +279,11 @@ bool TraceParam::parseRecordTypeParam(const Expr *expr)
 
 bool TraceParam::parseEnumTypeParam(QualType qual_type)
 {
-    if (!qual_type.split().first->isEnumeralType()) {
+    if (!qual_type.split().Ty->isEnumeralType()) {
         return false;
     }
 
-    referenceType(qual_type.split().first);
+    referenceType(qual_type.split().Ty);
     flags |= TRACE_PARAM_FLAG_ENUM;
     type_name = qual_type.getAsString();
     size = 4;
@@ -328,11 +328,11 @@ bool TraceParam::parseHexBufParam(const Expr *expr)
     }
 
     const ArrayType *A = dyn_cast<ArrayType>(pointeeType);
-    if (A->getElementType().split().first->getTypeClass() != Type::Typedef) {
+    if (A->getElementType().split().Ty->getTypeClass() != Type::Typedef) {
         return false;
     }
 
-    const TypedefType *TDP = dyn_cast<TypedefType>(A->getElementType().split().first);
+    const TypedefType *TDP = dyn_cast<TypedefType>(A->getElementType().split().Ty);
     const TypedefNameDecl *decl = TDP->getDecl();
     if (decl->getDeclName().getAsString().compare(STR(TRACE_HEX_REPR_TYPE_NAME)) != 0) {
         return false;
@@ -364,7 +364,7 @@ bool TraceParam::parseHexBufParam(const Expr *expr)
         expression = lit_expr;
     }
     else {
-        expression = "*(" + castTo(ast.getLangOptions(), lit_expr, "const " + type_name + " *") + ")";
+        expression = "*(" + castTo(ast.getLangOpts(), lit_expr, "const " + type_name + " *") + ")";
     }
 
     return true;
@@ -383,12 +383,12 @@ std::string TraceParam::getLiteralString(const Expr *expr)
 
 bool TraceParam::parseStringParam(QualType qual_type)
 {
-    const Type *type = qual_type.split().first;
+    const Type *type = qual_type.split().Ty;
     if (!type->isPointerType()) {
         return false;
     }
 
-    const Type *pointeeType = type->getPointeeType().split().first;
+    const Type *pointeeType = type->getPointeeType().split().Ty;
     if (!(pointeeType->isBuiltinType() && pointeeType->isCharType())) {
         return false;
     }
@@ -407,7 +407,7 @@ bool TraceParam::parseStringParam(const Expr *expr)
         return false;
     }
 
-    const Type *pointeeType = type->getPointeeType().split().first;
+    const Type *pointeeType = type->getPointeeType().split().Ty;
     if (!(pointeeType->isBuiltinType() && pointeeType->isCharType())) {
         return false;
     }
@@ -552,7 +552,7 @@ bool TraceParam::parseClassTypeParam(const Expr *expr)
 {
     const Type *type = expr->getType().getTypePtr();
 
-    const Type *pointeeType = (type->isPointerType() || type->isReferenceType()) ? type->getPointeeType().split().first : type;
+    const Type *pointeeType = (type->isPointerType() || type->isReferenceType()) ? type->getPointeeType().split().Ty : type;
     if (!pointeeType->isClassType()) {
         return false;
     }

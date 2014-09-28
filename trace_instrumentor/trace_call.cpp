@@ -327,7 +327,7 @@ std::string TraceCall::varlength_getTraceWriteExpression() const
 
             if (param.isVarString()) {
                 start_record << "__typed_buf = trace_copy_vstr_to_records(&__records, &__rec_idx, &__records_array_len, __typed_buf, ";
-                start_record << castTo(ast.getLangOptions(), param.expression, "const char *");
+                start_record << castTo(ast.getLangOpts(), param.expression, "const char *");
                 start_record << "); ";
             }
 
@@ -376,7 +376,7 @@ std::string TraceCall::writeSimpleValueSrcDecl(const std::string &expression, co
     if (is_pointer || is_reference) {
         src_type = ptr_type;
         std::string to_ptr(is_reference ? "&" : "");
-        src_init_expr = castTo(ast.getLangOptions(), to_ptr + expression, ptr_type);
+        src_init_expr = castTo(ast.getLangOpts(), to_ptr + expression, ptr_type);
     }
     else {
         src_type = type_name;
