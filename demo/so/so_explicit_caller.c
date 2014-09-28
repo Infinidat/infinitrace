@@ -21,8 +21,13 @@
 
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <string.h>
 #include <dlfcn.h>
 
+#include "../../trace_user.h"
+#include "../../trace_fatal.h"
 #include "so_lib.h"
 
 
@@ -30,16 +35,19 @@ typedef int (*libfunc)(int);
 
 static libfunc get_libfunc_ptr(void)
 {
+    INFO("About to get function pointer");
     void *const libhandle = dlopen("libso_demo_traced.so", RTLD_NOW);
     if (NULL == libhandle) {
+        ERR("Failed dlopen", errno, strerror(errno));
         goto failed;
     }
 
     const libfunc f = dlsym(libhandle, "trace_write_simple_from_so");
     if (NULL == f) {
+        ERR("Failed dlsym", errno, strerror(errno));
         goto failed;
     }
-
+    INFO("Got function pointer", f);
     return f;
 
 failed:
@@ -49,8 +57,12 @@ failed:
 
 int main(void)
 {
+    if (0 != trace_register_fatal_sig_handlers(NULL)) {
+        ERR("Error registering fatal signal handlers");
+    }
     const libfunc f = get_libfunc_ptr();
     int arg = f(41);
     printf("Got arg=%d\n", arg);
+    INFO("Got function return value", arg);
     return 0;
 }

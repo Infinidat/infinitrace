@@ -5,6 +5,8 @@ Import('TracesDisabled')
 # Libraries
 #-------------
 
+cflags = Split("-std=gnu99")
+
 with TracesDisabled(xn_env) as untraced_env:
     optflags=Split("""$CCFLAGS -Wall -O2""")
     optflags_so = optflags + Split("-fPIC")   # Compiler flags for object files that could go into a shared-object library. 
@@ -14,8 +16,9 @@ with TracesDisabled(xn_env) as untraced_env:
     lib = untraced_env.XnStaticLibrary(target = 'traces', source = srcs, CCFLAGS = optflags)
     untraced_env.Alias('xn', lib)
     
-    srcs = untraced_env.AutoSplit('''trace_user_per_process.c trace_user_shm_setup.c trace_shm_util_untraced.c trace_proc_util.c halt.c file_naming_untraced.c trace_clock_untraced.c''')
-    lib = untraced_env.SharedLibrary(target = 'trace_per_process', source = srcs, CCFLAGS = optflags, LIBS = ['rt'])
+    srcs = untraced_env.AutoSplit('''trace_user_per_process.c trace_user_shm_setup.c trace_shm_util_untraced.c trace_proc_util.c halt.c file_naming_untraced.c trace_clock_untraced.c trace_str_util_untraced.c''')
+    libs = Split("rt dl")
+    lib = untraced_env.SharedLibrary(target = 'trace_per_process', source = srcs, CCFLAGS = optflags, LIBS = libs, CFLAGS = cflags)
     untraced_env.Alias('xn', lib)
 
     srcs = untraced_env.AutoSplit('''opt_util_untraced.c trace_str_util_untraced.c trace_mmap_util_untraced.c file_naming_untraced.c trace_clock_untraced.c''')
@@ -41,7 +44,6 @@ with TracesDisabled(xn_env) as untraced_env:
     	untraced_env.Alias('xn', lib)
 
 safer_optflags=[f for f in optflags if not f.startswith('-O')] + ['-O1']
-cflags = Split("-std=gnu99")
 
 srcs = xn_env.AutoSplit('''validator.c trace_metadata_util.c''')
 xn_env.BuildStaticLibraries(target = 'trace_bin_fmts', source = srcs, CCFLAGS = safer_optflags, CFLAGS = cflags)
@@ -63,6 +65,9 @@ with TracesDisabled(xn_env) as untraced_env:
 
     
 xn_env.SConscript("trace_dumper/SConscript")
-xn_env.SConscript("tools/SConscript")
-xn_env.SConscript("demo/so/SConscript")
+
+build_tools_and_demos = os.environ.get('XN_TRACE_BUILD_TOOLS', False)
+if build_tools_and_demos:
+	xn_env.SConscript("tools/SConscript")
+	xn_env.SConscript("demo/so/SConscript")
 

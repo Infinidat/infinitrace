@@ -21,10 +21,15 @@
 
 #include "platform.h"
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <errno.h>
 #include <unistd.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <string.h>
 #include <limits.h>
 
 #include "trace_macros.h"
@@ -34,27 +39,47 @@
 #include "file_naming.h"
 #include "halt.h"
 
-void trace_init_static_information(struct trace_static_information *static_info)
+static trace_module_id_t module_id = TRACE_MODULE_ID_INVALID;
+
+static void trace_init_static_information(struct trace_static_information *static_info)
 {
     static_info->log_information_start  = __static_log_information_start;
     static_info->log_descriptor_count   = __static_log_information_end - __static_log_information_start;
     static_info->type_information_start = __type_information_start;
-    static_info->module_id              = trace_module_id_alloc();
+
+    if (TRACE_MODULE_ID_INVALID == module_id) {
+        module_id = trace_module_id_alloc();
+    }
+    static_info->module_id = module_id;
+
+    static_info->module_full_path = trace_get_module_name(__static_log_information_start);
+    if (NULL == static_info->module_full_path) {
+        static_info->module_full_path = "UNKNOWN";
+    }
 }
 
-static int TRACE__register_buffer(const char *buffer_name)
+static int TRACE__register_buffer(void)
 {
     int rc = 0;
     struct trace_static_information static_info;
     trace_init_static_information(&static_info);
-    trace_static_log_data_map(&static_info, buffer_name);
+    trace_static_log_data_map(&static_info);
     if ((0 == static_info.module_id) && !trace_is_initialized()) {
-        rc = trace_dynamic_log_buffers_map();
-        if (rc < 0) {
-            trace_shm_name_buf shm_name;
-            TRACE_ASSERT(trace_generate_shm_name(shm_name, getpid(), TRACE_SHM_TYPE_STATIC, FALSE) > 0);
-            trace_delete_shm_if_necessary(shm_name);
-        }
+        rc = trace_dynamic_log_buffers_map(0);
+    }
+
+    if (rc < 0) {
+        trace_shm_name_buf shm_name;
+        const struct trace_shm_module_details details = {
+              .pid = getpid(),
+              .module_id = static_info.module_id,
+        };
+        TRACE_ASSERT(trace_generate_shm_name(shm_name, &details, TRACE_SHM_TYPE_STATIC_PER_PROCESS, FALSE) > 0);
+        trace_delete_shm_if_necessary(shm_name);
+    }
+    else {
+        TRACE_ASSERT(trace_is_initialized());
+        current_trace_buffer->module_ids_allocated |= ((trace_module_id_allocation_mask_t) 1 << static_info.module_id);
     }
 
     return rc;
@@ -62,19 +87,17 @@ static int TRACE__register_buffer(const char *buffer_name)
 
 int trace_init(const struct trace_init_params *conf __attribute__((unused)))
 {
-    char buffer_name[NAME_MAX];
-    if (trace_get_current_exec_basename(buffer_name, sizeof(buffer_name)) < 0) {
+    if (trace_buffers_reset_if_new_process() < 0) {
         return -1;
     }
-
-    return TRACE__register_buffer(buffer_name);
+    return TRACE__register_buffer();
 }
 
 /* Place TRACE__implicit_init in the constructors section, which causes it to be executed before main() */
-int TRACE__implicit_init(void) __attribute__((constructor, visibility ("hidden")));
+int TRACE__implicit_init(void) __attribute__((constructor, visibility("hidden")));
 
 int TRACE__implicit_init(void) {
-    assert(0 == trace_init(NULL));
+    TRACE_ASSERT(0 == trace_init(NULL));
     return 0;
 }
 

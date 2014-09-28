@@ -26,6 +26,7 @@
 /* Naming conventions for trace output files */
 #include <sys/types.h>
 #include "bool.h"
+#include "trace_lib.h"
 
 #define TRACE_FILE_PREFIX "trace."
 #define TRACE_FILE_SUFFIX ".dump"
@@ -40,15 +41,25 @@ int trace_generate_file_name(char *filename, const char *filename_base, size_t n
 #define TRACE_STATIC_SUFFIX  "_static_trace_metadata"
 /* Format strings with a %d placeholder for the pid */
 #define TRACE_DYNAMIC_DATA_REGION_NAME_FMT TRACE_SHM_ID "%d" TRACE_DYNAMIC_SUFFIX
-#define TRACE_STATIC_DATA_REGION_NAME_FMT  TRACE_SHM_ID "%d" TRACE_STATIC_SUFFIX
+#define TRACE_STATIC_PER_PROCESS_DATA_REGION_NAME_FMT  TRACE_SHM_ID "%d_%u" TRACE_STATIC_SUFFIX
 
 enum trace_shm_object_type {
     TRACE_SHM_TYPE_DYNAMIC,
-    TRACE_SHM_TYPE_STATIC,
+    TRACE_SHM_TYPE_STATIC_PER_PROCESS,
+    TRACE_SHM_TYPE_STATIC_PER_FILE,     /* Will be used in the future to keep a single copy of metadata from a shared-object used by multiple processes */
+    TRACE_SHM_TYPE_COUNT,               /* Must cone after all normal object types */
+    TRACE_SHM_TYPE_ANY = TRACE_SHM_TYPE_COUNT
 };
 
-typedef char trace_shm_name_buf[sizeof(TRACE_STATIC_DATA_REGION_NAME_FMT) + 0x40];
-int trace_generate_shm_name(trace_shm_name_buf buf, pid_t pid, enum trace_shm_object_type shm_type, bool_t temporary);
+struct trace_shm_module_details {
+    pid_t pid;
+    trace_module_id_t module_id;
+    const char *file_name;
+    const char *file_dir;
+};
+
+typedef char trace_shm_name_buf[sizeof(TRACE_STATIC_PER_PROCESS_DATA_REGION_NAME_FMT) + 0x40];
+int trace_generate_shm_name(trace_shm_name_buf buf, const struct trace_shm_module_details *details, enum trace_shm_object_type shm_type, bool_t temporary);
 pid_t trace_get_pid_from_shm_name(const char *shm_name);
 
 #endif /* _TRACE_FILE_NAMING_H_ */

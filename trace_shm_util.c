@@ -34,19 +34,25 @@
 #include "array_length.h"
 #include "file_naming.h"
 #include "trace_proc_util.h"
+#include "trace_lib_internal.h"
 #include "trace_shm_util.h"
 
-int delete_shm_files(pid_t pid)
+int trace_shm_delete_files(pid_t pid)
 {
-    enum trace_shm_object_type shm_types[] = { TRACE_SHM_TYPE_DYNAMIC, TRACE_SHM_TYPE_STATIC };
     int rc = 0;
-    unsigned i;
-    for (i = 0; i < ARRAY_LENGTH(shm_types); i++) {
-        trace_shm_name_buf trace_shm_name;
-        assert(trace_generate_shm_name(trace_shm_name, pid, shm_types[i], FALSE) > 0);
+    trace_shm_name_buf trace_shm_name;
+    struct trace_shm_module_details details = {
+            .pid = pid,
+    };
+
+    for (trace_module_id_t i = 0; i < TRACE_MODULE_ID_COUNT; i++) {
+        details.module_id = i,
+        TRACE_ASSERT(trace_generate_shm_name(trace_shm_name, &details, TRACE_SHM_TYPE_STATIC_PER_PROCESS, FALSE) > 0);
         rc |= trace_delete_shm_if_necessary(trace_shm_name);
     }
 
+    TRACE_ASSERT(trace_generate_shm_name(trace_shm_name, &details, TRACE_SHM_TYPE_DYNAMIC, FALSE) > 0);
+    rc |= trace_delete_shm_if_necessary(trace_shm_name);
     return rc;
 }
 

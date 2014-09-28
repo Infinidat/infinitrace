@@ -118,7 +118,11 @@ static int open_trace_shm(const char *shm_name, off_t *size) {
 static void *map_single_buffer(pid_t pid, enum trace_shm_object_type shm_type, off_t *shm_size)
 {
     trace_shm_name_buf name;
-    assert(trace_generate_shm_name(name, pid, shm_type, FALSE) > 0);
+    const struct trace_shm_module_details details = {
+            .pid = pid,
+            .module_id = 0, // TODO: Don't hardcode!
+    };
+    assert(trace_generate_shm_name(name, &details, shm_type, FALSE) > 0);
 
     off_t size = 0;
     const int fd = open_trace_shm(name, &size);
@@ -194,7 +198,7 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
 
     off_t static_log_data_region_size = 0;
     struct trace_metadata_region *const static_log_data_region =
-            (struct trace_metadata_region *) map_single_buffer(pid, TRACE_SHM_TYPE_STATIC, &static_log_data_region_size);
+            (struct trace_metadata_region *) map_single_buffer(pid, TRACE_SHM_TYPE_STATIC_PER_PROCESS, &static_log_data_region_size);
     if (MAP_FAILED == static_log_data_region) {
         ERR("Unable to map static log area:", pid, errno, strerror(errno));
         rc = -1;
@@ -246,6 +250,9 @@ static int map_buffer(struct trace_dumper_configuration_s *conf, pid_t pid)
         errno = EUCLEAN;
         goto unmap_dynamic;
     }
+
+    /* Placeholder for actual per-metadata region processing */
+    dynamic_trace_buffer->module_ids_discovered |= dynamic_trace_buffer->module_ids_allocated;
 
     new_mapped_buffer->records_buffer_base_address = dynamic_trace_buffer;
     new_mapped_buffer->records_buffer_size = trace_region_size;
@@ -311,7 +318,7 @@ remove_mapped_buffer:
 
 delete_shm_files:
     WARN("The shared-memory areas for the process", pid, "could not be open and will be deleted.");
-    if (delete_shm_files(pid) < 0) {
+    if (trace_shm_delete_files(pid) < 0) {
         const int err = errno;
         ERR("Failed to delete shared-memory files for", pid, err, strerror(err));
         rc = -1;
@@ -375,6 +382,7 @@ static int process_potential_trace_buffer(struct trace_dumper_configuration_s *c
             return 0;
         }
 
+        DEBUG("Found new dynamic buffer", shm_name, pid);
         return map_buffer(conf, pid);
     }
 
@@ -481,7 +489,7 @@ void discard_buffer(struct trace_dumper_configuration_s *conf, struct trace_mapp
 
     discard_buffer_unconditionally(mapped_buffer);
 
-    int rc = delete_shm_files(pid);
+    int rc = trace_shm_delete_files(pid);
     if (0 != rc) {
         REPORT_BUF_ERR("Error deleting shm files");
     }

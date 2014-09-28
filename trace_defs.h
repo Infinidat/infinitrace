@@ -20,6 +20,8 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #ifndef __TRACE_DEFS_H__
 #define __TRACE_DEFS_H__
 
+#include <limits.h>
+
 #ifdef __cplusplus
  extern "C" {
 #endif
@@ -191,6 +193,9 @@ enum trace_file_type {
 #define TRACE_FORMAT_VERSION_INTRODUCED_LOW_LATENCY_WRITE   (0xA3)
 #define TRACE_FORMAT_VERSION_INTRODUCED_COMPRESSION         (0xA3)
 
+/* Extra-fields that will be introduced with format version 0xA4 */
+#define TRACE_FORMAT_VERSION_INTRODUCED_MODULE_FULL_PATH    (0xA4)
+
  /* Information about user defined types */
 struct trace_type_definition {
     enum trace_type_id type_id;
@@ -303,11 +308,11 @@ struct trace_record_data_loss {
 	unsigned long long ts_end;
 };
 
-enum trace_record_bit_field_lengths {
+enum trace_record_bit_field_widths {
     TRACE_RECORD_TERMINATION_N_BITS = 2,
     TRACE_RECORD_SEVERITY_N_BITS    = 4,
     TRACE_RECORD_REC_TYPE_N_BITS    = 4,
-    TRACE_RECORD_MODULE_ID_N_BITS   = 0,
+    TRACE_RECORD_MODULE_ID_N_BITS   = 4,
     TRACE_RECORD_TOTAL_ALLOCATED_BITS =
             TRACE_RECORD_TERMINATION_N_BITS + TRACE_RECORD_SEVERITY_N_BITS + TRACE_RECORD_REC_TYPE_N_BITS + TRACE_RECORD_MODULE_ID_N_BITS,
 };
@@ -319,7 +324,8 @@ struct trace_record {
 	trace_pid_t tid;		/* Thread ID */
     short nesting;			/* Call stack depth for the current thread, used for function traces. */
 	short bit_fields[0];    /* An addressable, zero-length field that marks the location of the bit-fields, allowing their address to be taken. */
-	unsigned termination: TRACE_RECORD_TERMINATION_N_BITS; /* The values of trace_termination_type, possibly or-ed */
+	unsigned termination: TRACE_RECORD_TERMINATION_N_BITS;  /* The values of trace_termination_type, possibly or-ed */
+	unsigned module_id:   TRACE_RECORD_MODULE_ID_N_BITS;    /* ID of the module (executable or shared-object) that produced the trace */
 	unsigned reserved:    16 - TRACE_RECORD_TOTAL_ALLOCATED_BITS;
 	unsigned severity:    TRACE_RECORD_SEVERITY_N_BITS;	/* One of the values of the trace_severity enum */
 	unsigned rec_type:    TRACE_RECORD_REC_TYPE_N_BITS;	/* One of the values of the trace_rec_type enum */
@@ -461,10 +467,14 @@ struct trace_log_descriptor {
 /* Metadata region header. For a full description of its layout see above at the top of the file. */
 
 struct trace_metadata_region {
-    char name[0x100];			/* The name of the process */
-    void *base_address;			/* Base address which was used at the time the various pointer fields in the data-structure were filled. */
+    char name[NAME_MAX + 1];			/* The name of the module (executable or shared-object) */
+    void *base_address;			        /* Base address which was used at the time the various pointer fields in the data-structure were filled. */
     unsigned long log_descriptor_count;
     unsigned long type_definition_count;
+#if (TRACE_FORMAT_VERSION >= TRACE_FORMAT_VERSION_INTRODUCED_MODULE_FULL_PATH)
+    char data_prior_to_module_full_path_introduction[0];
+    char mod_dir[NAME_MAX + 1];         /* Directory where the executable or shared-object is located */
+#endif
     char data[];  /* Place-holder for the actual metadata, when it is placed right after the header fields above (e.g. in the trace parser) */
 };
      

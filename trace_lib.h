@@ -82,7 +82,7 @@ int trace_finalize(void);
 static inline int trace_is_initialized(void) { return 0 != current_trace_buffer; }
 
 /* Get the log id corresponding to a descriptor */
-trace_log_id_t trace_get_descriptor_id(const struct trace_log_descriptor *descriptor);
+trace_log_id_t trace_get_descriptor_id(const struct trace_log_descriptor *descriptor)   TRACE_PER_MODULE_SYMBOL;
 
 /* Wrapper for the fork() system call which creates trace shared-memory objects for the newly forked process efficiently */
 pid_t trace_fork(void);
@@ -279,11 +279,19 @@ struct trace_records {
 	struct trace_record records[TRACE_RECORD_BUFFER_RECS];
 };
 
+/* Types used to keep track of module ids */
+typedef unsigned trace_module_id_t;
+typedef unsigned trace_module_id_allocation_mask_t;
 
 struct trace_buffer {
     pid_t pid;
     int n_record_buffers;
     unsigned buffer_indices[TRACE_SEV__COUNT];
+
+    /* Masks representing the modules for which metadata is available */
+    volatile trace_module_id_allocation_mask_t module_ids_allocated;     /* Module IDs allocated by the process */
+    volatile trace_module_id_allocation_mask_t module_ids_discovered;    /* Module IDs discovered by the dumper */
+
     union {
         struct trace_records _all_records[TRACE_BUFFER_NUM_RECORDS];
         struct {
@@ -297,10 +305,10 @@ struct trace_buffer {
 
 
 /* Functions and data structures for retrieving the latest error of the current thread */
-
 struct trace_internal_err_info {
     trace_ts_t     ts;
     trace_log_id_t log_id;
+    trace_module_id_t module_id;
     int            err_num;
 };
 

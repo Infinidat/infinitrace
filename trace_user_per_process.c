@@ -72,6 +72,9 @@ static inline void __attribute__((unused)) __compile_time_checks__(void)
     TRACE_COMPILE_TIME_ASSERT_EQ(TRACE_RUNTIME_USE_GLOBAL_DEFAULT, TRACE_SEV_INVALID);
     TRACE_COMPILE_TIME_ASSERT_IS_NON_ZERO(TRACE_SEV_INVALID < TRACE_SEV__MIN);
     TRACE_COMPILE_TIME_ASSERT_IS_NON_ZERO(TRACE_SEV__COUNT  > TRACE_SEV__MAX);
+
+    /* Check that the bit masks allocated to store module ids is large enough */
+    TRACE_COMPILE_TIME_ASSERT_IS_NON_ZERO(TRACE_MODULE_ID_MAX < CHAR_BIT * sizeof(trace_module_id_allocation_mask_t));
 }
 
 trace_module_id_t trace_module_id_alloc(void)
@@ -167,7 +170,12 @@ int trace_runtime_control_set_subsystem_range(int low, int high)
     return 0;
 }
 
-static __thread struct trace_internal_err_info internal_err_info = {0, 0, 0};
+static __thread struct trace_internal_err_info internal_err_info = {
+        .ts         = 0,
+        .log_id     = 0,
+        .module_id  = 0,
+        .err_num    = 0,
+};
 
 const struct trace_internal_err_info *trace_internal_err_get_last(void)
 {
@@ -194,10 +202,12 @@ void trace_internal_err_record_if_necessary(int saved_errno, const struct trace_
     else {
         if (NULL != header) {
             internal_err_info.ts = header->ts;
+            internal_err_info.module_id = header->module_id;
             internal_err_info.log_id = (header->rec_type == TRACE_REC_TYPE_TYPED) ? header->u.typed.log_id : (trace_log_id_t) -1;
         }
         else {
             internal_err_info.ts = 0;
+            internal_err_info.module_id = 0;
             internal_err_info.log_id = 0;
         }
     }
@@ -587,37 +597,80 @@ int trace_finalize(void)
 {
     int rc = trace_dynamic_log_buffers_unmap_if_necessary();
     trace_runtime_control_free_thresholds();
-    rc |= delete_shm_files(getpid());
+    rc |= trace_shm_delete_files(getpid());
     return rc;
 }
 
-/* Support for forking traced processes */
 
-static int child_proc_init(void)
+
+int trace_buffers_reset_if_new_process(void)
 {
-    invalidate_tid_cache();
-
-    trace_shm_name_buf parent_static_shm_name;
-    TRACE_ASSERT(trace_generate_shm_name(parent_static_shm_name, getppid(), TRACE_SHM_TYPE_STATIC, FALSE) > 0);
-
-    trace_shm_name_buf static_shm_name;
-    TRACE_ASSERT(trace_generate_shm_name(static_shm_name, getpid(), TRACE_SHM_TYPE_STATIC, FALSE) > 0);
-
-    if (trace_shm_duplicate(parent_static_shm_name, static_shm_name) < 0) {
-        return -1;
-    }
-
-    if (trace_dynamic_log_buffers_map() < 0) {
-        trace_delete_shm_if_necessary(static_shm_name);
-        return -1;
+    if (trace_has_processed_forked_since_init()) {
+        num_modules = 0;
+        return trace_dynamic_log_buffers_unmap_if_necessary();
     }
 
     return 0;
 }
 
+
+/* Support for forking traced processes */
+
+static trace_module_id_t module_ids_allocated = 0;
+
+static int child_proc_init(void)
+{
+    current_trace_buffer = NULL;
+    invalidate_tid_cache();
+    trace_module_id_t module_ids_pending = module_ids_allocated;
+    while (module_ids_pending) {
+        const unsigned mod_id = __builtin_ctz(module_ids_pending);
+
+        trace_shm_name_buf parent_static_shm_name;
+        const struct trace_shm_module_details parent_details = {
+                .pid = getppid(),
+                .module_id = mod_id,
+        };
+        TRACE_ASSERT(trace_generate_shm_name(parent_static_shm_name, &parent_details, TRACE_SHM_TYPE_STATIC_PER_PROCESS, FALSE) > 0);
+
+        trace_shm_name_buf static_shm_name;
+        const struct trace_shm_module_details details = {
+                .pid = getpid(),
+                .module_id = mod_id,
+        };
+        TRACE_ASSERT(trace_generate_shm_name(static_shm_name, &details, TRACE_SHM_TYPE_STATIC_PER_PROCESS, FALSE) > 0);
+
+        if (trace_shm_duplicate(parent_static_shm_name, static_shm_name) < 0) {
+            goto delete_static_shm;
+        }
+
+        module_ids_pending &= (! (1U << mod_id));
+    }
+
+    if (trace_dynamic_log_buffers_map(module_ids_allocated) < 0) {
+        goto delete_static_shm;
+    }
+
+    return 0;
+
+delete_static_shm:
+    {
+        const int saved_errno = errno;
+        trace_shm_delete_files(getpid());
+        TRACE_ASSERT(0 != saved_errno);
+        errno = saved_errno;
+        return -1;
+    }
+}
+
 pid_t trace_fork(void)
 {
-    return trace_fork_with_child_init(child_proc_init, delete_shm_files);
+    if (! trace_is_initialized()) {
+        return fork();
+    }
+
+    module_ids_allocated = current_trace_buffer->module_ids_allocated;
+    return trace_fork_with_child_init(child_proc_init, trace_shm_delete_files);
 }
 
 

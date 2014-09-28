@@ -153,6 +153,12 @@ bool_t trace_parse_name_value_pair(char *str, char **name, char **str_value, lon
     return FALSE;
 }
 
+bool_t trace_get_number_from_substring(const char* str, size_t substr_len, long long *num)
+{
+    const char *const tmp = strndupa(str, substr_len);
+    return trace_get_number(tmp, num);
+}
+
 size_t trace_strncpy(char* dest, const char* source, size_t max_size)
 {
 	const char* p = memccpy(dest, source, '\0', max_size);

@@ -32,8 +32,9 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <limits.h>
+#include <libgen.h>
+#include <dlfcn.h>
 
 
 #include "trace_macros.h"
@@ -41,9 +42,13 @@
 #include "trace_user.h"
 #include "trace_metadata_util.h"
 #include "trace_shm_util.h"
+#include "trace_str_util.h"
 #include "file_naming.h"
 #include "halt.h"
 
+#pragma GCC diagnostic ignored "-Wvla"  /* Allow C99 variable-length arrays */
+
+static pid_t saved_pid = -1;
 
 static unsigned get_nearest_power_of_2(unsigned long n)
 {
@@ -97,6 +102,7 @@ static void init_records_metadata(void)
 
     current_trace_buffer->n_record_buffers = TRACE_BUFFER_NUM_RECORDS;
     current_trace_buffer->pid = getpid();
+    saved_pid = current_trace_buffer->pid;
 
 #define ALL_SEVS_ABOVE(sev) (((1 << (TRACE_SEV__MAX + 1))) - (1 << (sev + 1)))
 
@@ -127,10 +133,13 @@ static void set_current_trace_buffer_ptr(struct trace_buffer *trace_buffer_ptr)
     current_trace_buffer = trace_buffer_ptr;
 }
 
-int trace_dynamic_log_buffers_map(void)
+int trace_dynamic_log_buffers_map(trace_module_id_t initial_module_ids)
 {
     trace_shm_name_buf shm_tmp_name;
-    TRACE_ASSERT(trace_generate_shm_name(shm_tmp_name, getpid(), TRACE_SHM_TYPE_DYNAMIC, TRUE) > 0);
+    const struct trace_shm_module_details details = {
+            .pid = getpid()
+    };
+    TRACE_ASSERT(trace_generate_shm_name(shm_tmp_name, &details, TRACE_SHM_TYPE_DYNAMIC, TRUE) > 0);
 
     const int shm_fd = trace_open_shm(shm_tmp_name);
     if (shm_fd < 0) {
@@ -159,11 +168,13 @@ int trace_dynamic_log_buffers_map(void)
 
     set_current_trace_buffer_ptr((struct trace_buffer *)mapped_addr);
     init_records_metadata();
+    current_trace_buffer->module_ids_allocated  = initial_module_ids;
+    current_trace_buffer->module_ids_discovered = 0;
 
     /* In order to avoid a possible race condition of the dumper accessing the shared-memory area before it is fully initialized, we only rename it
      * to the name the dumper expects after completing its initialization. */
     trace_shm_name_buf shm_name;
-    TRACE_ASSERT(trace_generate_shm_name(shm_name, getpid(), TRACE_SHM_TYPE_DYNAMIC, FALSE) > 0);
+    TRACE_ASSERT(trace_generate_shm_name(shm_name, &details, TRACE_SHM_TYPE_DYNAMIC, FALSE) > 0);
     if (trace_shm_rename(shm_tmp_name, shm_name) < 0) {
         goto free_shm;
     }
@@ -195,12 +206,17 @@ int trace_dynamic_log_buffers_unmap_if_necessary()
         }
 
         current_trace_buffer = NULL;
+        saved_pid = -1;
     }
 
     TRACE_ASSERT(NULL == current_trace_buffer);
     return 0;
 }
 
+bool_t trace_has_processed_forked_since_init(void)
+{
+    return (saved_pid >= 0) && (getpid() != saved_pid);
+}
 
 /* Routines for initializing static information buffers that contain per-module metadata describing the module's traces */
 
@@ -341,7 +357,7 @@ static void copy_metadata_to_allocated_buffer(const struct trace_static_informat
     copy_type_definitions_to_allocated_buffer(static_info, type_definition, enum_values, string_table);
 }
 
-static void copy_log_section_shared_area(int shm_fd, const char *buffer_name,
+static void copy_log_section_shared_area(int shm_fd,
                                          const struct trace_static_information *static_info,
                                          unsigned int log_param_count,
                                          unsigned int type_definition_count,
@@ -365,8 +381,15 @@ static void copy_log_section_shared_area(int shm_fd, const char *buffer_name,
                                       type_definition, enum_values,
                                       &string_table);
 
-    strncpy(metadata_region->name, buffer_name, sizeof(metadata_region->name));
-    metadata_region->name[sizeof(metadata_region->name) - 1] = '\0';
+    char mod_path[strlen(static_info->module_full_path) + 1];
+    memcpy(mod_path, static_info->module_full_path, sizeof(mod_path));
+    trace_strncpy_and_terminate(metadata_region->name, basename(mod_path), sizeof(metadata_region->name));
+
+#if (TRACE_FORMAT_VERSION >= TRACE_FORMAT_VERSION_INTRODUCED_MODULE_FULL_PATH)
+    memcpy(mod_path, static_info->module_full_path, sizeof(mod_path));
+    trace_strncpy_and_terminate(metadata_region->mod_dir, dirname(mod_path), sizeof(metadata_region->mod_dir));
+#endif
+
     metadata_region->base_address = mapped_addr;
     TRACE_ASSERT(0 == munmap(mapped_addr, alloc_size));
 }
@@ -474,7 +497,7 @@ static void static_log_alloc_size(const struct trace_static_information *static_
     type_alloc_size(static_info->type_information_start, type_definition_count, enum_value_count, alloc_size);
 }
 
-void trace_static_log_data_map(const struct trace_static_information *static_info, const char *buffer_name)
+void trace_static_log_data_map(const struct trace_static_information *static_info)
 {
     trace_shm_name_buf shm_name;
     unsigned int alloc_size;
@@ -482,15 +505,29 @@ void trace_static_log_data_map(const struct trace_static_information *static_inf
     unsigned int type_definition_count;
     unsigned int enum_value_count;
 
-    TRACE_ASSERT(trace_generate_shm_name(shm_name, getpid(), TRACE_SHM_TYPE_STATIC, FALSE) > 0);
+    const struct trace_shm_module_details details = {
+            .pid = getpid(),
+            .module_id = static_info->module_id,
+    };
+    TRACE_ASSERT(trace_generate_shm_name(shm_name, &details, TRACE_SHM_TYPE_STATIC_PER_PROCESS, FALSE) > 0);
     const int shm_fd = trace_open_shm(shm_name);
     TRACE_ASSERT(shm_fd >= 0);
 
     static_log_alloc_size(static_info, &total_log_descriptor_params, &type_definition_count, &enum_value_count, &alloc_size);
     alloc_size = (alloc_size + TRACE_RECORD_SIZE - 1) & ~(TRACE_RECORD_SIZE - 1);
-    copy_log_section_shared_area(shm_fd, buffer_name, static_info, total_log_descriptor_params,
+    copy_log_section_shared_area(shm_fd, static_info, total_log_descriptor_params,
                                  type_definition_count, enum_value_count,
                                  sizeof(struct trace_metadata_region) + alloc_size);
     TRACE_ASSERT(0 == close(shm_fd));
 }
 
+const char *trace_get_module_name(const struct trace_log_descriptor *static_log_information_addr)
+{
+    Dl_info info;
+    memset(&info, 0, sizeof(info));
+    if (0 == dladdr(static_log_information_addr, &info)) {  /* Here 0 represents failure */
+        return NULL;
+    }
+
+    return info.dli_fname;
+}

@@ -53,6 +53,9 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
   * Return value: TRUE if a numerical value has been successfully extracted, FALSE otherwise. */
  bool_t trace_parse_name_value_pair(char *str, char **name, char **str_value, long long *num_value);
 
+ /* Apply trace_get_number to a substring of the specified length */
+ bool_t trace_get_number_from_substring(const char* str, size_t substr_len, long long *num);
+
  /* A custom string copy routine. Copy the content of source to dest, up to max_size bytes, including the terminating null byte if present.
   * Return the number of bytes copied excluding the null byte */
  size_t trace_strncpy(char* dest, const char* source, size_t max_size);

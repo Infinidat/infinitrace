@@ -21,7 +21,7 @@
 #ifndef TRACE_SHM_UTIL_H_
 #define TRACE_SHM_UTIL_H_
 
-int delete_shm_files(pid_t pid);
+int trace_shm_delete_files(pid_t pid);
 
 int trace_delete_shm_if_necessary(const char *shm_name);
 

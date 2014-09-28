@@ -29,10 +29,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <regex.h>
 
-#include "file_naming.h"
 #include "trace_clock.h"
 #include "trace_str_util.h"
+#include "array_length.h"
+#include "trace_macros.h"
+#include "file_naming.h"
+
 
 bool_t trace_is_valid_file_name(const char *name)
 {
@@ -68,51 +72,71 @@ int trace_generate_file_name(char *filename, const char *filename_base, size_t n
 	return len + snprintf(filename + len, name_len - len, "%02llu" TRACE_FILE_SUFFIX, (now_ms % 1000) / 10);
 }
 
-int trace_generate_shm_name(trace_shm_name_buf buf, pid_t pid, enum trace_shm_object_type shm_type, bool_t temporary)
+int trace_generate_shm_name(trace_shm_name_buf buf, const struct trace_shm_module_details *details, enum trace_shm_object_type shm_type, bool_t temporary)
 {
-    const char *fmt = NULL;
-
+    const char *const extra_suffix = temporary ? ".tmp" : "";
+    const int buf_len = sizeof(trace_shm_name_buf) - strlen(extra_suffix);
+    int len = 0;
     switch (shm_type) {
     case TRACE_SHM_TYPE_DYNAMIC:
-        fmt = TRACE_DYNAMIC_DATA_REGION_NAME_FMT "%s";
+        len = snprintf(buf, buf_len, TRACE_DYNAMIC_DATA_REGION_NAME_FMT, (int) (details->pid));
         break;
 
-    case TRACE_SHM_TYPE_STATIC:
-        fmt = TRACE_STATIC_DATA_REGION_NAME_FMT "%s";
+    case TRACE_SHM_TYPE_STATIC_PER_PROCESS:
+        len = snprintf(buf, buf_len, TRACE_STATIC_PER_PROCESS_DATA_REGION_NAME_FMT,
+                (int) (details->pid), (unsigned) (details->module_id));
         break;
 
+    case TRACE_SHM_TYPE_STATIC_PER_FILE:
+    case TRACE_SHM_TYPE_COUNT:
     default:
         errno = EINVAL;
         return -1;
     }
 
-    const int buf_len = sizeof(trace_shm_name_buf);
-    const char *const extra_suffix = temporary ? ".tmp" : "";
-    const int len = snprintf(buf, buf_len, fmt, (int) pid, extra_suffix);
     if (len >= buf_len) {
+        buf[buf_len - 1] = '\0';
         errno = ENAMETOOLONG;
         return -1;
     }
 
-    return len;
+    return stpcpy(buf + len, extra_suffix) - buf;
+}
+
+#define SHM_GENERIC_PREFIX_REGEXP TRACE_SHM_ID "([[:digit:]]{1,6})"
+
+static const char shm_generic_regexp[] = SHM_GENERIC_PREFIX_REGEXP "_.+ic_trace_.*data";
+static const char shm_dynamic_regexp[] = SHM_GENERIC_PREFIX_REGEXP TRACE_DYNAMIC_SUFFIX;
+static const char shm_static_regexp[]  = SHM_GENERIC_PREFIX_REGEXP "_([[:digit:]]+)" TRACE_STATIC_SUFFIX;
+
+#undef SHM_GENERIC_PREFIX_REGEXP
+
+static regex_t file_type_regexps[TRACE_SHM_TYPE_COUNT];
+
+static void compile_regexps(void) __attribute__((constructor));
+static void compile_regexps(void)
+{
+    memset(file_type_regexps, 0, sizeof(file_type_regexps));
+    TRACE_ASSERT(0 == regcomp(file_type_regexps + TRACE_SHM_TYPE_DYNAMIC, shm_dynamic_regexp, REG_EXTENDED));
+    TRACE_ASSERT(0 == regcomp(file_type_regexps + TRACE_SHM_TYPE_STATIC_PER_PROCESS, shm_static_regexp, REG_EXTENDED));
+    TRACE_ASSERT(0 == regcomp(file_type_regexps + TRACE_SHM_TYPE_ANY, shm_generic_regexp, REG_EXTENDED));
+}
+
+static long long get_number_from_match_group(const char *s, const regmatch_t *match)
+{
+    long long result = -1;
+    /* We assert that we get an invalid number, since the regexp should have checked for that */
+    TRACE_ASSERT(trace_get_number_from_substring(s + match->rm_so, match->rm_eo - match->rm_so, &result));
+    return result;
 }
 
 pid_t trace_get_pid_from_shm_name(const char *shm_name)
 {
-    if (! trace_str_starts_with_prefix(shm_name, TRACE_SHM_ID)) {
+    regmatch_t matches[2];
+    if (0 != regexec(file_type_regexps + TRACE_SHM_TYPE_ANY, shm_name, ARRAY_LENGTH(matches), matches, 0)) {
         errno = EINVAL;
         return -1;
     }
 
-    shm_name += strlen(TRACE_SHM_ID);
-    const char *const underscore = strchr(shm_name, '_');
-
-    if (NULL == underscore) {
-        errno = EINVAL;
-        return -1;
-    }
-
-    const size_t pid_str_len = underscore - shm_name;
-    const char *const pid_str = strndupa(shm_name, pid_str_len);
-    return atoi(pid_str);
+    return (pid_t) get_number_from_match_group(shm_name, matches + 1);
 }
