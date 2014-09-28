@@ -35,7 +35,7 @@ objs = [Object(target = S + '.o', source = S + '.c', CCFLAGS = optflags)  for S 
 srcs = xn_env.AutoSplit('''trace_parser.c validator.c''') + objs
 xn_env.BuildStaticLibraries(target = 'tracereader', source = srcs, CCFLAGS = optflags)
 
-srcs = xn_env.AutoSplit('''timeformat.c parser.c filter.c parser_mmap.c renderer.cpp''') + objs
+srcs = xn_env.AutoSplit('''timeformat.c parser.c filter.c parser_mmap.c out_fd.c renderer.cpp trace_node.cpp''') + objs
 xn_env.BuildStaticLibraries(target = 'reader', source = srcs, CCFLAGS = optflags)
 
 srcs = xn_env.AutoSplit('''opt_util.c trace_str_util.c trace_clock.c file_naming.c''')

@@ -18,8 +18,10 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #ifndef __TRACE_PARSER_H__
 #define __TRACE_PARSER_H__
 
-#include "list_template.h"
 #include <stdio.h>
+
+#include "platform.h"
+#include "list_template.h"
 #include "trace_defs.h"
 #include "hashmap.h"
 

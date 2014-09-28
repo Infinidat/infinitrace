@@ -13,20 +13,26 @@
 #include "bool.h"
 #include "trace_defs.h"
 #include "parser.h"
+#include "out_fd.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct out_fd {
-    char buf[0x4000];
-    unsigned int i;
-} out_fd_t;
 
 /* Variants of the render_typed_params functions, which formats data constituting trace arguments according to a specified format */
 
 /* A variation using the older, faster but less flexible "flat" rendering engine, which produces text directly */
 int TRACE_PARSER__render_typed_params_flat(
+        const struct trace_parser *parser,
+        const struct trace_parser_buffer_context *context,
+        const struct trace_record_typed *typed_record,
+        int *bytes_processed,   /* Output parameter. A negative value signals an error */
+        struct out_fd* out,
+        bool_t describe_params);
+
+/* A variation using the newer, slower but more flexible modular rendering engine, which produces text via an intermediate object representation */
+int TRACE_PARSER__render_typed_params_modular(
         const struct trace_parser *parser,
         const struct trace_parser_buffer_context *context,
         const struct trace_record_typed *typed_record,
@@ -44,7 +50,7 @@ static inline int TRACE_PARSER__render_typed_params(
 {
 	return
 #ifdef TRACE_USE_MODULAR_RENDERING
-#error "Trace modular rendering is not yet implemented in this version"
+			TRACE_PARSER__render_typed_params_modular
 #else
 			TRACE_PARSER__render_typed_params_flat
 #endif
@@ -63,9 +69,6 @@ typedef char log_id_size_info_output_buf_t[64];
 int log_id_format_sizes(struct trace_parser_buffer_context *context, trace_log_id_t log_id, int avg_size, log_id_size_info_output_buf_t size_info);
 
 void say_new_file(struct out_fd* out, struct trace_parser *parser, trace_ts_t ts);
-
-void out_init(struct out_fd* out);
-void out_flush(struct out_fd* out);
 
 #ifdef __cplusplus
 }

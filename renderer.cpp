@@ -8,15 +8,14 @@
 #include "platform.h"
 
 #include <stdio.h>
-#include <ctype.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <limits.h>
 #include <errno.h>
 #include <sysexits.h>
 #include <assert.h>
-#include <stdarg.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "min_max.h"
 #include "array_length.h"
@@ -25,115 +24,19 @@
 #include "trace_metadata_util.h"
 #include "object_pool.h"
 #include "trace_sev_display.h"
-#include "string.h"
+
 #include "timeformat.h"
 #include "trace_str_util.h"
 #include "hashmap.h"
 #include "parser.h"
 #include "filter.h"
+#include "trace_node.h"
 #include "renderer.h"
 
-
-
-
-void out_init(struct out_fd* out) {
-    out->i = 0;
-}
-
-void out_flush(struct out_fd* out) {
-#define _outout stdout
-    fwrite(out->buf, 1, out->i, _outout);
-    out_init(out);
-#undef _outout
-}
-
-static inline int out_capacity(const out_fd_t* out)
-{
-	return sizeof(out->buf) - out->i;
-}
-
-static void out_check(out_fd_t* out) {
-    if (out_capacity(out) > 0x200)
-        return;
-    fprintf(stderr, "Formatted record is too long (0x%x)", out->i);
-    out_flush(out);
-    /* exit(EX_DATAERR); */
-}
-
-static void SAY_S(out_fd_t* out, const char* str) {
-    out_check(out);
-    char* dst = out->buf + out->i;
-    out->i += trace_strncpy(dst, str, out_capacity(out));
-}
-static inline void SAY_C(out_fd_t* out, const char chr) {
-    out->buf[out->i++] = chr;
-}
-static void SAY_F(out_fd_t* out, const char* fmt, ...) {
-    out_check(out);
-    va_list args;
-    va_start(args, fmt);
-    const int capacity = out_capacity(out);
-    const int rc = vsnprintf(out->buf + out->i, capacity, fmt, args);
-    va_end(args);
-    if (rc >= capacity) {  // Could not accommodate the output string
-    	out->i += capacity - 1;
-    	out_check(out);
-    }
-    else {
-    	out->i += rc;
-    }
-}
-
-#define SAY_COL(O,C) do { if (color_bool) { SAY_S(O,C); } } while (0)
-#define SAY_COLORED(O,S,C) do { if (color_bool) { SAY_COL(O,C); SAY_S(O,S); SAY_COL(O,ANSI_RESET);} else { SAY_S(O,S); } } while(0)
-
-static inline void SAY_ESCAPED_C(out_fd_t* out, char chr) {
-    static const char hex_digits[] = "0123456789abcdef";
-
-    if (isprint(chr)) {
-        SAY_C(out, chr);
-    }
-    else {
-        SAY_C(out, '\\');
-        switch (chr) {
-        case '\n': SAY_C(out, 'n'); break;
-        case '\t': SAY_C(out, 't'); break;
-        case '\r': SAY_C(out, 'r'); break;
-        case '\0': SAY_C(out, '0'); break;
-        default:
-            SAY_C(out, 'x');
-            SAY_C(out, hex_digits[(chr >> 4) & 0xf]);
-            SAY_C(out, hex_digits[ chr       & 0xf]);
-            break;
-        }
-    }
-}
-
-static void SAY_ESCAPED_S(out_fd_t* out, const char* buf, size_t size) {
-    out_check(out);
-    for (size_t i = 0; i < size; i++) {
-        SAY_ESCAPED_C(out, buf[i]);
-    }
-}
-
-static void SAY_INT(out_fd_t* out, bool_t color_bool, bool_t force_hex, unsigned flags, unsigned value) {
-    SAY_COL(out, CYAN_B);
-    const bool_t hex = force_hex || (flags & TRACE_PARAM_FLAG_HEX);
-    SAY_F  (out, hex ? "0x%x" : (flags & TRACE_PARAM_FLAG_UNSIGNED) ? "%u" : "%d", value);
-    SAY_COL(out, ANSI_RESET);
-}
-
-static void SAY_FLOAT(out_fd_t* out, bool_t color_bool, double value) {
-    SAY_COL(out, CYAN_B);
-    SAY_F  (out, "%f", value);
-    SAY_COL(out, ANSI_RESET);
-}
 
 static int ends_with_equal(const out_fd_t* out) {
     return (out->i > 1 && out->buf[out->i-1] == '=');
 }
-
-
 
 static const char* get_type_name(const struct trace_parser_buffer_context *context, const char *type_name, unsigned int value)
 {
@@ -455,6 +358,32 @@ static const char * severity_to_str(unsigned int sev, int color_bool) {
         sevs        [mapped_sev - TRACE_SEV_FUNC_TRACE] ;
 }
 
+int TRACE_PARSER__render_typed_params_modular(
+        const struct trace_parser *parser,
+        const struct trace_parser_buffer_context *context,
+        const struct trace_record_typed *typed_record,
+        int *bytes_processed,   /* Output parameter. A negative value signals an error */
+        struct out_fd* out,
+        bool_t describe_params)
+{
+	// TODO: This doesn't support stats mode correctly. We should have another version of the TraceParamsByFormatNode
+	// constructor which takes only the log-id and creates an object hierarchy with no actual data content.
+
+	const TraceNode::RenderingMode mode = parser->color ? TraceNode::RENDER_MODE_ANSI : TraceNode::RENDER_MODE_PLAIN;
+	if (describe_params) {
+		TraceParamsByFormatNode params(context, typed_record->log_id);
+		params.outFormattedDescription(out, mode);
+		*bytes_processed = params.getNumDataBytesProcessed();
+	}
+	else {
+		TraceParamsByFormatNode params(context, typed_record);
+		params.outFormattedValue(out, mode);
+		*bytes_processed = params.getNumDataBytesProcessed();
+	}
+
+	return out->i;
+}
+
 int TRACE_PARSER__format_typed_record(
         const trace_parser_t *parser,
         const struct trace_parser_buffer_context *context,
@@ -662,5 +591,3 @@ void say_new_file(struct out_fd* out, trace_parser_t *parser, trace_ts_t ts) {
     SAY_S  (out, "\n");
     parser->show_filename = NULL;
 }
-
-
