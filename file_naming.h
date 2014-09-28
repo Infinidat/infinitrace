@@ -44,11 +44,11 @@ int trace_generate_file_name(char *filename, const char *filename_base, size_t n
 #define TRACE_STATIC_PER_PROCESS_DATA_REGION_NAME_FMT  TRACE_SHM_ID "%d_%u" TRACE_STATIC_SUFFIX
 
 enum trace_shm_object_type {
+    TRACE_SHM_TYPE_ANY = 0,             /* can't be used to generate a file name, only for inquiries */
     TRACE_SHM_TYPE_DYNAMIC,
     TRACE_SHM_TYPE_STATIC_PER_PROCESS,
     TRACE_SHM_TYPE_STATIC_PER_FILE,     /* Will be used in the future to keep a single copy of metadata from a shared-object used by multiple processes */
-    TRACE_SHM_TYPE_COUNT,               /* Must cone after all normal object types */
-    TRACE_SHM_TYPE_ANY = TRACE_SHM_TYPE_COUNT
+    TRACE_SHM_TYPE_COUNT                /* Must come last */
 };
 
 struct trace_shm_module_details {

@@ -88,6 +88,7 @@ int trace_generate_shm_name(trace_shm_name_buf buf, const struct trace_shm_modul
         break;
 
     case TRACE_SHM_TYPE_STATIC_PER_FILE:
+    case TRACE_SHM_TYPE_ANY:
     case TRACE_SHM_TYPE_COUNT:
     default:
         errno = EINVAL;
