@@ -19,7 +19,7 @@ ALL_TARGETS=libtrace dump_file_diags reader
 # Note that interactive_reader has been removed from the default build
  
 ifeq ($(TARGET_PLATFORM),linux-gnu)
-       EXTRA_LIBS+=-lrt
+       EXTRA_LIBS+=-lrt -lpthread
        ALL_TARGETS+=libtraceuser_per_process libtraceuser_per_module trace_dumper trace_instrumentor libtrace_so
        LIBTRACEUTIL_OBJS+=trace_proc_util.o
 endif
