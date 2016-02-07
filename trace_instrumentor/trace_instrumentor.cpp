@@ -240,10 +240,10 @@ bool DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
     bool has_returns = false;
     Stmt *const stmt = D->getBody();
     SourceLocation function_start = getFunctionBodyStart(stmt);
-    TraceParam trace_param(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
-    TraceParam function_name_param(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
+    TraceParam trace_param(Out, &Diags, ast, Rewrite, referencedTypes, globalTraces);
+    TraceParam function_name_param(Out, &Diags, ast, Rewrite, referencedTypes, globalTraces);
     function_name_param.setConstStr(qual_name);
-    TraceCall trace_call(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
+    TraceCall trace_call(Out, &Diags, ast, Rewrite, referencedTypes, globalTraces);
     trace_call.addTraceParam(function_name_param);
     enum trace_severity severity = TRACE_SEV_FUNC_TRACE;
 
@@ -279,12 +279,12 @@ bool DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
     hasReturnStmts(stmt, has_returns);
     if (!has_returns || D->getCallResultType()->isVoidType()) {
         SourceLocation endLocation = stmt->getLocEnd();
-        TraceParam trace_param(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
-        TraceParam function_name_param(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
+        TraceParam trace_param(Out, &Diags, ast, Rewrite, referencedTypes, globalTraces);
+        TraceParam function_name_param(Out, &Diags, ast, Rewrite, referencedTypes, globalTraces);
 
         function_name_param.setConstStr(qual_name);
     
-        TraceCall trace_call(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
+        TraceCall trace_call(Out, &Diags, ast, Rewrite, referencedTypes, globalTraces);
         enum trace_severity severity = TRACE_SEV_FUNC_TRACE;
         trace_call.setSeverity(severity);
         trace_call.setKind("TRACE_LOG_DESCRIPTOR_KIND_FUNC_LEAVE");
@@ -386,11 +386,11 @@ bool StmtIterator::VisitReturnStmt(ReturnStmt *S)
     SourceLocation startLoc = S->getLocStart();
     SourceLocation onePastSemiLoc = getReturnStmtEnd(ast, Rewrite, S);
     
-    TraceParam trace_param(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
-    TraceParam function_name_param(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
+    TraceParam trace_param(Out, &Diags, ast, Rewrite, referencedTypes, globalTraces);
+    TraceParam function_name_param(Out, &Diags, ast, Rewrite, referencedTypes, globalTraces);
     function_name_param.setConstStr(FD->getQualifiedNameAsString());
     
-    TraceCall trace_call(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
+    TraceCall trace_call(Out, &Diags, ast, Rewrite, referencedTypes, globalTraces);
     enum trace_severity severity = TRACE_SEV_FUNC_TRACE;
     trace_call.setKind("TRACE_LOG_DESCRIPTOR_KIND_FUNC_LEAVE");
     trace_call.setSeverity(severity);
@@ -413,7 +413,7 @@ expand:
 
 bool StmtIterator::VisitCallExpr(CallExpr *S)
 {
-    std::unique_ptr<TraceCall> trace_call(new TraceCall(Out, Diags, ast, Rewrite, referencedTypes, globalTraces));
+    std::unique_ptr<TraceCall> trace_call(new TraceCall(Out, &Diags, ast, Rewrite, referencedTypes, globalTraces));
     bool successfully_parsed = trace_call->fromCallExpr(S);
     if (successfully_parsed) {
         if (trace_call->isRepr()) {
