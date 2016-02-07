@@ -48,7 +48,7 @@ static const Type *get_expr_type(const Expr *expr)
 
 TraceParam::TraceParam(
     llvm::raw_ostream &out,
-    clang::DiagnosticsEngine &_Diags,
+    clang::DiagnosticsEngine *_Diags,
     clang::ASTContext &_ast,
     clang::Rewriter *rewriter,
     std::set<const clang::Type *> &_referencedTypes,
@@ -62,13 +62,13 @@ TraceParam::TraceParam(
         type_name("0"),
         trace_call(NULL) {
     clear();
-    NonInlineTraceRepresentDiag = Diags.getCustomDiagID(clang::DiagnosticsEngine::Warning,
+    NonInlineTraceRepresentDiag = Diags->getCustomDiagID(clang::DiagnosticsEngine::Warning,
                                                   "Unable to check the validity of __repr__ because it is not defined in-line");
-    MultipleReprCallsDiag = Diags.getCustomDiagID(clang::DiagnosticsEngine::Error,
+    MultipleReprCallsDiag = Diags->getCustomDiagID(clang::DiagnosticsEngine::Error,
                                                   "A __repr__ function may only have a single call to REPR() (showing last call to REPR)");
-    EmptyLiteralStringDiag = Diags.getCustomDiagID(clang::DiagnosticsEngine::Warning,
+    EmptyLiteralStringDiag = Diags->getCustomDiagID(clang::DiagnosticsEngine::Warning,
                                                   "Empty literal string in trace has no effect");
-    TraceParamDependentType = Diags.getCustomDiagID(clang::DiagnosticsEngine::Error,
+    TraceParamDependentType = Diags->getCustomDiagID(clang::DiagnosticsEngine::Error,
     											  "The type of a trace parameter must not depend on a template argument");
 
 }
@@ -96,9 +96,9 @@ TraceParam& TraceParam::operator = ( const TraceParam& source )
     trace_call       = source.trace_call;
     Diags            = source.Diags;
 
-    type_name = type_name;
-    is_pointer = is_pointer;
-    is_reference = is_reference;
+    type_name = source.type_name;
+    is_pointer = source.is_pointer;
+    is_reference = source.is_reference;
     return *this;
 }
 
@@ -420,7 +420,7 @@ bool TraceParam::parseStringParam(const Expr *expr)
             const_str = literalString;
             return true;
         } else {
-            Diags.Report(ast.getFullLoc(stripped_expr->getLocStart()), EmptyLiteralStringDiag) << stripped_expr->getSourceRange();
+            Diags->Report(ast.getFullLoc(stripped_expr->getLocStart()), EmptyLiteralStringDiag) << stripped_expr->getSourceRange();
             return false;
         }
     }
@@ -485,7 +485,7 @@ bool TraceParam::fromExpr(const Expr *trace_param, bool deref_pointer)
     	// it encounters a call expression with template dependent arguments, so we never get here.
 
     	// Type depends on a template and can't be determined while the code is being instrumented.
-    	Diags.Report(ast.getFullLoc(trace_param->getLocStart()), TraceParamDependentType) << trace_param->getSourceRange();
+    	Diags->Report(ast.getFullLoc(trace_param->getLocStart()), TraceParamDependentType) << trace_param->getSourceRange();
 	}
 
     return false;
@@ -566,7 +566,7 @@ bool TraceParam::parseClassTypeParam(const Expr *expr)
         if (method->getNameAsString().compare(STR(TRACE_REPR_INTERNAL_METHOD_NAME)) == 0) {
             MD = *method;
             if (!method->hasInlineBody()) {
-                Diags.Report(ast.getFullLoc(method->getLocStart()), NonInlineTraceRepresentDiag) << method->getSourceRange();
+                Diags->Report(ast.getFullLoc(method->getLocStart()), NonInlineTraceRepresentDiag) << method->getSourceRange();
             }
             break;
         }
@@ -587,7 +587,7 @@ bool TraceParam::parseClassTypeParam(const Expr *expr)
 		}
 
 		if (call_count > 1) {
-			Diags.Report(ast.getFullLoc(call_expr->getLocStart()), MultipleReprCallsDiag) << call_expr->getSourceRange();
+			Diags->Report(ast.getFullLoc(call_expr->getLocStart()), MultipleReprCallsDiag) << call_expr->getSourceRange();
 		}
     }
 

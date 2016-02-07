@@ -24,6 +24,7 @@ Copyright 2012 Yotam Rubin <yotamrubin@gmail.com>
 #include "clang/Lex/Lexer.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/AST/DeclVisitor.h"
+#include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/IdentifierTable.h"
@@ -161,7 +162,7 @@ static bool shouldInstrumentFunctionDecl(const FunctionDecl *D, bool whitelistEx
 
 namespace {
 
-class DeclIterator : public DeclVisitor<DeclIterator> {
+class DeclIterator : public RecursiveASTVisitor<DeclIterator> {
 public:
     llvm::raw_ostream &Out;
     DiagnosticsEngine &Diags;
@@ -172,28 +173,9 @@ public:
     bool whitelistExceptions;
 
     DeclIterator(llvm::raw_ostream& xOut, DiagnosticsEngine &_Diags, ASTContext &xAst, Rewriter *rewriter, SourceManager *sm, const LangOptions &_langOpts, std::set<const Type *> &referenced_types, std::set<TraceCall *> &global_traces, bool _whitelistExceptions) : Out(xOut), Diags(_Diags), ast(xAst), Rewrite(rewriter), SM(sm), langOpts(_langOpts), whitelistExceptions(_whitelistExceptions), referencedTypes(referenced_types), globalTraces(global_traces)  {};
-    void VisitDeclContext(DeclContext *DC, bool Indent = true);
-    void VisitTranslationUnitDecl(TranslationUnitDecl *D);
-    void VisitTypedefDecl(TypedefDecl *D);
-    void VisitTypeAliasDecl(TypeAliasDecl *D);
-    void VisitEnumDecl(EnumDecl *D);
-    void VisitRecordDecl(RecordDecl *D);
-    void VisitEnumConstantDecl(EnumConstantDecl *D);
-    void VisitFunctionDecl(FunctionDecl *D);
-    void VisitFieldDecl(FieldDecl *D);
-    void VisitVarDecl(VarDecl *D);
-    void VisitLabelDecl(LabelDecl *D);
-    void VisitParmVarDecl(ParmVarDecl *D);
-    void VisitFileScopeAsmDecl(FileScopeAsmDecl *D);
-    void VisitStaticAssertDecl(StaticAssertDecl *D);
-    void VisitNamespaceDecl(NamespaceDecl *D);
-    void VisitUsingDirectiveDecl(UsingDirectiveDecl *D);
-    void VisitNamespaceAliasDecl(NamespaceAliasDecl *D);
-    void VisitCXXRecordDecl(CXXRecordDecl *D);
-    void VisitLinkageSpecDecl(LinkageSpecDecl *D);
-    void VisitTemplateDecl(const TemplateDecl *D);
-    void VisitFunctionTemplateDecl(FunctionTemplateDecl *D);
-    void VisitClassTemplateDecl(ClassTemplateDecl *D);
+
+    bool VisitVarDecl(VarDecl *D);
+    bool VisitFunctionDecl(FunctionDecl *D);
 
 private:
     SourceLocation getFunctionBodyStart(Stmt *FB);
@@ -201,7 +183,7 @@ private:
     std::set<TraceCall *> &globalTraces;
 };
 
-class StmtIterator : public StmtVisitor<StmtIterator> {
+class StmtIterator : public RecursiveASTVisitor<StmtIterator> {
 public:
     llvm::raw_ostream &Out;
     DiagnosticsEngine &Diags;
@@ -216,17 +198,8 @@ public:
 
     StmtIterator(llvm::raw_ostream& xOut, DiagnosticsEngine &_Diags, ASTContext &xAst, Rewriter *rewriter, SourceManager *sm, const LangOptions &_langOpts, Decl *_D, bool _whitelistExceptions, std::set<const Type *>&referenced_types, std::set<TraceCall *> &global_traces) : Out(xOut), Diags(_Diags), ast(xAst), Rewrite(rewriter), SM(sm), langOpts(_langOpts), D(_D), whitelistExceptions(_whitelistExceptions), referencedTypes(referenced_types), globalTraces(global_traces)  {};
 
-#define STMT(Node, Base) void Visit##Node(Node *S);
-#include <clang/AST/StmtNodes.inc>
-
-    void VisitStmt(Stmt *S);
-    void VisitDecl(Decl *D);
-    void VisitType(QualType T);
-    void VisitName(DeclarationName Name);
-    void VisitNestedNameSpecifier(NestedNameSpecifier *NNS);
-    void VisitTemplateName(TemplateName Name);
-    void VisitTemplateArguments(const TemplateArgumentLoc *Args, unsigned NumArgs);
-    void VisitTemplateArgument(const TemplateArgument &Arg);
+    bool VisitReturnStmt(ReturnStmt *S);
+    bool VisitCallExpr(CallExpr *S);
 
 private:
     void expandTraceLog(unsigned int severity, CallExpr *S);
@@ -236,38 +209,6 @@ private:
 };
 
 
-void DeclIterator::VisitDeclContext(DeclContext *DC, bool Indent) {
-  for (DeclContext::decl_iterator D = DC->decls_begin(), DEnd = DC->decls_end();
-       D != DEnd; ++D) {
-      Visit(*D);
-  }
-}
-
-void DeclIterator::VisitTranslationUnitDecl(TranslationUnitDecl *D) {
-    VisitDeclContext(D, false);
-}
-
-void DeclIterator::VisitTypedefDecl(TypedefDecl *D) {
-}
-
-void DeclIterator::VisitTypeAliasDecl(TypeAliasDecl *D) {
-}
-
-void DeclIterator::VisitEnumDecl(EnumDecl *D) {
-  if (D->isCompleteDefinition()) {
-      VisitDeclContext(D);
-  }
-}
-
-void DeclIterator::VisitRecordDecl(RecordDecl *D) {
-  if (D->isCompleteDefinition()) {
-      VisitDeclContext(D);
-  }
-}
-
-void DeclIterator::VisitEnumConstantDecl(EnumConstantDecl *D) {
-}
-
 SourceLocation DeclIterator::getFunctionBodyStart(Stmt *FB)
 {
     SourceLocation startLoc;
@@ -276,11 +217,11 @@ SourceLocation DeclIterator::getFunctionBodyStart(Stmt *FB)
     return startLoc.getLocWithOffset(1);
 }
 
-void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
+bool DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
 
 	const std::string qual_name = D->getQualifiedNameAsString();
     if (NULL != strstr(qual_name.c_str(), "std::")) {
-        return;
+        return true;
     }
     
     CXXRecordDecl *class_decl = NULL;
@@ -291,7 +232,7 @@ void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
     }
     
     if (!(D->hasBody()  &&  D->isThisDeclarationADefinition())) {
-        return;
+        return true;
     }
     StmtIterator stmtiterator(Out, Diags, ast, Rewrite, SM, langOpts, D, whitelistExceptions, referencedTypes, globalTraces);
     stmtiterator.functionName = D->getNameAsString();
@@ -336,7 +277,7 @@ void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
     
     // If the function has no return statement this is our opportunity to instrument the return from it.
     hasReturnStmts(stmt, has_returns);
-    if (!has_returns || D->getResultType()->isVoidType()) {
+    if (!has_returns || D->getCallResultType()->isVoidType()) {
         SourceLocation endLocation = stmt->getLocEnd();
         TraceParam trace_param(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
         TraceParam function_name_param(Out, Diags, ast, Rewrite, referencedTypes, globalTraces);
@@ -360,8 +301,8 @@ void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
         }
         bool was_parsed = trace_param.fromType((*I)->getType().getCanonicalType(), true);
         if (!was_parsed) {
-            stmtiterator.Visit(D->getBody());
-            return;
+            stmtiterator.TraverseStmt(D->getBody());
+            return true;
         }
 
         trace_param.param_name = (*I)->getNameAsString();
@@ -372,97 +313,18 @@ void DeclIterator::VisitFunctionDecl(FunctionDecl *D) {
 
     Rewrite->InsertText(function_start, "if (trace_is_initialized()){" + trace_call.getExpansion() + "trace_increment_nesting_level();}", true);
 exit:
-    stmtiterator.Visit(stmt);
+    stmtiterator.TraverseStmt(stmt);
     stmtiterator.functionName = "";
     stmtiterator.enclosingClassDescriptorName = "";
+    return true;
 }
 
-void DeclIterator::VisitFieldDecl(FieldDecl *D) {
-}
-
-void DeclIterator::VisitLabelDecl(LabelDecl *D) {
-}
-
-
-void DeclIterator::VisitVarDecl(VarDecl *D) {
+bool DeclIterator::VisitVarDecl(VarDecl *D) {
     std::string varName = D->getNameAsString();
     if (varName.compare("__traces_file_no_instrument") == 0) {
         whitelistExceptions = true;
     }
-}
-
-void DeclIterator::VisitParmVarDecl(ParmVarDecl *D) {
-    VisitVarDecl(D);
-}
-
-void DeclIterator::VisitFileScopeAsmDecl(FileScopeAsmDecl *D) {
-}
-
-void DeclIterator::VisitStaticAssertDecl(StaticAssertDecl *D) {
-}
-
-
-//----------------------------------------------------------------------------
-// C++ declarations
-//----------------------------------------------------------------------------
-void DeclIterator::VisitNamespaceDecl(NamespaceDecl *D) {
-    VisitDeclContext(D);
-}
-
-void DeclIterator::VisitUsingDirectiveDecl(UsingDirectiveDecl *D) {
-}
-
-void DeclIterator::VisitNamespaceAliasDecl(NamespaceAliasDecl *D) {
-}
-
-void DeclIterator::VisitCXXRecordDecl(CXXRecordDecl *D) {
-    VisitDeclContext(D);
-}
-
-void DeclIterator::VisitLinkageSpecDecl(LinkageSpecDecl *D) {
-  if (D->hasBraces()) {
-    VisitDeclContext(D);
-  } else
-    Visit(*D->decls_begin());
-}
-
-void DeclIterator::VisitFunctionTemplateDecl(FunctionTemplateDecl *D) {
-	VisitFunctionDecl(D->getTemplatedDecl());
-    return;
-#if 0
-    for (FunctionTemplateDecl::spec_iterator I = D->spec_begin(), E = D->spec_end();
-         I != E; ++I) {
-        Visit(*I);
-    }
-
-    return VisitRedeclarableTemplateDecl(D);
-#endif
-}
-
-void DeclIterator::VisitClassTemplateDecl(ClassTemplateDecl *D) {
-
-	VisitRecordDecl(D->getTemplatedDecl());
-	return;
-#if 0
-    for (ClassTemplateDecl::spec_iterator I = D->spec_begin(), E = D->spec_end();
-         I != E; ++I) {
-        Visit(*I);
-    }
-
-    VisitRedeclarableTemplateDecl(D);
-#endif
-}
-
-void DeclIterator::VisitTemplateDecl(const TemplateDecl *D) {
-    return;
-#if 0
-   if (const TemplateTemplateParmDecl *TTP =
-       dyn_cast<TemplateTemplateParmDecl>(D)) {
-       return;
-   } else {
-     Visit(D->getTemplatedDecl());
-   }
-#endif
+    return true;
 }
 
 static SourceRange getDeclRange(SourceManager *SM, const LangOptions *langOpts, const clang::Decl *D, bool with_semicolon)
@@ -496,263 +358,29 @@ static SourceRange getDeclRange(SourceManager *SM, const LangOptions *langOpts, 
 	return SourceRange(SourceLocation::getFromRawEncoding(start), SourceLocation::getFromRawEncoding(end + 3));
 }
 
-void StmtIterator::VisitStmt(Stmt *S)
-{
-
-    for (Stmt::child_range C = S->children(); C; ++C) {
-        if (*C) {
-            Visit(*C);
-        }
-    }
-}
-
-void StmtIterator::VisitDeclStmt(DeclStmt *S)
-{
-
-    VisitStmt(S);
-    for (DeclStmt::decl_iterator D = S->decl_begin(), DEnd = S->decl_end();
-         D != DEnd; ++D)
-        VisitDecl(*D);
-}
-
-void StmtIterator::VisitNullStmt(NullStmt *S)
-{
-
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitCompoundStmt(CompoundStmt *S)
-{
-    
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitSwitchCase(SwitchCase *S)
-{
-
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitCaseStmt(CaseStmt *S)
-{
-
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitCXXForRangeStmt(CXXForRangeStmt *S) {
-    
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitArrayTypeTraitExpr(ArrayTypeTraitExpr *S) {
-    
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitAsTypeExpr(AsTypeExpr *S) {
-    
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitAtomicExpr(AtomicExpr *S) {
-    
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitObjCBridgedCastExpr(ObjCBridgedCastExpr *S) {
-    
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitObjCAutoreleasePoolStmt(clang::ObjCAutoreleasePoolStmt *S) {
-
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitSEHExceptStmt(SEHExceptStmt *S) {
-
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitSEHFinallyStmt(SEHFinallyStmt *S) {
-
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitSEHTryStmt(SEHTryStmt *S) {
-
-    VisitStmt(S);
-}
-
-
-void StmtIterator::VisitExpressionTraitExpr(ExpressionTraitExpr *S) {
-    
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitGenericSelectionExpr(GenericSelectionExpr *S) {
-    
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitMaterializeTemporaryExpr(MaterializeTemporaryExpr *S) {
-    
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitMSDependentExistsStmt(MSDependentExistsStmt *S) {
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitPseudoObjectExpr(clang::PseudoObjectExpr *S) {
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitObjCBoolLiteralExpr(clang::ObjCBoolLiteralExpr *S) {
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitObjCDictionaryLiteral(clang::ObjCDictionaryLiteral *S) {
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitObjCBoxedExpr(clang::ObjCBoxedExpr *S) {
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitLambdaExpr(clang::LambdaExpr *S) {
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitObjCArrayLiteral(clang::ObjCArrayLiteral *S) {
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitTypeTraitExpr(clang::TypeTraitExpr *S) {
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitUserDefinedLiteral(clang::UserDefinedLiteral *S) {
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitAttributedStmt(clang::AttributedStmt *S) {
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitObjCSubscriptRefExpr(clang::ObjCSubscriptRefExpr *S) {
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitObjCIndirectCopyRestoreExpr(ObjCIndirectCopyRestoreExpr *S) {
-    
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitSubstNonTypeTemplateParmExpr(SubstNonTypeTemplateParmExpr *S) {
-
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitUnaryExprOrTypeTraitExpr(UnaryExprOrTypeTraitExpr *S) {
-
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitDefaultStmt(DefaultStmt *S)
-{
-
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitLabelStmt(LabelStmt *S)
-{
-
-    VisitStmt(S);
-    VisitDecl(S->getDecl());
-}
-
-void StmtIterator::VisitIfStmt(IfStmt *S)
-{
-
-    VisitStmt(S);
-    VisitDecl(S->getConditionVariable());
-}
-
-void StmtIterator::VisitSwitchStmt(SwitchStmt *S)
-{
-
-    VisitStmt(S);
-    VisitDecl(S->getConditionVariable());
-}
-
-void StmtIterator::VisitWhileStmt(WhileStmt *S)
-{
-
-    VisitStmt(S);
-    VisitDecl(S->getConditionVariable());
-}
-
-void StmtIterator::VisitDoStmt(DoStmt *S)
-{
-
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitForStmt(ForStmt *S)
-{
-
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitGotoStmt(GotoStmt *S)
-{
-
-    VisitStmt(S);
-    VisitDecl(S->getLabel());
-}
-
-void StmtIterator::VisitIndirectGotoStmt(IndirectGotoStmt *S)
-{
-
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitContinueStmt(ContinueStmt *S)
-{
-
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitBreakStmt(BreakStmt *S)
-{
-
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitReturnStmt(ReturnStmt *S)
+bool StmtIterator::VisitReturnStmt(ReturnStmt *S)
 {
 
     const FunctionDecl* FD = cast<FunctionDecl>(D);
 
     if (NULL != strstr(FD->getQualifiedNameAsString().c_str(), "std::")) {
-        return;
+        return true;
     }
     
     if (NULL != strstr(FD->getQualifiedNameAsString().c_str(), STR(TRACE_REPR_INTERNAL_METHOD_NAME))) {
-        return;
+        return true;
     }
 
     if (isa<CXXMethodDecl>(D)) {
         CXXMethodDecl *method_decl = dyn_cast<CXXMethodDecl>(D);
         CXXRecordDecl *class_decl = method_decl->getParent();
         if (class_decl->isDependentType()) {
-            return;
+            return true;
         }
     }
 
     if (!shouldInstrumentFunctionDecl(FD, whitelistExceptions)) {
-        return;
+        return true;
     }
 
     SourceLocation startLoc = S->getLocStart();
@@ -774,223 +402,18 @@ void StmtIterator::VisitReturnStmt(ReturnStmt *S)
     
     if (trace_param.fromExpr(S->getRetValue(), false) && !(S->getRetValue()->HasSideEffects(ast))) {
         trace_call.addTraceParam(trace_param);
-        VisitStmt(S);
     }
 
 expand:
    std::string traceExpansion = trace_call.getExpansion();
    Rewrite->InsertText(onePastSemiLoc, "}", true);
    Rewrite->ReplaceText(startLoc, strlen("return"), "{if (current_trace_buffer != 0) {trace_decrement_nesting_level(); " + traceExpansion + "} return ");
-   return;
+   return true;
 }
 
-void StmtIterator::VisitMSAsmStmt(MSAsmStmt *S)
+bool StmtIterator::VisitCallExpr(CallExpr *S)
 {
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitGCCAsmStmt(GCCAsmStmt *S)
-{
-
-    VisitStmt(S);
-    VisitStringLiteral(S->getAsmString());
-    for (unsigned I = 0, N = S->getNumOutputs(); I != N; ++I)
-    {
-        VisitStringLiteral(S->getOutputConstraintLiteral(I));
-    }
-    for (unsigned I = 0, N = S->getNumInputs(); I != N; ++I)
-    {
-        VisitStringLiteral(S->getInputConstraintLiteral(I));
-    }
-    for (unsigned I = 0, N = S->getNumClobbers(); I != N; ++I)
-        VisitStringLiteral(S->getClobberStringLiteral(I));
-}
-
-void StmtIterator::VisitFunctionParmPackExpr(FunctionParmPackExpr *S)
-{
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitMSPropertyRefExpr(MSPropertyRefExpr *S)
-{
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitCapturedStmt(clang::CapturedStmt *S)
-{
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitCXXDefaultInitExpr(CXXDefaultInitExpr *S)
-{
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitCXXCatchStmt(CXXCatchStmt *S)
-{
-
-    VisitStmt(S);
-    VisitType(S->getCaughtType());
-}
-
-void StmtIterator::VisitCXXTryStmt(CXXTryStmt *S)
-{
-
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitObjCForCollectionStmt(ObjCForCollectionStmt *S)
-{
-
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitObjCAtCatchStmt(ObjCAtCatchStmt *S)
-{
-
-    VisitStmt(S);
-    if (S->getCatchParamDecl())
-        VisitType(S->getCatchParamDecl()->getType());
-}
-
-void StmtIterator::VisitObjCAtFinallyStmt(ObjCAtFinallyStmt *S)
-{
-
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitObjCAtTryStmt(ObjCAtTryStmt *S)
-{
-
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitObjCAtSynchronizedStmt(ObjCAtSynchronizedStmt *S)
-{
-
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitObjCAtThrowStmt(ObjCAtThrowStmt *S)
-{
-
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitExpr(Expr *S)
-{
-
-    VisitStmt(S);
-}
-
-void StmtIterator::VisitDeclRefExpr(DeclRefExpr *S)
-{
-
-    VisitExpr(S);
-    VisitNestedNameSpecifier(S->getQualifier());
-    VisitDecl(S->getDecl());
-    VisitTemplateArguments(S->getTemplateArgs(), S->getNumTemplateArgs());
-}
-
-void StmtIterator::VisitPredefinedExpr(PredefinedExpr *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitIntegerLiteral(IntegerLiteral *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitCharacterLiteral(CharacterLiteral *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitFloatingLiteral(FloatingLiteral *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitImaginaryLiteral(ImaginaryLiteral *S)
-{
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitStringLiteral(StringLiteral *S)
-{
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitParenExpr(ParenExpr *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitParenListExpr(ParenListExpr *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitUnaryOperator(UnaryOperator *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitOffsetOfExpr(OffsetOfExpr *S)
-{
-
-    VisitType(S->getTypeSourceInfo()->getType());
-    unsigned n = S->getNumComponents();
-    for (unsigned i = 0; i < n; ++i)
-    {
-        const OffsetOfExpr::OffsetOfNode& ON = S->getComponent(i);
-        switch (ON.getKind())
-        {
-        case OffsetOfExpr::OffsetOfNode::Array:
-            // Expressions handled below.
-            break;
-
-        case OffsetOfExpr::OffsetOfNode::Field:
-            VisitDecl(ON.getField());
-            break;
-
-        case OffsetOfExpr::OffsetOfNode::Identifier:
-            break;
-
-        case OffsetOfExpr::OffsetOfNode::Base:
-            // These nodes are implicit, and therefore don't need profiling.
-            break;
-        }
-    }
-
-    VisitExpr(S);
-}
-
-// void StmtIterator::VisitSizeOfAlignOfExpr(SizeOfAlignOfExpr *S)
-// {
-
-//     VisitExpr(S);
-//     if (S->isArgumentType())
-//         VisitType(S->getArgumentType());
-// }
-
-void StmtIterator::VisitArraySubscriptExpr(ArraySubscriptExpr *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitCallExpr(CallExpr *S)
-{
-    std::auto_ptr<TraceCall> trace_call(new TraceCall(Out, Diags, ast, Rewrite, referencedTypes, globalTraces));
+    std::unique_ptr<TraceCall> trace_call(new TraceCall(Out, Diags, ast, Rewrite, referencedTypes, globalTraces));
     bool successfully_parsed = trace_call->fromCallExpr(S);
     if (successfully_parsed) {
         if (trace_call->isRepr()) {
@@ -1005,568 +428,8 @@ void StmtIterator::VisitCallExpr(CallExpr *S)
         }
         globalTraces.insert(trace_call.release());
     }
-    
-    VisitExpr(S);
-}
 
-void StmtIterator::VisitMemberExpr(MemberExpr *S)
-{
-
-    VisitExpr(S);
-    VisitDecl(S->getMemberDecl());
-    VisitNestedNameSpecifier(S->getQualifier());
-}
-
-void StmtIterator::VisitCompoundLiteralExpr(CompoundLiteralExpr *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitCastExpr(CastExpr *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitImplicitCastExpr(ImplicitCastExpr *S)
-{
-
-    VisitCastExpr(S);
-}
-
-void StmtIterator::VisitExplicitCastExpr(ExplicitCastExpr *S)
-{
-
-    VisitCastExpr(S);
-    VisitType(S->getTypeAsWritten());
-}
-
-void StmtIterator::VisitCStyleCastExpr(CStyleCastExpr *S)
-{
-
-    VisitExplicitCastExpr(S);
-}
-
-void StmtIterator::VisitBinaryOperator(BinaryOperator *S)
-{
-
-//    VisitExpr(S);
-}
-
-void StmtIterator::VisitCompoundAssignOperator(CompoundAssignOperator *S)
-{
-
-    VisitBinaryOperator(S);
-}
-
-void StmtIterator::VisitConditionalOperator(ConditionalOperator *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitBinaryConditionalOperator(BinaryConditionalOperator *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitAddrLabelExpr(AddrLabelExpr *S)
-{
-
-    VisitExpr(S);
-    VisitDecl(S->getLabel());
-}
-
-void StmtIterator::VisitStmtExpr(StmtExpr *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitShuffleVectorExpr(ShuffleVectorExpr *S)
-{
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitChooseExpr(ChooseExpr *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitGNUNullExpr(GNUNullExpr *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitVAArgExpr(VAArgExpr *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitInitListExpr(InitListExpr *S)
-{
-
-    if (S->getSyntacticForm())
-    {
-        VisitInitListExpr(S->getSyntacticForm());
-        return;
-    }
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitDesignatedInitExpr(DesignatedInitExpr *S)
-{
-
-    VisitExpr(S);
-    for (DesignatedInitExpr::designators_iterator D = S->designators_begin(),
-             DEnd = S->designators_end();
-         D != DEnd; ++D)
-    {
-        if (D->isFieldDesignator())
-        {
-            VisitName(D->getFieldName());
-            continue;
-        }
-    }
-}
-
-void StmtIterator::VisitImplicitValueInitExpr(ImplicitValueInitExpr *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitExtVectorElementExpr(ExtVectorElementExpr *S)
-{
-
-    VisitExpr(S);
-    VisitName(&S->getAccessor());
-}
-
-void StmtIterator::VisitBlockExpr(BlockExpr *S)
-{
-
-    VisitExpr(S);
-    VisitDecl(S->getBlockDecl());
-}
-
-void StmtIterator::VisitCXXOperatorCallExpr(CXXOperatorCallExpr *S)
-{
-
-    if (S->isTypeDependent()) {
-        for (unsigned I = 0, N = S->getNumArgs(); I != N; ++I)
-            Visit(S->getArg(I));
-        return;
-    }
-
-    VisitCallExpr(S);
-}
-
-void StmtIterator::VisitCXXMemberCallExpr(CXXMemberCallExpr *S)
-{
-
-    VisitCallExpr(S);
-}
-
-void StmtIterator::VisitCUDAKernelCallExpr(CUDAKernelCallExpr *S)
-{
-
-    VisitCallExpr(S);
-}
-
-void StmtIterator::VisitCXXNamedCastExpr(CXXNamedCastExpr *S)
-{
-
-    VisitExplicitCastExpr(S);
-}
-
-void StmtIterator::VisitCXXStaticCastExpr(CXXStaticCastExpr *S)
-{
-
-    VisitCXXNamedCastExpr(S);
-}
-
-void StmtIterator::VisitCXXDynamicCastExpr(CXXDynamicCastExpr *S)
-{
-
-    VisitCXXNamedCastExpr(S);
-}
-
-void StmtIterator::VisitCXXReinterpretCastExpr(CXXReinterpretCastExpr *S)
-{
-
-    VisitCXXNamedCastExpr(S);
-}
-
-void StmtIterator::VisitCXXConstCastExpr(CXXConstCastExpr *S)
-{
-
-    VisitCXXNamedCastExpr(S);
-}
-
-void StmtIterator::VisitCXXBoolLiteralExpr(CXXBoolLiteralExpr *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitCXXNullPtrLiteralExpr(CXXNullPtrLiteralExpr *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitCXXTypeidExpr(CXXTypeidExpr *S)
-{
-
-    VisitExpr(S);
-    if (S->isTypeOperand())
-        VisitType(S->getTypeOperand());
-}
-
-void StmtIterator::VisitCXXUuidofExpr(CXXUuidofExpr *S)
-{
-
-    VisitExpr(S);
-    if (S->isTypeOperand())
-        VisitType(S->getTypeOperand());
-}
-
-void StmtIterator::VisitCXXThisExpr(CXXThisExpr *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitCXXThrowExpr(CXXThrowExpr *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitCXXDefaultArgExpr(CXXDefaultArgExpr *S)
-{
-
-    VisitExpr(S);
-    VisitDecl(S->getParam());
-}
-
-void StmtIterator::VisitCXXBindTemporaryExpr(CXXBindTemporaryExpr *S)
-{
-
-    VisitExpr(S);
-    VisitDecl(
-        const_cast<CXXDestructorDecl *>(S->getTemporary()->getDestructor()));
-}
-
-void StmtIterator::VisitCXXConstructExpr(CXXConstructExpr *S)
-{
-
-    VisitExpr(S);
-    VisitDecl(S->getConstructor());
-}
-
-void StmtIterator::VisitCXXFunctionalCastExpr(CXXFunctionalCastExpr *S)
-{
-
-    VisitExplicitCastExpr(S);
-}
-
-void StmtIterator::VisitCXXTemporaryObjectExpr(CXXTemporaryObjectExpr *S)
-{
-
-    VisitCXXConstructExpr(S);
-}
-
-void StmtIterator::VisitCXXScalarValueInitExpr(CXXScalarValueInitExpr *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitCXXDeleteExpr(CXXDeleteExpr *S)
-{
-
-    VisitExpr(S);
-    VisitDecl(S->getOperatorDelete());
-}
-
-void StmtIterator::VisitCXXNewExpr(CXXNewExpr *S)
-{
-
-    VisitExpr(S);
-    VisitType(S->getAllocatedType());
-    VisitDecl(S->getOperatorNew());
-    VisitDecl(S->getOperatorDelete());
-}
-
-void StmtIterator::VisitCXXPseudoDestructorExpr(CXXPseudoDestructorExpr *S)
-{
-
-    VisitExpr(S);
-    VisitNestedNameSpecifier(S->getQualifier());
-    VisitType(S->getDestroyedType());
-}
-
-void StmtIterator::VisitOverloadExpr(OverloadExpr *S)
-{
-
-    VisitExpr(S);
-    VisitNestedNameSpecifier(S->getQualifier());
-    VisitName(S->getName());
-    if (S->hasExplicitTemplateArgs())
-        VisitTemplateArguments(S->getExplicitTemplateArgs().getTemplateArgs(),
-                               S->getExplicitTemplateArgs().NumTemplateArgs);
-}
-
-void
-StmtIterator::VisitUnresolvedLookupExpr(UnresolvedLookupExpr *S)
-{
-
-    VisitOverloadExpr(S);
-}
-
-void StmtIterator::VisitUnaryTypeTraitExpr(UnaryTypeTraitExpr *S)
-{
-
-    VisitExpr(S);
-    VisitType(S->getQueriedType());
-}
-
-void StmtIterator::VisitBinaryTypeTraitExpr(BinaryTypeTraitExpr *S)
-{
-
-    VisitExpr(S);
-    VisitType(S->getLhsType());
-    VisitType(S->getRhsType());
-}
-
-void
-StmtIterator::VisitDependentScopeDeclRefExpr(DependentScopeDeclRefExpr *S)
-{
-
-    VisitExpr(S);
-    VisitName(S->getDeclName());
-    VisitNestedNameSpecifier(S->getQualifier());
-    if (S->hasExplicitTemplateArgs())
-        VisitTemplateArguments(S->getTemplateArgs(), S->getNumTemplateArgs());
-}
-
-void StmtIterator::VisitExprWithCleanups(ExprWithCleanups *S)
-{
-
-    VisitExpr(S);
-}
-
-void
-StmtIterator::VisitCXXUnresolvedConstructExpr(CXXUnresolvedConstructExpr *S)
-{
-
-    VisitExpr(S);
-    VisitType(S->getTypeAsWritten());
-}
-
-void
-StmtIterator::VisitCXXDependentScopeMemberExpr(CXXDependentScopeMemberExpr *S)
-{
-
-    if (!S->isImplicitAccess())
-    {
-        VisitExpr(S);
-    }
-    VisitNestedNameSpecifier(S->getQualifier());
-    VisitName(S->getMember());
-    if (S->hasExplicitTemplateArgs())
-        VisitTemplateArguments(S->getTemplateArgs(), S->getNumTemplateArgs());
-}
-
-void StmtIterator::VisitUnresolvedMemberExpr(UnresolvedMemberExpr *S)
-{
-
-    if (!S->isImplicitAccess())
-    {
-        VisitExpr(S);
-    }
-    VisitNestedNameSpecifier(S->getQualifier());
-    VisitName(S->getMemberName());
-    if (S->hasExplicitTemplateArgs())
-        VisitTemplateArguments(S->getTemplateArgs(), S->getNumTemplateArgs());
-}
-
-void StmtIterator::VisitCXXNoexceptExpr(CXXNoexceptExpr *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitPackExpansionExpr(PackExpansionExpr *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitSizeOfPackExpr(SizeOfPackExpr *S)
-{
-
-    VisitExpr(S);
-    VisitDecl(S->getPack());
-}
-
-void StmtIterator::VisitSubstNonTypeTemplateParmPackExpr(
-    SubstNonTypeTemplateParmPackExpr *S)
-{
-
-    VisitExpr(S);
-    VisitDecl(S->getParameterPack());
-    VisitTemplateArgument(S->getArgumentPack());
-}
-
-void StmtIterator::VisitOpaqueValueExpr(OpaqueValueExpr *E)
-{
-
-    VisitExpr(E);
-}
-
-void StmtIterator::VisitObjCStringLiteral(ObjCStringLiteral *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitObjCEncodeExpr(ObjCEncodeExpr *S)
-{
-
-    VisitExpr(S);
-    VisitType(S->getEncodedType());
-}
-
-void StmtIterator::VisitObjCSelectorExpr(ObjCSelectorExpr *S)
-{
-
-    VisitExpr(S);
-    VisitName(S->getSelector());
-}
-
-void StmtIterator::VisitObjCProtocolExpr(ObjCProtocolExpr *S)
-{
-
-    VisitExpr(S);
-    VisitDecl(S->getProtocol());
-}
-
-void StmtIterator::VisitObjCIvarRefExpr(ObjCIvarRefExpr *S)
-{
-
-    VisitExpr(S);
-    VisitDecl(S->getDecl());
-}
-
-void StmtIterator::VisitObjCPropertyRefExpr(ObjCPropertyRefExpr *S)
-{
-
-    VisitExpr(S);
-    if (S->isImplicitProperty())
-    {
-        VisitDecl(S->getImplicitPropertyGetter());
-        VisitDecl(S->getImplicitPropertySetter());
-    } else {
-        VisitDecl(S->getExplicitProperty());
-    }
-    if (S->isSuperReceiver())
-    {
-        VisitType(S->getSuperReceiverType());
-    }
-}
-
-void StmtIterator::VisitObjCMessageExpr(ObjCMessageExpr *S)
-{
-
-    VisitExpr(S);
-    VisitName(S->getSelector());
-    VisitDecl(S->getMethodDecl());
-}
-
-void StmtIterator::VisitObjCIsaExpr(ObjCIsaExpr *S)
-{
-
-    VisitExpr(S);
-}
-
-void StmtIterator::VisitDecl(Decl *D)
-{
-
-}
-
-void StmtIterator::VisitType(QualType T)
-{
-
-}
-
-void StmtIterator::VisitName(DeclarationName Name)
-{
-
-}
-
-void StmtIterator::VisitNestedNameSpecifier(NestedNameSpecifier *NNS)
-{
-
-}
-
-void StmtIterator::VisitTemplateName(TemplateName Name)
-{
-
-}
-
-void StmtIterator::VisitTemplateArguments(const TemplateArgumentLoc *Args,
-                                          unsigned NumArgs)
-{
-
-    for (unsigned I = 0; I != NumArgs; ++I)
-        VisitTemplateArgument(Args[I].getArgument());
-}
-
-void StmtIterator::VisitTemplateArgument(const TemplateArgument &Arg)
-{
-    // Mostly repetitive with TemplateArgument::Profile!
-    switch (Arg.getKind())
-    {
-    case TemplateArgument::Null:
-    case TemplateArgument::NullPtr:
-        break;
-
-    case TemplateArgument::Type:
-        VisitType(Arg.getAsType());
-        break;
-
-    case TemplateArgument::Template:
-    case TemplateArgument::TemplateExpansion:
-        VisitTemplateName(Arg.getAsTemplateOrTemplatePattern());
-        break;
-
-    case TemplateArgument::Declaration:
-        VisitDecl(Arg.getAsDecl());
-        break;
-
-    case TemplateArgument::Integral:
-        VisitType(Arg.getIntegralType());
-        break;
-
-    case TemplateArgument::Expression:
-        Visit(Arg.getAsExpr());
-        break;
-
-    case TemplateArgument::Pack:
-        const TemplateArgument *Pack = Arg.pack_begin();
-        for (unsigned i = 0, e = Arg.pack_size(); i != e; ++i)
-            VisitTemplateArgument(Pack[i]);
-        break;
-    }
+    return true;
 }
 
 class PreCompilationLogsConsumer : public ASTConsumer {
@@ -1690,7 +553,7 @@ public:
         SM = &C.getSourceManager();
         MainFileID = SM->getMainFileID();
         DeclIterator decliterator(Out, Diags, C, &Rewrite, SM, C.getLangOpts(), referencedTypes, globalTraces, whitelistExceptions);
-        decliterator.Visit(C.getTranslationUnitDecl());
+        decliterator.TraverseDecl(C.getTranslationUnitDecl());
         buildReferencedTypes();
         buildGlobalTraces();
         if (const RewriteBuffer *RewriteBuf =
@@ -1723,9 +586,9 @@ private:
     CompilerInstance *CI;
     bool whitelistExceptions;
 protected:
-    ASTConsumer *CreateASTConsumer(CompilerInstance &CI, llvm::StringRef InFile) {
+    std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI, llvm::StringRef InFile) {
         if (raw_ostream *OS = CI.createDefaultOutputFile(false, InFile, "cpp"))
-            return new PreCompilationLogsConsumer(InFile, OS, CI, whitelistExceptions);
+            return std::unique_ptr<ASTConsumer>((ASTConsumer*)new PreCompilationLogsConsumer(InFile, OS, CI, whitelistExceptions));
         else {
             return NULL;
         }

@@ -57,7 +57,7 @@ private:
 class TraceCall {
 public:
 TraceCall(llvm::raw_ostream &out,
-        clang::DiagnosticsEngine &_Diags,
+        clang::DiagnosticsEngine *_Diags,
         clang::ASTContext &_ast,
         clang::Rewriter *rewriter,
         std::set<const clang::Type *> &referenced_types,
@@ -84,7 +84,7 @@ TraceCall(llvm::raw_ostream &out,
     
 private:
     clang::ASTContext &ast;
-    clang::DiagnosticsEngine &Diags;
+    clang::DiagnosticsEngine *Diags;
     llvm::raw_ostream &Out;
     const clang::CallExpr *call_expr;
     std::vector<TraceParam> args;
