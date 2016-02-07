@@ -21,8 +21,8 @@ import subprocess
 import tempfile
 
 from ldwrap import main as ldmodwrap_main
-plugin_path = os.path.join(os.getcwd(), "build/common/traces/trace_instrumentor/libtrace_instrumentor_untraced.so")
-clang_path = '/usr/local/bin/clang'
+plugin_path = os.path.join(os.getcwd(), "../trace_instrumentor/trace_instrumentor.so")
+clang_path = '/usr/bin/clang-3.7'
 disable_function_traces = True
 
 def spawn(args):
