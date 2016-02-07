@@ -15,12 +15,12 @@ CLANG=clang-$(REQUIRED_CLANG_VER)
 CLANG_VER=$(shell which $(CLANG) > /dev/null && $(CLANG) --version|head -1|grep -oP '\d\.\d'|head -n1|cut -d' ' -f1)
 
 EXTRA_LIBS=
-ALL_TARGETS=libtrace dump_file_diags reader 
+ALL_TARGETS=libtrace.a tools/dump_file_diags reader 
 # Note that interactive_reader has been removed from the default build
  
 ifeq ($(TARGET_PLATFORM),linux-gnu)
        EXTRA_LIBS+=-lrt -lpthread
-       ALL_TARGETS+=libtraceuser_per_process libtraceuser_per_module trace_dumper trace_instrumentor libtrace_so
+       ALL_TARGETS+=libtraceuser_per_process.so libtraceuser_per_module.a trace_dumper trace_instrumentor traces.so
        LIBTRACEUTIL_OBJS+=trace_proc_util.o
 endif
 
@@ -30,34 +30,34 @@ endif
 
 all: $(ALL_TARGETS)
 
-trace_dumper: libtrace libtraceutil libsnappy libparser $(DUMPER_OBJS)
+trace_dumper: libtrace.a libtraceutil.a libsnappy.a libparser.a $(DUMPER_OBJS)
 	gcc -L.  $(DUMPER_OBJS) -ltrace -ltraceutil -lparser -lsnappy $(EXTRA_LIBS) -o trace_dumper/trace_dumper 
 
-libtrace: $(LIBTRACE_OBJS) libtraceutil
+libtrace.a: $(LIBTRACE_OBJS) libtraceutil.a
 	ar rcs libtrace.a $(LIBTRACE_OBJS)
 	
-libtrace_so: libtrace
+traces.so: libtrace.a
 	gcc -shared -g $(LIBTRACE_OBJS) -L. -ltraceutil -o traces.so
 
-libtraceuser_per_process: $(LIBTRACEUSER_PER_PROCESS_OBJS)
+libtraceuser_per_process.so: $(LIBTRACEUSER_PER_PROCESS_OBJS)
 	gcc -shared -g $(LIBTRACEUSER_PER_PROCESS_OBJS) -L. -o libtraceuser_per_process.so
 
-libtraceuser_per_module: $(LIBTRACEUSER_PER_MODULE_OBJS)
+libtraceuser_per_module.a: $(LIBTRACEUSER_PER_MODULE_OBJS)
 	ar rcs libtraceuser_per_module.a $(LIBTRACEUSER_PER_MODULE_OBJS)
 	
-libtraceutil: $(LIBTRACEUTIL_OBJS)
+libtraceutil.a: $(LIBTRACEUTIL_OBJS)
 	ar rcs libtraceutil.a  $(LIBTRACEUTIL_OBJS)
 
-libsnappy: $(LIBSNAPPY_OBJS)
+libsnappy.a: $(LIBSNAPPY_OBJS)
 	ar rcs libsnappy.a  $(LIBSNAPPY_OBJS)
 
-libparser: $(LIBPARSER_OBJS)
+libparser.a: $(LIBPARSER_OBJS)
 	ar rsc libparser.a $(LIBPARSER_OBJS) 
 
-reader: libparser libtraceutil libsnappy reader.o
+reader: libparser.a libtraceutil.a libsnappy.a reader.o
 	g++ -L. reader.o -lparser -ltraceutil -lsnappy -lz $(EXTRA_LIBS) -o reader
 
-dump_file_diags: libtraceutil tools/dump_file_diags.o trace_defs.h
+tools/dump_file_diags: libtraceutil.a tools/dump_file_diags.o trace_defs.h
 	gcc -L. tools/dump_file_diags.o -ltraceutil -o tools/dump_file_diags
 
 ifeq ($(CLANG_VER),$(REQUIRED_CLANG_VER))
