@@ -49,6 +49,7 @@ def translate(pp_file, out_pp_file, language, cflags, plugin_args):
     args.extend(plugin_args)
 
     try:
+        print 'command', args
         output = subprocess.check_output(args, stderr = subprocess.STDOUT)
     except subprocess.CalledProcessError, e:
         print 'clang returned', e.returncode
@@ -172,12 +173,15 @@ def main():
         ret = spawn(comp_args)
         return ret;
     finally:
-        os.unlink(va_arg_pack_def_file)
-        os.unlink(pp_file)
-        if os.getenv("TRACE_NO_UNLINK_PPFILE", "") == "":
-            # Delete the pp.i file only if the clang invocation was successful
-            if clang_ret == 0:
-                os.unlink(out_pp_file)
+        try:
+            os.unlink(va_arg_pack_def_file)
+            os.unlink(pp_file)
+            if os.getenv("TRACE_NO_UNLINK_PPFILE", "") == "":
+                # Delete the pp.i file only if the clang invocation was successful
+                if clang_ret == 0:
+                    os.unlink(out_pp_file)
+        except OSError:
+            pass
 
 if __name__ == "__main__":
     sys.exit(main())
