@@ -75,7 +75,7 @@ static const char usage[] = {
     " -F  --flush-interval [ms]             Specify the desired interval for traces writes (50ms if not specified)  \n" \
     " -I  --instrument[option]              Turn on one of the dumper's instrumentation options. Available option values: time_writes \n"     \
     " -E  --execute-on-event[evant=path]    Run the executable at 'path' when 'event' occurs. Supported events:\n"     \
-    "                                            file_closed:           An output file, whose name is supplied to the executable as argument, was closed." \
+    "                                            file_closed:           An output file, whose name is supplied to the executable as argument, was closed.\n" \
     " -v  --dump-online-statistics          Dump buffer statistics \n"
     "\n"};
 
