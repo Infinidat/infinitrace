@@ -23,9 +23,10 @@ import tempfile
 from ldwrap import main as ldmodwrap_main
 plugin_path = os.path.join(os.getcwd(), "../trace_instrumentor/trace_instrumentor.so")
 clang_path = '/usr/bin/clang-3.7'
-disable_function_traces = True
+disable_function_traces = False
 
 def spawn(args):
+    print 'ccwrap', args
     return os.spawnvp(os.P_WAIT, args[0], args)
 
 class Error(Exception):
@@ -51,6 +52,9 @@ def translate(pp_file, out_pp_file, language, cflags, plugin_args):
     try:
         print 'command', args
         output = subprocess.check_output(args, stderr = subprocess.STDOUT)
+        print 'output start'
+        print output
+        print 'output end'
     except subprocess.CalledProcessError, e:
         print 'clang returned', e.returncode
         print 'Args:', ' '.join(args)
