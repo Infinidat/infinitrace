@@ -297,7 +297,7 @@ static int metadata_info_started(trace_parser_t *parser, const struct trace_reco
         return -1;
     }
 
-    new_context.metadata = malloc(new_context.metadata_size);
+    new_context.metadata = calloc(new_context.metadata_size, 1);
     if (NULL == new_context.metadata) {
         return -1;
     }
