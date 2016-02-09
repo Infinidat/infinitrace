@@ -518,6 +518,8 @@ static int process_single_file_with_error_recovery(
         )
 {
     trace_parser_t parser;
+
+    memset(&parser, 0, sizeof(parser));
     if (0 != init_parser_for_file(conf, &parser, may_wait_for_input && conf->tail, filename, event_handler)) {
         return EX_NOINPUT;
     }
