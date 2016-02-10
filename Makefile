@@ -9,18 +9,18 @@ LIBTRACEUTIL_OBJS=opt_util.o trace_str_util.o file_naming.o trace_clock.o trace_
 LIBSNAPPY_OBJS=snappy/snappy.o
 DUMPER_OBJS=trace_dumper/trace_dumper.o trace_dumper/filesystem.o trace_dumper/events.o trace_dumper/sgio_util.o trace_dumper/internal_buffer.o trace_dumper/mm_writer.o trace_dumper/writer.o trace_dumper/write_prep.o trace_dumper/buffers.o trace_dumper/init.o trace_dumper/open_close.o trace_dumper/metadata.o trace_dumper/housekeeping.o trace_user_stubs.o
 
-TARGET_PLATFORM=$(shell gcc -v 2>&1|fgrep Target|cut -d':' -d' ' -f2|cut -d'-' -f 2,3)
-CLANG=clang
-REQUIRED_CLANG_VER=3.3
-CLANG_VER=$(shell which $(CLANG) > /dev/null && $(CLANG) --version|head -1|grep -oP '\d\.\d '|cut -d' ' -f1)
+TARGET_PLATFORM=$(shell $(CC) -v 2>&1|fgrep Target|cut -d':' -d' ' -f2|cut -d'-' -f 2,3)
+REQUIRED_CLANG_VER=3.7
+CLANG=clang-$(REQUIRED_CLANG_VER)
+CLANG_VER=$(shell which $(CLANG) > /dev/null && $(CLANG) --version|head -1|grep -oP '\d\.\d'|head -n1|cut -d' ' -f1)
 
 EXTRA_LIBS=
-ALL_TARGETS=libtrace dump_file_diags reader 
+ALL_TARGETS=libtrace.a tools/dump_file_diags reader 
 # Note that interactive_reader has been removed from the default build
  
 ifeq ($(TARGET_PLATFORM),linux-gnu)
-       EXTRA_LIBS+=-lrt
-       ALL_TARGETS+=libtraceuser_per_process libtraceuser_per_module trace_dumper trace_instrumentor libtrace_so
+       EXTRA_LIBS+=-lrt -lpthread
+       ALL_TARGETS+=libtraceuser_per_process.so libtraceuser_per_module.a trace_dumper trace_instrumentor traces.so
        LIBTRACEUTIL_OBJS+=trace_proc_util.o
 endif
 
@@ -30,45 +30,45 @@ endif
 
 all: $(ALL_TARGETS)
 
-trace_dumper: libtrace libtraceutil libsnappy libparser $(DUMPER_OBJS)
-	gcc -L.  $(DUMPER_OBJS) -ltrace -ltraceutil -lparser -lsnappy $(EXTRA_LIBS) -o trace_dumper/trace_dumper 
+trace_dumper: libtrace.a libtraceutil.a libsnappy.a libparser.a $(DUMPER_OBJS)
+	$(CC) -L.  $(DUMPER_OBJS) -ltrace -ltraceutil -lparser -lsnappy $(EXTRA_LIBS) -o trace_dumper/trace_dumper 
 
-libtrace: $(LIBTRACE_OBJS) libtraceutil
+libtrace.a: $(LIBTRACE_OBJS) libtraceutil.a
 	ar rcs libtrace.a $(LIBTRACE_OBJS)
 	
-libtrace_so: libtrace
-	gcc -shared -g $(LIBTRACE_OBJS) -L. -ltraceutil -o traces.so
+traces.so: libtrace.a
+	$(CC) -shared -g $(LIBTRACE_OBJS) -L. -ltraceutil -o traces.so
 
-libtraceuser_per_process: $(LIBTRACEUSER_PER_PROCESS_OBJS)
-	gcc -shared -g $(LIBTRACEUSER_PER_PROCESS_OBJS) -L. -o libtraceuser_per_process.so
+libtraceuser_per_process.so: $(LIBTRACEUSER_PER_PROCESS_OBJS)
+	$(CC) -shared -g $(LIBTRACEUSER_PER_PROCESS_OBJS) -L. -o libtraceuser_per_process.so
 
-libtraceuser_per_module: $(LIBTRACEUSER_PER_MODULE_OBJS)
+libtraceuser_per_module.a: $(LIBTRACEUSER_PER_MODULE_OBJS)
 	ar rcs libtraceuser_per_module.a $(LIBTRACEUSER_PER_MODULE_OBJS)
 	
-libtraceutil: $(LIBTRACEUTIL_OBJS)
+libtraceutil.a: $(LIBTRACEUTIL_OBJS)
 	ar rcs libtraceutil.a  $(LIBTRACEUTIL_OBJS)
 
-libsnappy: $(LIBSNAPPY_OBJS)
+libsnappy.a: $(LIBSNAPPY_OBJS)
 	ar rcs libsnappy.a  $(LIBSNAPPY_OBJS)
 
-libparser: $(LIBPARSER_OBJS)
+libparser.a: $(LIBPARSER_OBJS)
 	ar rsc libparser.a $(LIBPARSER_OBJS) 
 
-reader: libparser libtraceutil libsnappy reader.o
-	g++ -L. reader.o -lparser -ltraceutil -lsnappy -lz $(EXTRA_LIBS) -o reader
+reader: libparser.a libtraceutil.a libsnappy.a reader.o
+	$(CXX) -L. reader.o -lparser -ltraceutil -lsnappy -lz $(EXTRA_LIBS) -o reader
 
-dump_file_diags: libtraceutil tools/dump_file_diags.o trace_defs.h
-	gcc -L. tools/dump_file_diags.o -ltraceutil -o tools/dump_file_diags
+tools/dump_file_diags: libtraceutil.a tools/dump_file_diags.o trace_defs.h
+	$(CC) -L. tools/dump_file_diags.o -ltraceutil -o tools/dump_file_diags
 
 ifeq ($(CLANG_VER),$(REQUIRED_CLANG_VER))
 
 TRACE_INSTROMENTOR_OBJS=trace_instrumentor/trace_instrumentor.o trace_instrumentor/trace_call.o trace_instrumentor/trace_param.o trace_instrumentor/util.o
 
-$(TRACE_INSTROMENTOR_OBJS): CXXFLAGS := $(shell llvm-config --cxxflags) -g
-$(TRACE_INSTROMENTOR_OBJS): LDFLAGS := $(shell llvm-config --libs --ldflags)
+$(TRACE_INSTROMENTOR_OBJS): CXXFLAGS := $(shell llvm-config-$(REQUIRED_CLANG_VER) --cxxflags) -g
+$(TRACE_INSTROMENTOR_OBJS): LDFLAGS := $(shell llvm-config-$(REQUIRED_CLANG_VER) --libs --ldflags)
 
 trace_instrumentor: $(TRACE_INSTROMENTOR_OBJS)
-	g++ $(LDFLAGS) -shared $(TRACE_INSTROMENTOR_OBJS) -o trace_instrumentor/trace_instrumentor.so
+	$(CXX) $(LDFLAGS) -shared $(TRACE_INSTROMENTOR_OBJS) -o trace_instrumentor/trace_instrumentor.so
 	
 else
 ifeq ($(CLANG_VER),)

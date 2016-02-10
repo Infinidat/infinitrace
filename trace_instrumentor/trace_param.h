@@ -34,7 +34,7 @@ class TraceCall;
 class TraceParam {
 public:
     llvm::raw_ostream &Out;
-    clang::DiagnosticsEngine &Diags;
+    clang::DiagnosticsEngine *Diags;
     clang::ASTContext &ast;
     clang::Rewriter *Rewrite;
     std::set<const clang::Type *> &referencedTypes;
@@ -46,7 +46,7 @@ public:
     unsigned TraceParamDependentType;
 TraceParam(
         llvm::raw_ostream &out,
-        clang::DiagnosticsEngine &_Diags,
+        clang::DiagnosticsEngine *_Diags,
         clang::ASTContext &_ast,
         clang::Rewriter *rewriter,
         std::set<const clang::Type *> &_referencedTypes,

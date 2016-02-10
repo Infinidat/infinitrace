@@ -21,11 +21,12 @@ import subprocess
 import tempfile
 
 from ldwrap import main as ldmodwrap_main
-plugin_path = os.path.join(os.getcwd(), "build/common/traces/trace_instrumentor/libtrace_instrumentor_untraced.so")
-clang_path = '/usr/local/bin/clang'
-disable_function_traces = True
+plugin_path = os.path.join(os.getcwd(), "../trace_instrumentor/trace_instrumentor.so")
+clang_path = '/usr/bin/clang-3.7'
+disable_function_traces = False
 
 def spawn(args):
+    print 'ccwrap', args
     return os.spawnvp(os.P_WAIT, args[0], args)
 
 class Error(Exception):
@@ -49,7 +50,11 @@ def translate(pp_file, out_pp_file, language, cflags, plugin_args):
     args.extend(plugin_args)
 
     try:
+        print 'command', args
         output = subprocess.check_output(args, stderr = subprocess.STDOUT)
+        print 'output start'
+        print output
+        print 'output end'
     except subprocess.CalledProcessError, e:
         print 'clang returned', e.returncode
         print 'Args:', ' '.join(args)
@@ -172,12 +177,15 @@ def main():
         ret = spawn(comp_args)
         return ret;
     finally:
-        os.unlink(va_arg_pack_def_file)
-        os.unlink(pp_file)
-        if os.getenv("TRACE_NO_UNLINK_PPFILE", "") == "":
-            # Delete the pp.i file only if the clang invocation was successful
-            if clang_ret == 0:
-                os.unlink(out_pp_file)
+        try:
+            os.unlink(va_arg_pack_def_file)
+            os.unlink(pp_file)
+            if os.getenv("TRACE_NO_UNLINK_PPFILE", "") == "":
+                # Delete the pp.i file only if the clang invocation was successful
+                if clang_ret == 0:
+                    os.unlink(out_pp_file)
+        except OSError:
+            pass
 
 if __name__ == "__main__":
     sys.exit(main())

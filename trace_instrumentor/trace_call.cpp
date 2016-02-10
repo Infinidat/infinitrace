@@ -71,7 +71,7 @@ std::string TraceCallNameGenerator::generateTypeName(const std::string& type_nam
 TraceCallNameGenerator TraceCall::s_name_gen;
 
 TraceCall::TraceCall(llvm::raw_ostream &out,
-        clang::DiagnosticsEngine &_Diags,
+        clang::DiagnosticsEngine *_Diags,
         clang::ASTContext &_ast,
         clang::Rewriter *rewriter,
         std::set<const clang::Type *> &referenced_types,
@@ -86,7 +86,7 @@ TraceCall::TraceCall(llvm::raw_ostream &out,
             globalTraces(global_traces)
 {
 
-	UnknownTraceParamDiag = Diags.getCustomDiagID(clang::DiagnosticsEngine::Error,
+	UnknownTraceParamDiag = Diags->getCustomDiagID(clang::DiagnosticsEngine::Error,
 												  "Unsupported trace parameter type");
 	is_repr		  = false;
 	call_expr 	  = NULL;
@@ -522,7 +522,7 @@ void TraceCall::expandWithDeclaration(const std::string& declaration, bool check
 
 void TraceCall::unknownTraceParam(const Expr *trace_param) const
 {
-    Diags.Report(ast.getFullLoc(trace_param->getLocStart()), UnknownTraceParamDiag) << trace_param->getSourceRange();
+    Diags->Report(ast.getFullLoc(trace_param->getLocStart()), UnknownTraceParamDiag) << trace_param->getSourceRange();
 }
 
 enum trace_severity TraceCall::functionNameToTraceSeverity(std::string function_name)

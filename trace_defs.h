@@ -88,6 +88,7 @@ typedef volatile trace_record_counter_t trace_atomic_t;
 typedef unsigned trace_generation_t;
 
 #define MAX_METADATA_SIZE (0x1000000) /* An upper bound on the possible size of metadata */
+#define MIN_METADATA_SIZE sizeof(struct trace_metadata_region)
 
 #ifndef TRACE_FORMAT_VERSION
 #define TRACE_FORMAT_VERSION (0xA3)

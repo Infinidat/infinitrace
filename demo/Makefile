@@ -9,7 +9,7 @@ LDFLAGS=-L$(TRACES_ROOT_DIR)
 all: demo
 
 demo: demo.o
-	$(CCWRAP) g++ $(LDFLAGS) demo.o ../libtraceuser.a -lrt -o demo
+	$(CCWRAP) g++ $(LDFLAGS) demo.o -L.. -ltraceuser_per_process ../libparser.a ../libtraceuser_per_module.a ../libtraceutil.a -lrt -o demo -ldl
 
 clean:
 	rm demo.o demo
